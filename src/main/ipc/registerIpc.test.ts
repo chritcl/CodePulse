@@ -304,21 +304,114 @@ describe("registerIpc", () => {
     expect(electronMock.spawn).not.toHaveBeenCalled();
   });
 
-  it("打开 Agent 时拒绝暂不支持的数据源", async () => {
+  it("打开非 Codex Agent 时回退打开任务项目目录", async () => {
+    electronMock.shellOpenPath.mockResolvedValue("");
     const { registerIpc } = await import("./registerIpc");
-    const unsupportedSnapshot: AgentStateSnapshot = {
+    const processSnapshot: AgentStateSnapshot = {
       ...snapshot,
       providers: [
         {
           ...provider,
-          id: "custom",
-          adapterType: "customCommand"
+          id: "process",
+          name: "本机 Agent",
+          adapterType: "process"
         }
       ],
       tasks: [
         {
           ...task,
-          providerId: "custom"
+          providerId: "process"
+        }
+      ]
+    };
+    const hub = {
+      subscribe: vi.fn(() => vi.fn()),
+      getSnapshot: vi.fn(() => processSnapshot)
+    };
+    const settingsStore = {
+      get: vi.fn(() => ({} as AppSettings)),
+      update: vi.fn()
+    };
+    const windows = {
+      openTaskCenter: vi.fn(),
+      openSettings: vi.fn(),
+      setIslandMode: vi.fn(),
+      closePopup: vi.fn(),
+      updateSettings: vi.fn()
+    };
+
+    registerIpc(hub as never, settingsStore as never, windows as never);
+    const handler = electronMock.handlers.get(codePulseChannels.tasksOpenAgent);
+    const result = await handler?.({}, "task-1");
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: true
+    });
+    expect(electronMock.shellOpenPath).toHaveBeenCalledWith(task.projectPath);
+    expect(electronMock.spawn).not.toHaveBeenCalled();
+  });
+
+  it("打开非 Codex Agent 回退项目目录失败时返回明确错误", async () => {
+    electronMock.shellOpenPath.mockResolvedValue("拒绝访问");
+    const { registerIpc } = await import("./registerIpc");
+    const logSnapshot: AgentStateSnapshot = {
+      ...snapshot,
+      providers: [
+        {
+          ...provider,
+          id: "log",
+          name: "通用日志",
+          adapterType: "log"
+        }
+      ],
+      tasks: [
+        {
+          ...task,
+          providerId: "log"
+        }
+      ]
+    };
+    const hub = {
+      subscribe: vi.fn(() => vi.fn()),
+      getSnapshot: vi.fn(() => logSnapshot)
+    };
+    const settingsStore = {
+      get: vi.fn(() => ({} as AppSettings)),
+      update: vi.fn()
+    };
+    const windows = {
+      openTaskCenter: vi.fn(),
+      openSettings: vi.fn(),
+      setIslandMode: vi.fn(),
+      closePopup: vi.fn(),
+      updateSettings: vi.fn()
+    };
+
+    registerIpc(hub as never, settingsStore as never, windows as never);
+    const handler = electronMock.handlers.get(codePulseChannels.tasksOpenAgent);
+    const result = await handler?.({}, "task-1");
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "IPC_ERROR",
+        message: "Agent 项目目录打开失败：拒绝访问"
+      }
+    });
+    expect(electronMock.shellOpenPath).toHaveBeenCalledWith(task.projectPath);
+    expect(electronMock.spawn).not.toHaveBeenCalled();
+  });
+
+  it("打开 Agent 时拒绝未知数据源", async () => {
+    const { registerIpc } = await import("./registerIpc");
+    const unsupportedSnapshot: AgentStateSnapshot = {
+      ...snapshot,
+      providers: [],
+      tasks: [
+        {
+          ...task,
+          providerId: "unknown"
         }
       ]
     };
@@ -349,6 +442,7 @@ describe("registerIpc", () => {
         message: "该任务暂不支持打开 Agent"
       }
     });
+    expect(electronMock.shellOpenPath).not.toHaveBeenCalled();
     expect(electronMock.spawn).not.toHaveBeenCalled();
   });
 

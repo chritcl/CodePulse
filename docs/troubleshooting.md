@@ -33,6 +33,10 @@
 
 渲染进程只能通过 `window.codePulse` 调用白名单 API。若页面提示 IPC 调用失败，需要检查主进程是否完成 IPC 注册，以及 Preload 是否正确加载。
 
+## 打开 Agent 失败
+
+Codex 任务会在任务项目目录中通过受控 PowerShell 命令启动 Codex。Process、Log、CustomCommand 和 Mock 等无法恢复具体会话的数据源会回退打开任务项目目录。如果提示“Agent 启动目录暂不可用”或“Agent 项目目录暂不可用”，说明该任务没有可用项目路径；如果提示“Agent 项目目录打开失败”，需要检查目录是否存在以及当前用户是否有访问权限。
+
 ## 诊断导出包含敏感信息
 
 诊断导出会在主进程侧脱敏 Windows 用户目录、完整路径、API Key、Token、Authorization 和敏感命令参数。若仍发现敏感内容，应先停止分享该诊断文件，再补充对应脱敏规则。

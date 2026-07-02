@@ -101,9 +101,20 @@ const findTaskFromSnapshotOrHistory = (tasks: AgentTask[], taskId: string, histo
   return historyTask;
 };
 
-const canOpenAgent = (task: AgentTask, providers: AgentProvider[]): boolean => {
+type AgentOpenStrategy = "codexCli" | "projectDirectory";
+
+const resolveAgentOpenStrategy = (task: AgentTask, providers: AgentProvider[]): AgentOpenStrategy => {
   const provider = providers.find((item) => item.id === task.providerId);
-  return provider?.adapterType === "codex" || task.providerId === "codex";
+
+  if (provider?.adapterType === "codex" || task.providerId === "codex") {
+    return "codexCli";
+  }
+
+  if (provider) {
+    return "projectDirectory";
+  }
+
+  throw new Error("该任务暂不支持打开 Agent");
 };
 
 const buildProviderEnabledPatch = (providerId: string, enabled: boolean): AppSettingsPatch => {
@@ -233,6 +244,30 @@ const openCodexAgent = (task: AgentTask): void => {
   child.unref();
 };
 
+const openTaskProjectDirectory = async (task: AgentTask): Promise<void> => {
+  if (!task.projectPath?.trim()) {
+    throw new Error("任务项目目录暂不可用");
+  }
+
+  const openError = await shell.openPath(task.projectPath);
+
+  if (openError) {
+    throw new Error(`项目目录打开失败：${openError}`);
+  }
+};
+
+const openAgentProjectDirectory = async (task: AgentTask): Promise<void> => {
+  if (!task.projectPath?.trim()) {
+    throw new Error("Agent 项目目录暂不可用");
+  }
+
+  const openError = await shell.openPath(task.projectPath);
+
+  if (openError) {
+    throw new Error(`Agent 项目目录打开失败：${openError}`);
+  }
+};
+
 export const registerIpc = (
   hub: AgentStateHub,
   settingsStore: SettingsStore,
@@ -252,29 +287,22 @@ export const registerIpc = (
     wrap(async () => {
       const task = findTaskFromSnapshotOrHistory(hub.getSnapshot().tasks, readTaskId(taskId), historyStore);
 
-      if (!task.projectPath?.trim()) {
-        throw new Error("任务项目目录暂不可用");
-      }
-
-      const openError = await shell.openPath(task.projectPath);
-
-      if (openError) {
-        throw new Error(`项目目录打开失败：${openError}`);
-      }
-
+      await openTaskProjectDirectory(task);
       return true;
     })
   );
   ipcMain.handle(codePulseChannels.tasksOpenAgent, (_event, taskId: string) =>
-    wrap(() => {
+    wrap(async () => {
       const snapshot = hub.getSnapshot();
       const task = findTaskFromSnapshotOrHistory(snapshot.tasks, readTaskId(taskId), historyStore);
+      const strategy = resolveAgentOpenStrategy(task, snapshot.providers);
 
-      if (!canOpenAgent(task, snapshot.providers)) {
-        throw new Error("该任务暂不支持打开 Agent");
+      if (strategy === "codexCli") {
+        openCodexAgent(task);
+        return true;
       }
 
-      openCodexAgent(task);
+      await openAgentProjectDirectory(task);
       return true;
     })
   );
