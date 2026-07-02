@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import type { AppSettings } from "../../../shared/types/settings";
+import type { DisplayLike } from "../../../shared/types/window";
+import {
+  formatDisplayLabel,
+  formatIslandPlacementSummary,
+  islandPositionOptions,
+  normalizeTargetDisplayId
+} from "./settingsDisplayControls";
 import {
   formatNotificationThresholdSummary,
   formatQuietHoursSummary,
@@ -8,6 +15,8 @@ import {
 } from "./settingsNotificationControls";
 
 const settings = ref<AppSettings | null>(null);
+const displays = ref<DisplayLike[]>([]);
+const displayErrorMessage = ref<string | null>(null);
 const saving = ref(false);
 const customCommandArgsText = computed({
   get: () => settings.value?.providers.customCommand.args.join("\n") ?? "",
@@ -35,8 +44,42 @@ const notificationThresholdSummary = computed(() =>
     : ""
 );
 
+const islandPlacementSummary = computed(() =>
+  settings.value ? formatIslandPlacementSummary(settings.value.display, displays.value) : "暂未读取显示设置"
+);
+
+const displayOptions = computed(() =>
+  displays.value.map((display) => ({
+    value: display.id,
+    label: formatDisplayLabel(display)
+  }))
+);
+
+const refreshDisplays = async (): Promise<void> => {
+  try {
+    displays.value = await window.codePulse.system.getDisplays();
+    displayErrorMessage.value = null;
+
+    if (settings.value) {
+      settings.value.display.targetDisplayId = normalizeTargetDisplayId(
+        settings.value.display.targetDisplayId,
+        displays.value,
+        settings.value.display.followActiveDisplay
+      );
+    }
+  } catch (error) {
+    displayErrorMessage.value = error instanceof Error ? error.message : "显示器列表读取失败";
+  }
+};
+
 onMounted(async () => {
-  settings.value = await window.codePulse.settings.get();
+  const [loadedSettings] = await Promise.all([window.codePulse.settings.get(), refreshDisplays()]);
+  settings.value = loadedSettings;
+  settings.value.display.targetDisplayId = normalizeTargetDisplayId(
+    settings.value.display.targetDisplayId,
+    displays.value,
+    settings.value.display.followActiveDisplay
+  );
 });
 
 const normalizeQuietHours = (): void => {
@@ -48,12 +91,25 @@ const normalizeQuietHours = (): void => {
   settings.value.notifications.quietHoursEnd = normalizeQuietHourInput(settings.value.notifications.quietHoursEnd);
 };
 
+const normalizeDisplayTarget = (): void => {
+  if (!settings.value) {
+    return;
+  }
+
+  settings.value.display.targetDisplayId = normalizeTargetDisplayId(
+    settings.value.display.targetDisplayId,
+    displays.value,
+    settings.value.display.followActiveDisplay
+  );
+};
+
 const save = async (): Promise<void> => {
   if (!settings.value) {
     return;
   }
 
   normalizeQuietHours();
+  normalizeDisplayTarget();
   saving.value = true;
   settings.value = await window.codePulse.settings.update(settings.value);
   saving.value = false;
@@ -79,6 +135,46 @@ const save = async (): Promise<void> => {
       <div class="settings-row">
         <span>贴边弹窗</span>
         <el-switch v-model="settings.display.taskbarPopupEnabled" @change="save" />
+      </div>
+      <div class="settings-row settings-row--wide settings-row--stacked settings-row--policy">
+        <span>动态岛位置</span>
+        <div class="settings-inline-fields">
+          <el-select v-model="settings.display.islandPosition" placeholder="选择动态岛位置" @change="save">
+            <el-option v-for="item in islandPositionOptions" :key="item.value" :label="item.label" :value="item.value" />
+          </el-select>
+          <el-switch
+            v-model="settings.display.followActiveDisplay"
+            active-text="跟随活动显示器"
+            inactive-text="固定显示器"
+            @change="save"
+          />
+        </div>
+        <small>{{ islandPlacementSummary }}</small>
+      </div>
+      <div class="settings-row settings-row--wide settings-row--stacked settings-row--policy">
+        <span>目标显示器</span>
+        <div class="settings-inline-fields">
+          <el-select
+            v-model="settings.display.targetDisplayId"
+            clearable
+            :disabled="settings.display.followActiveDisplay"
+            placeholder="自动使用主显示器"
+            @change="save"
+            @clear="save"
+          >
+            <el-option v-for="item in displayOptions" :key="item.value" :label="item.label" :value="item.value" />
+          </el-select>
+          <el-button @click="refreshDisplays">刷新显示器</el-button>
+        </div>
+        <small>{{ displayErrorMessage ?? (settings.display.followActiveDisplay ? "当前会跟随活动显示器" : "显示器断开时会回落到主显示器") }}</small>
+      </div>
+      <div class="settings-row">
+        <span>全屏自动隐藏</span>
+        <el-switch v-model="settings.display.hideInFullscreen" @change="save" />
+      </div>
+      <div class="settings-row">
+        <span>始终置顶</span>
+        <el-switch v-model="settings.display.alwaysOnTop" @change="save" />
       </div>
       <div class="settings-row">
         <span>勿扰模式</span>
