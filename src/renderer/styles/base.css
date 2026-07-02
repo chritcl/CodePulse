@@ -476,6 +476,83 @@ button {
   display: block;
 }
 
+.provider-failure-box {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.provider-failure-box > span {
+  color: #8a96a3;
+  font-size: 12px;
+}
+
+.provider-failure-empty,
+.provider-failure-item {
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.provider-failure-empty {
+  padding: 10px;
+  color: #8a96a3;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.provider-failure-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.provider-failure-item strong,
+.provider-failure-item b,
+.provider-failure-item small,
+.provider-failure-item time {
+  overflow-wrap: anywhere;
+}
+
+.provider-failure-item b {
+  width: fit-content;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.provider-failure-item small,
+.provider-failure-item time {
+  color: #aeb8c5;
+}
+
+.provider-failure-item--error {
+  border-color: rgba(255, 92, 82, 0.42);
+}
+
+.provider-failure-item--error b {
+  color: #ffd6d2;
+  background: rgba(255, 92, 82, 0.22);
+}
+
+.provider-failure-item--warning {
+  border-color: rgba(245, 165, 36, 0.42);
+}
+
+.provider-failure-item--warning b {
+  color: #ffe1aa;
+  background: rgba(245, 165, 36, 0.2);
+}
+
+.provider-failure-item--info {
+  border-color: rgba(47, 140, 255, 0.42);
+}
+
+.provider-failure-item--info b {
+  color: #d8e9ff;
+  background: rgba(47, 140, 255, 0.2);
+}
+
 .center-main {
   min-width: 0;
   padding: 20px;

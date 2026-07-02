@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import { useStateStore } from "../../stores/stateStore";
 import TaskCard from "../../components/TaskCard.vue";
 import type { AgentActivity, AgentTask } from "../../../shared/types/agent";
+import { buildCenterProviderFailures } from "./centerProviderFailures";
 import {
   buildCenterRuntimeStats,
   buildCenterTaskSource,
@@ -79,6 +80,7 @@ const taskSource = computed(() => buildCenterTaskSource(stateStore.snapshot.task
 
 const filterOptions = computed(() => getCenterFilterOptions(taskSource.value));
 const runtimeStats = computed(() => buildCenterRuntimeStats(taskSource.value));
+const providerFailures = computed(() => buildCenterProviderFailures(stateStore.snapshot.providers));
 
 const filteredTasks = computed(() =>
   filterCenterTasks(taskSource.value, {
@@ -265,6 +267,22 @@ watch(
       <div class="connection-box">
         <span>连接状态</span>
         <b>{{ stateStore.snapshot.summary.label }}</b>
+      </div>
+
+      <div class="provider-failure-box">
+        <span>数据源状态</span>
+        <div v-if="providerFailures.length === 0" class="provider-failure-empty">暂无异常数据源</div>
+        <div
+          v-for="item in providerFailures"
+          :key="item.providerId"
+          class="provider-failure-item"
+          :class="`provider-failure-item--${item.severity}`"
+        >
+          <strong>{{ item.providerName }}</strong>
+          <b>{{ item.statusLabel }}</b>
+          <small>{{ item.recoveryText }}</small>
+          <time v-if="item.lastErrorAt">{{ formatTime(item.lastErrorAt) }}</time>
+        </div>
       </div>
     </aside>
 
