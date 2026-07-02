@@ -51,8 +51,24 @@ if (!hasSingleInstanceLock) {
         enabled: settings.providers.mock.enabled
       })
     ]);
+    let notifications: NotificationManager | null = null;
     const windows = new WindowManager(settings, (partialSettings) => settingsStore.update(partialSettings), {
-      snapshotProvider: () => hub.getSnapshot()
+      snapshotProvider: () => hub.getSnapshot(),
+      taskMenuActions: {
+        snoozeTask: (taskId, until) => {
+          const taskExists = hub.getSnapshot().tasks.some((task) => task.id === taskId);
+
+          if (!taskExists) {
+            throw new Error("任务不存在");
+          }
+
+          if (!notifications) {
+            throw new Error("通知服务暂不可用");
+          }
+
+          notifications.snooze(taskId, until);
+        }
+      }
     });
     const tray = new TrayManager(hub, windows);
     const explorerMonitor = new ExplorerRestartMonitor({
@@ -79,7 +95,7 @@ if (!hasSingleInstanceLock) {
         console.error(message);
       }
     });
-    const notifications = new NotificationManager({
+    notifications = new NotificationManager({
       settings,
       presenter: new ElectronNotificationPresenter(),
       openTaskCenter: (taskId) => windows.openTaskCenter(taskId)

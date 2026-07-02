@@ -17,6 +17,11 @@ interface WindowManagerOptions {
   fullscreenProbe?: FullscreenProbe;
   fullscreenPollIntervalMs?: number;
   snapshotProvider?: () => AgentStateSnapshot;
+  taskMenuActions?: IslandTaskMenuActions;
+}
+
+interface IslandTaskMenuActions {
+  snoozeTask?: (taskId: string, until: string) => Promise<void> | void;
 }
 
 const islandSizes: Record<IslandMode, WindowSize> = {
@@ -87,6 +92,7 @@ export class WindowManager {
   private readonly fullscreenProbe: FullscreenProbe;
   private readonly fullscreenPollIntervalMs: number;
   private readonly snapshotProvider: (() => AgentStateSnapshot) | undefined;
+  private readonly taskMenuActions: IslandTaskMenuActions | undefined;
   private readonly handleDisplayConfigurationChanged = (): void => {
     this.applyIslandMode(this.settings.display.islandMode);
     this.closePopup();
@@ -101,6 +107,7 @@ export class WindowManager {
     this.fullscreenProbe = options.fullscreenProbe ?? new NativeFullscreenProbe(getDisplays);
     this.fullscreenPollIntervalMs = options.fullscreenPollIntervalMs ?? 3000;
     this.snapshotProvider = options.snapshotProvider;
+    this.taskMenuActions = options.taskMenuActions;
   }
 
   updateSettings(settings: AppSettings): void {
@@ -431,6 +438,16 @@ export class WindowManager {
               void this.openTaskCenter(primaryTaskId);
             }
           },
+          ...(this.taskMenuActions?.snoozeTask
+            ? [
+                {
+                  label: "稍后提醒 15 分钟",
+                  click: () => {
+                    this.snoozeTaskFromMenu(primaryTaskId);
+                  }
+                }
+              ]
+            : []),
           {
             type: "separator"
           }
@@ -475,6 +492,22 @@ export class WindowManager {
     ]).popup({
       window: this.islandWindow
     });
+  }
+
+  private snoozeTaskFromMenu(taskId: string): void {
+    if (!this.taskMenuActions?.snoozeTask) {
+      return;
+    }
+
+    const until = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+    try {
+      void Promise.resolve(this.taskMenuActions.snoozeTask(taskId, until)).catch((error: unknown) => {
+        console.error("动态岛任务稍后提醒失败", error);
+      });
+    } finally {
+      this.setIslandMode("collapsed");
+    }
   }
 
   private getPrimaryTaskIdForMenu(): string | null {
