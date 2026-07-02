@@ -357,4 +357,28 @@ describe("NotificationManager", () => {
 
     expect(presenter.created).toHaveLength(0);
   });
+
+  it("暂停监控时抑制通知且恢复后同一事件仍可通知", () => {
+    const presenter = new TestPresenter();
+    const pausedSettings: AppSettings = {
+      ...defaultAppSettings,
+      paused: true
+    };
+    const { manager } = createManager(presenter, pausedSettings);
+    const snapshot = makeSnapshot({
+      tasks: [makeTask("failed", "failed")]
+    });
+
+    manager.handleSnapshot(snapshot);
+
+    expect(presenter.created).toHaveLength(0);
+
+    manager.updateSettings({
+      ...pausedSettings,
+      paused: false
+    });
+    manager.handleSnapshot(snapshot);
+
+    expect(presenter.created.map((notification) => notification.options.eventType)).toEqual(["taskFailed"]);
+  });
 });

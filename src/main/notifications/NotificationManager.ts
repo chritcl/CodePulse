@@ -285,7 +285,7 @@ export class NotificationManager {
   private canNotify(): boolean {
     const notificationSettings = this.settings.notifications;
 
-    if (!notificationSettings.enabled || notificationSettings.doNotDisturb) {
+    if (this.settings.paused || !notificationSettings.enabled || notificationSettings.doNotDisturb) {
       return false;
     }
 
