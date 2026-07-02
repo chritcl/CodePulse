@@ -4,8 +4,10 @@ import { useStateStore } from "../../stores/stateStore";
 import TaskCard from "../../components/TaskCard.vue";
 import type { AgentActivity, AgentTask } from "../../../shared/types/agent";
 import {
+  buildCenterRuntimeStats,
   buildCenterTaskSource,
   filterCenterTasks,
+  formatCenterRuntimeMinutes,
   getCenterFilterOptions,
   getTaskTimeline,
   type CenterTaskStatusFilter,
@@ -76,6 +78,7 @@ const isHistoryMode = computed(() => statusFilter.value === "history");
 const taskSource = computed(() => buildCenterTaskSource(stateStore.snapshot.tasks, historyTasks.value, isHistoryMode.value));
 
 const filterOptions = computed(() => getCenterFilterOptions(taskSource.value));
+const runtimeStats = computed(() => buildCenterRuntimeStats(taskSource.value));
 
 const filteredTasks = computed(() =>
   filterCenterTasks(taskSource.value, {
@@ -154,6 +157,14 @@ const formatTime = (value: string): string => new Date(value).toLocaleString("zh
   hour: "2-digit",
   minute: "2-digit"
 });
+
+const latestActivityText = computed(() => (runtimeStats.value.latestActivityAt ? formatTime(runtimeStats.value.latestActivityAt) : "暂无活动"));
+
+const longestInactiveText = computed(() =>
+  runtimeStats.value.longestInactiveTask
+    ? `${runtimeStats.value.longestInactiveTask.title} · ${formatCenterRuntimeMinutes(runtimeStats.value.longestInactiveTask.inactiveMinutes)}`
+    : "暂无运行或等待任务"
+);
 
 const copySummary = async (): Promise<void> => {
   if (!selectedTask.value) {
@@ -323,6 +334,47 @@ watch(
               <span>{{ activity.description }}</span>
             </div>
             <div v-if="selectedTask && selectedTimeline.length === 0" class="empty-state empty-state--compact">暂无活动记录</div>
+          </section>
+          <section class="runtime-panel">
+            <h3>运行统计</h3>
+            <div class="runtime-grid">
+              <div>
+                <b>{{ runtimeStats.totalTaskCount }}</b>
+                <span>总任务</span>
+              </div>
+              <div>
+                <b>{{ runtimeStats.runningTaskCount }}</b>
+                <span>运行中</span>
+              </div>
+              <div>
+                <b>{{ runtimeStats.waitingTaskCount }}</b>
+                <span>等待</span>
+              </div>
+              <div>
+                <b>{{ runtimeStats.failedTaskCount }}</b>
+                <span>失败</span>
+              </div>
+              <div>
+                <b>{{ runtimeStats.completedTaskCount }}</b>
+                <span>完成</span>
+              </div>
+              <div>
+                <b>{{ runtimeStats.historyTaskCount }}</b>
+                <span>历史样本</span>
+              </div>
+            </div>
+            <dl class="runtime-list">
+              <dt>覆盖数据源</dt>
+              <dd>{{ runtimeStats.providerCount }}</dd>
+              <dt>覆盖项目</dt>
+              <dd>{{ runtimeStats.projectCount }}</dd>
+              <dt>平均结束耗时</dt>
+              <dd>{{ formatCenterRuntimeMinutes(runtimeStats.averageFinishedDurationMinutes) }}</dd>
+              <dt>最长无活动</dt>
+              <dd>{{ longestInactiveText }}</dd>
+              <dt>最近活动</dt>
+              <dd>{{ latestActivityText }}</dd>
+            </dl>
           </section>
           <div class="quota-panel">
             <h3>额度</h3>

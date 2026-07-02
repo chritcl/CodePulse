@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { AgentActivity, AgentTask } from "../../../shared/types/agent";
-import { buildCenterTaskSource, filterCenterTasks, getCenterFilterOptions, getTaskTimeline } from "./centerTaskFilters";
+import {
+  buildCenterRuntimeStats,
+  buildCenterTaskSource,
+  filterCenterTasks,
+  formatCenterRuntimeMinutes,
+  getCenterFilterOptions,
+  getTaskTimeline
+} from "./centerTaskFilters";
 
 const fixedNow = new Date("2026-07-01T12:00:00.000Z");
 
@@ -167,5 +174,72 @@ describe("任务中心筛选逻辑", () => {
         title: "当前运行任务"
       }
     ]);
+  });
+
+  it("生成运行统计并跳过无效耗时样本", () => {
+    const tasks = [
+      makeTask({
+        id: "running",
+        status: "executing",
+        providerId: "codex",
+        projectName: "CodePulse",
+        startedAt: "2026-07-01T08:00:00.000Z",
+        lastActivityAt: "2026-07-01T11:40:00.000Z"
+      }),
+      makeTask({
+        id: "waiting",
+        status: "waiting",
+        providerId: "codex",
+        projectName: "CodePulse",
+        startedAt: "2026-07-01T09:00:00.000Z",
+        lastActivityAt: "2026-07-01T09:10:00.000Z"
+      }),
+      makeTask({
+        id: "failed",
+        status: "failed",
+        providerId: "mock",
+        projectName: "设计系统",
+        startedAt: "2026-07-01T09:00:00.000Z",
+        completedAt: "2026-07-01T10:00:00.000Z",
+        lastActivityAt: "2026-07-01T10:00:00.000Z"
+      }),
+      makeTask({
+        id: "completed",
+        status: "completed",
+        providerId: "mock",
+        projectName: "设计系统",
+        startedAt: "2026-07-01T07:00:00.000Z",
+        completedAt: "2026-07-01T08:30:00.000Z",
+        lastActivityAt: "2026-07-01T08:30:00.000Z"
+      }),
+      makeTask({
+        id: "invalid-duration",
+        status: "completed",
+        projectName: "设计系统",
+        startedAt: "2026-07-01T11:00:00.000Z",
+        completedAt: "2026-07-01T10:00:00.000Z"
+      })
+    ];
+
+    expect(buildCenterRuntimeStats(tasks, fixedNow)).toEqual({
+      totalTaskCount: 5,
+      runningTaskCount: 1,
+      waitingTaskCount: 1,
+      failedTaskCount: 1,
+      completedTaskCount: 2,
+      historyTaskCount: 3,
+      providerCount: 2,
+      projectCount: 2,
+      averageFinishedDurationMinutes: 75,
+      longestInactiveTask: {
+        id: "waiting",
+        title: "waiting 任务",
+        inactiveMinutes: 170
+      },
+      latestActivityAt: "2026-07-01T11:40:00.000Z"
+    });
+
+    expect(formatCenterRuntimeMinutes(null)).toBe("暂不可用");
+    expect(formatCenterRuntimeMinutes(90)).toBe("1 小时 30 分钟");
   });
 });

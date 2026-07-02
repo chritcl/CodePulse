@@ -17,6 +17,26 @@ export interface CenterFilterOptions {
   projects: string[];
 }
 
+export interface CenterInactiveTask {
+  id: string;
+  title: string;
+  inactiveMinutes: number;
+}
+
+export interface CenterRuntimeStats {
+  totalTaskCount: number;
+  runningTaskCount: number;
+  waitingTaskCount: number;
+  failedTaskCount: number;
+  completedTaskCount: number;
+  historyTaskCount: number;
+  providerCount: number;
+  projectCount: number;
+  averageFinishedDurationMinutes: number | null;
+  longestInactiveTask: CenterInactiveTask | null;
+  latestActivityAt: string | null;
+}
+
 const runningStatuses = new Set<AgentTask["status"]>(["detecting", "analyzing", "planning", "executing", "testing"]);
 const historyStatuses = new Set<AgentTask["status"]>(["completed", "failed", "stale"]);
 const asciiFirstCompare = (left: string, right: string): number => {
@@ -59,6 +79,15 @@ const matchesKeyword = (task: AgentTask, keyword: string): boolean => {
 };
 
 const startOfToday = (date: Date): Date => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+const toTimestamp = (value: string | null): number | null => {
+  if (!value) {
+    return null;
+  }
+
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
 
 const matchesTimeRange = (task: AgentTask, timeRange: CenterTaskTimeRange, now: Date): boolean => {
   if (timeRange === "all") {
@@ -126,4 +155,77 @@ export const getTaskTimeline = (activities: AgentActivity[], taskId: string | nu
   return activities
     .filter((activity) => activity.taskId === taskId)
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+};
+
+export const buildCenterRuntimeStats = (tasks: AgentTask[], now: Date = new Date()): CenterRuntimeStats => {
+  const nowTimestamp = now.getTime();
+  const activeTasks = tasks.filter((task) => runningStatuses.has(task.status) || task.status === "waiting");
+  const durationMinutes: number[] = [];
+  let latestActivityAt: string | null = null;
+  let latestActivityTimestamp = Number.NEGATIVE_INFINITY;
+  let longestInactiveTask: CenterInactiveTask | null = null;
+
+  for (const task of tasks) {
+    const startedAt = toTimestamp(task.startedAt);
+    const completedAt = toTimestamp(task.completedAt);
+    const lastActivityAt = toTimestamp(task.lastActivityAt);
+
+    if (startedAt !== null && completedAt !== null && completedAt >= startedAt) {
+      durationMinutes.push(Math.round((completedAt - startedAt) / 60000));
+    }
+
+    if (lastActivityAt !== null && lastActivityAt > latestActivityTimestamp) {
+      latestActivityTimestamp = lastActivityAt;
+      latestActivityAt = task.lastActivityAt;
+    }
+  }
+
+  if (Number.isFinite(nowTimestamp)) {
+    for (const task of activeTasks) {
+      const lastActivityAt = toTimestamp(task.lastActivityAt);
+
+      if (lastActivityAt === null || lastActivityAt > nowTimestamp) {
+        continue;
+      }
+
+      const inactiveMinutes = Math.floor((nowTimestamp - lastActivityAt) / 60000);
+
+      if (!longestInactiveTask || inactiveMinutes > longestInactiveTask.inactiveMinutes) {
+        longestInactiveTask = {
+          id: task.id,
+          title: task.title,
+          inactiveMinutes
+        };
+      }
+    }
+  }
+
+  return {
+    totalTaskCount: tasks.length,
+    runningTaskCount: tasks.filter((task) => runningStatuses.has(task.status)).length,
+    waitingTaskCount: tasks.filter((task) => task.status === "waiting").length,
+    failedTaskCount: tasks.filter((task) => task.status === "failed").length,
+    completedTaskCount: tasks.filter((task) => task.status === "completed").length,
+    historyTaskCount: tasks.filter((task) => historyStatuses.has(task.status)).length,
+    providerCount: new Set(tasks.map((task) => task.providerId)).size,
+    projectCount: new Set(tasks.map((task) => task.projectName)).size,
+    averageFinishedDurationMinutes:
+      durationMinutes.length > 0 ? Math.round(durationMinutes.reduce((sum, minutes) => sum + minutes, 0) / durationMinutes.length) : null,
+    longestInactiveTask,
+    latestActivityAt
+  };
+};
+
+export const formatCenterRuntimeMinutes = (minutes: number | null): string => {
+  if (minutes === null) {
+    return "暂不可用";
+  }
+
+  if (minutes < 60) {
+    return `${minutes} 分钟`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes === 0 ? `${hours} 小时` : `${hours} 小时 ${remainingMinutes} 分钟`;
 };
