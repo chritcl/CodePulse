@@ -1,5 +1,6 @@
 import { BrowserWindow, Menu, screen } from "electron";
 import path from "node:path";
+import type { AgentStateSnapshot } from "../../shared/types/agent";
 import type { AppSettings, AppSettingsPatch } from "../../shared/types/settings";
 import type { CodePulseWindowKind, IslandMode, RectLike } from "../../shared/types/window";
 import { getDisplays } from "../system/displays";
@@ -15,6 +16,7 @@ interface WindowSize {
 interface WindowManagerOptions {
   fullscreenProbe?: FullscreenProbe;
   fullscreenPollIntervalMs?: number;
+  snapshotProvider?: () => AgentStateSnapshot;
 }
 
 const islandSizes: Record<IslandMode, WindowSize> = {
@@ -84,6 +86,7 @@ export class WindowManager {
   private displayChangeHandlingStarted = false;
   private readonly fullscreenProbe: FullscreenProbe;
   private readonly fullscreenPollIntervalMs: number;
+  private readonly snapshotProvider: (() => AgentStateSnapshot) | undefined;
   private readonly handleDisplayConfigurationChanged = (): void => {
     this.applyIslandMode(this.settings.display.islandMode);
     this.closePopup();
@@ -97,6 +100,7 @@ export class WindowManager {
     this.settings = settings;
     this.fullscreenProbe = options.fullscreenProbe ?? new NativeFullscreenProbe(getDisplays);
     this.fullscreenPollIntervalMs = options.fullscreenPollIntervalMs ?? 3000;
+    this.snapshotProvider = options.snapshotProvider;
   }
 
   updateSettings(settings: AppSettings): void {
@@ -418,7 +422,23 @@ export class WindowManager {
       return;
     }
 
+    const primaryTaskId = this.getPrimaryTaskIdForMenu();
+    const taskMenuItems: Electron.MenuItemConstructorOptions[] = primaryTaskId
+      ? [
+          {
+            label: "打开当前任务",
+            click: () => {
+              void this.openTaskCenter(primaryTaskId);
+            }
+          },
+          {
+            type: "separator"
+          }
+        ]
+      : [];
+
     Menu.buildFromTemplate([
+      ...taskMenuItems,
       {
         label: "展开动态岛",
         click: () => {
@@ -455,6 +475,14 @@ export class WindowManager {
     ]).popup({
       window: this.islandWindow
     });
+  }
+
+  private getPrimaryTaskIdForMenu(): string | null {
+    try {
+      return this.snapshotProvider?.().summary.primaryTaskId ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private setIslandBounds(bounds: RectLike): void {

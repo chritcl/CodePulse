@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentStateSnapshot } from "../../shared/types/agent";
 import { defaultAppSettings } from "../../shared/types/settings";
 import type { RectLike } from "../../shared/types/window";
 
@@ -76,6 +77,29 @@ const screenMock = vi.hoisted(() => ({
     }
   }
 }));
+
+const makeSnapshot = (primaryTaskId: string | null): AgentStateSnapshot => ({
+  version: 1,
+  generatedAt: "2026-07-02T12:00:00.000Z",
+  providers: [],
+  tasks: [],
+  activities: [],
+  quotas: [],
+  summary: {
+    status: primaryTaskId ? "executing" : "idle",
+    label: primaryTaskId ? "运行中" : "空闲",
+    runningTaskCount: primaryTaskId ? 1 : 0,
+    waitingTaskCount: 0,
+    failedTaskCount: 0,
+    completedTaskCount: 0,
+    disconnectedProviderCount: 0,
+    quotaCriticalProviderCount: 0,
+    primaryTaskId,
+    aggregateText: primaryTaskId ? "1 个任务运行中" : "空闲",
+    hasStaleData: false,
+    updatedAt: "2026-07-02T12:00:00.000Z"
+  }
+});
 
 class TestBrowserWindow {
   static instances: TestBrowserWindow[] = [];
@@ -271,6 +295,47 @@ describe("WindowManager 动态岛拖拽持久化", () => {
     menu.template.find((item) => item.label === "设置")?.click?.();
     const settingsWindow = TestBrowserWindow.instances[2];
     expect(settingsWindow).toBeDefined();
+  });
+
+  it("右键动态岛时可直接打开当前任务", async () => {
+    const { WindowManager } = await import("./windowManager");
+    const manager = new WindowManager(
+      {
+        ...defaultAppSettings,
+        display: {
+          ...defaultAppSettings.display,
+          islandMode: "normal"
+        }
+      },
+      undefined,
+      {
+        snapshotProvider: () => makeSnapshot("task-1")
+      }
+    );
+
+    await manager.createIslandWindow();
+    const window = TestBrowserWindow.instances[0];
+
+    window?.webContents.emit("context-menu");
+
+    const menu = menuMock.buildFromTemplate.mock.results[0]?.value as { template: TestMenuItem[] };
+    expect(menu.template.map((item) => item.label ?? item.type)).toEqual([
+      "打开当前任务",
+      "separator",
+      "展开动态岛",
+      "收起动态岛",
+      "隐藏动态岛",
+      "separator",
+      "打开任务中心",
+      "设置"
+    ]);
+
+    menu.template.find((item) => item.label === "打开当前任务")?.click?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const centerWindow = TestBrowserWindow.instances[1];
+    expect(centerWindow?.webContents.send).toHaveBeenCalledWith("codepulse:task:focus", "task-1");
   });
 
   it("检测到全屏应用时隐藏动态岛和贴边弹窗，退出全屏后恢复动态岛", async () => {

@@ -51,7 +51,9 @@ if (!hasSingleInstanceLock) {
         enabled: settings.providers.mock.enabled
       })
     ]);
-    const windows = new WindowManager(settings, (partialSettings) => settingsStore.update(partialSettings));
+    const windows = new WindowManager(settings, (partialSettings) => settingsStore.update(partialSettings), {
+      snapshotProvider: () => hub.getSnapshot()
+    });
     const tray = new TrayManager(hub, windows);
     const explorerMonitor = new ExplorerRestartMonitor({
       onExplorerRestart: () => {
