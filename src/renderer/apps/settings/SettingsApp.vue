@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import type { AppSettings } from "../../../shared/types/settings";
+import {
+  formatNotificationThresholdSummary,
+  formatQuietHoursSummary,
+  normalizeQuietHourInput
+} from "./settingsNotificationControls";
 
 const settings = ref<AppSettings | null>(null);
 const saving = ref(false);
@@ -18,15 +23,37 @@ const customCommandArgsText = computed({
   }
 });
 
+const quietHoursSummary = computed(() =>
+  settings.value
+    ? formatQuietHoursSummary(settings.value.notifications.quietHoursStart, settings.value.notifications.quietHoursEnd)
+    : "未启用时间段"
+);
+
+const notificationThresholdSummary = computed(() =>
+  settings.value
+    ? formatNotificationThresholdSummary(settings.value.notifications.quotaWarningPercent, settings.value.notifications.staleMinutes)
+    : ""
+);
+
 onMounted(async () => {
   settings.value = await window.codePulse.settings.get();
 });
+
+const normalizeQuietHours = (): void => {
+  if (!settings.value) {
+    return;
+  }
+
+  settings.value.notifications.quietHoursStart = normalizeQuietHourInput(settings.value.notifications.quietHoursStart);
+  settings.value.notifications.quietHoursEnd = normalizeQuietHourInput(settings.value.notifications.quietHoursEnd);
+};
 
 const save = async (): Promise<void> => {
   if (!settings.value) {
     return;
   }
 
+  normalizeQuietHours();
   saving.value = true;
   settings.value = await window.codePulse.settings.update(settings.value);
   saving.value = false;
@@ -56,6 +83,56 @@ const save = async (): Promise<void> => {
       <div class="settings-row">
         <span>勿扰模式</span>
         <el-switch v-model="settings.notifications.doNotDisturb" @change="save" />
+      </div>
+      <div class="settings-row">
+        <span>通知总开关</span>
+        <el-switch v-model="settings.notifications.enabled" @change="save" />
+      </div>
+      <div class="settings-row settings-row--wide settings-row--stacked settings-row--policy">
+        <span>勿扰时间段</span>
+        <div class="settings-inline-fields">
+          <el-input
+            v-model="settings.notifications.quietHoursStart"
+            clearable
+            placeholder="开始时间，例如 22:00"
+            @change="save"
+            @clear="save"
+          />
+          <el-input
+            v-model="settings.notifications.quietHoursEnd"
+            clearable
+            placeholder="结束时间，例如 07:30"
+            @change="save"
+            @clear="save"
+          />
+        </div>
+        <small>{{ quietHoursSummary }}</small>
+      </div>
+      <div class="settings-row settings-row--wide settings-row--stacked settings-row--policy">
+        <span>通知阈值</span>
+        <div class="settings-number-fields">
+          <label>
+            <small>额度提醒</small>
+            <el-input-number
+              v-model="settings.notifications.quotaWarningPercent"
+              :min="1"
+              :max="100"
+              :step="1"
+              @change="save"
+            />
+          </label>
+          <label>
+            <small>无活动提醒</small>
+            <el-input-number
+              v-model="settings.notifications.staleMinutes"
+              :min="1"
+              :max="1440"
+              :step="1"
+              @change="save"
+            />
+          </label>
+        </div>
+        <small>{{ notificationThresholdSummary }}</small>
       </div>
       <div class="settings-row settings-row--wide">
         <span>自动收起延迟</span>
