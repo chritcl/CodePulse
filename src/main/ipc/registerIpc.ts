@@ -1,7 +1,7 @@
-import { BrowserWindow, clipboard, ipcMain } from "electron";
+import { BrowserWindow, ipcMain } from "electron";
 import { codePulseChannels } from "../../shared/ipc/channels";
 import { toIpcFailure, toIpcSuccess } from "../../shared/ipc/schema";
-import type { AgentActivity, AgentProvider, AgentTask } from "../../shared/types/agent";
+import type { AgentActivity } from "../../shared/types/agent";
 import type { AppSettingsPatch } from "../../shared/types/settings";
 import type { IslandMode } from "../../shared/types/window";
 import type { NotificationManager } from "../notifications/NotificationManager";
@@ -11,6 +11,7 @@ import type { AgentStateHub } from "../state/AgentStateHub";
 import type { WindowManager } from "../windows/windowManager";
 import { redactDiagnosticText } from "./redaction";
 import {
+  copyTaskSummaryForTaskId,
   findTaskFromSnapshotOrHistory,
   findTaskOrThrow,
   openAgentForTaskId,
@@ -50,35 +51,6 @@ const wrap = async <T>(handler: () => Promise<T> | T) => {
     return toIpcFailure<T>(code, message);
   }
 };
-
-const statusLabels: Record<AgentTask["status"], string> = {
-  idle: "空闲",
-  detecting: "检测中",
-  analyzing: "分析中",
-  planning: "规划中",
-  executing: "运行中",
-  testing: "测试中",
-  waiting: "等待确认",
-  completed: "已完成",
-  failed: "失败",
-  disconnected: "已断开",
-  stale: "数据过期",
-  unknown: "未知"
-};
-
-const buildTaskSummary = (task: AgentTask, provider?: AgentProvider): string =>
-  [
-    `任务：${task.title}`,
-    `Agent：${provider?.name ?? task.providerId}`,
-    `项目：${task.projectName}`,
-    `状态：${statusLabels[task.status]}`,
-    `阶段：${task.stage}`,
-    `最近活动：${task.lastActivityText}`,
-    task.waitingAction ? `等待处理：${task.waitingAction.description}` : null,
-    task.errorMessage ? `错误：${task.errorMessage}` : null
-  ]
-    .filter((line): line is string => Boolean(line))
-    .join("\n");
 
 const buildProviderEnabledPatch = (providerId: string, enabled: boolean): AppSettingsPatch => {
   if (providerId === "codex") {
@@ -221,11 +193,7 @@ export const registerIpc = (
     wrap(() => {
       const normalizedTaskId = readTaskId(taskId);
       const snapshot = hub.getSnapshot();
-      const task = findTaskFromSnapshotOrHistory(snapshot.tasks, normalizedTaskId, historyStore);
-      const provider = snapshot.providers.find((item) => item.id === task.providerId);
-      const summary = buildTaskSummary(task, provider);
-      clipboard.writeText(summary);
-      return summary;
+      return copyTaskSummaryForTaskId(snapshot, normalizedTaskId, historyStore);
     })
   );
   ipcMain.handle(codePulseChannels.tasksListHistory, (_event, limit?: number) =>

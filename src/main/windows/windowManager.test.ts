@@ -426,6 +426,49 @@ describe("WindowManager 动态岛拖拽持久化", () => {
     expect(openAgentTask).toHaveBeenCalledWith("task-1");
   });
 
+  it("右键动态岛时可复制当前任务摘要", async () => {
+    const copySummaryTask = vi.fn();
+    const { WindowManager } = await import("./windowManager");
+    const manager = new WindowManager(
+      {
+        ...defaultAppSettings,
+        display: {
+          ...defaultAppSettings.display,
+          islandMode: "normal"
+        }
+      },
+      undefined,
+      {
+        snapshotProvider: () => makeSnapshot("task-1"),
+        taskMenuActions: {
+          copySummaryTask
+        }
+      }
+    );
+
+    await manager.createIslandWindow();
+    const window = TestBrowserWindow.instances[0];
+
+    window?.webContents.emit("context-menu");
+
+    const menu = menuMock.buildFromTemplate.mock.results[0]?.value as { template: TestMenuItem[] };
+    expect(menu.template.map((item) => item.label ?? item.type)).toEqual([
+      "打开当前任务",
+      "复制摘要",
+      "separator",
+      "展开动态岛",
+      "收起动态岛",
+      "隐藏动态岛",
+      "separator",
+      "打开任务中心",
+      "设置"
+    ]);
+
+    menu.template.find((item) => item.label === "复制摘要")?.click?.();
+
+    expect(copySummaryTask).toHaveBeenCalledWith("task-1");
+  });
+
   it("检测到全屏应用时隐藏动态岛和贴边弹窗，退出全屏后恢复动态岛", async () => {
     const fullscreenProbe = {
       isFullscreenActive: vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false)

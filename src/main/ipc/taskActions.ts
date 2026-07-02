@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { shell } from "electron";
+import { clipboard, shell } from "electron";
 import type { AgentProvider, AgentStateSnapshot, AgentTask } from "../../shared/types/agent";
 
 export interface TaskHistoryReader {
@@ -50,6 +50,47 @@ const resolveAgentOpenStrategy = (task: AgentTask, providers: AgentProvider[]): 
   }
 
   throw new Error("该任务暂不支持打开 Agent");
+};
+
+const statusLabels: Record<AgentTask["status"], string> = {
+  idle: "空闲",
+  detecting: "检测中",
+  analyzing: "分析中",
+  planning: "规划中",
+  executing: "运行中",
+  testing: "测试中",
+  waiting: "等待确认",
+  completed: "已完成",
+  failed: "失败",
+  disconnected: "已断开",
+  stale: "数据过期",
+  unknown: "未知"
+};
+
+export const buildTaskSummary = (task: AgentTask, provider?: AgentProvider): string =>
+  [
+    `任务：${task.title}`,
+    `Agent：${provider?.name ?? task.providerId}`,
+    `项目：${task.projectName}`,
+    `状态：${statusLabels[task.status]}`,
+    `阶段：${task.stage}`,
+    `最近活动：${task.lastActivityText}`,
+    task.waitingAction ? `等待处理：${task.waitingAction.description}` : null,
+    task.errorMessage ? `错误：${task.errorMessage}` : null
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+
+export const copyTaskSummaryForTaskId = (
+  snapshot: AgentStateSnapshot,
+  taskId: string,
+  historyStore?: TaskHistoryReader
+): string => {
+  const task = findTaskFromSnapshotOrHistory(snapshot.tasks, taskId, historyStore);
+  const provider = snapshot.providers.find((item) => item.id === task.providerId);
+  const summary = buildTaskSummary(task, provider);
+  clipboard.writeText(summary);
+  return summary;
 };
 
 const openCodexAgent = (task: AgentTask): void => {

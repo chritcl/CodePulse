@@ -22,6 +22,7 @@ interface WindowManagerOptions {
 
 interface IslandTaskMenuActions {
   openAgentTask?: (taskId: string) => Promise<void> | void;
+  copySummaryTask?: (taskId: string) => Promise<string | void> | string | void;
   snoozeTask?: (taskId: string, until: string) => Promise<void> | void;
 }
 
@@ -449,6 +450,16 @@ export class WindowManager {
                 }
               ]
             : []),
+          ...(this.taskMenuActions?.copySummaryTask
+            ? [
+                {
+                  label: "复制摘要",
+                  click: () => {
+                    this.copySummaryTaskFromMenu(primaryTaskId);
+                  }
+                }
+              ]
+            : []),
           ...(this.taskMenuActions?.snoozeTask
             ? [
                 {
@@ -502,6 +513,16 @@ export class WindowManager {
       }
     ]).popup({
       window: this.islandWindow
+    });
+  }
+
+  private copySummaryTaskFromMenu(taskId: string): void {
+    if (!this.taskMenuActions?.copySummaryTask) {
+      return;
+    }
+
+    void Promise.resolve(this.taskMenuActions.copySummaryTask(taskId)).catch((error: unknown) => {
+      console.error("动态岛复制摘要失败", error);
     });
   }
 
