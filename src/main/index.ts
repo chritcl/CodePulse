@@ -6,6 +6,7 @@ import { MockAdapter } from "./adapters/MockAdapter";
 import { ProcessAdapter } from "./adapters/ProcessAdapter";
 import { registerAppLifecycle } from "./bootstrap/appLifecycle";
 import { registerIpc } from "./ipc/registerIpc";
+import { openAgentForTaskId } from "./ipc/taskActions";
 import { ElectronNotificationPresenter } from "./notifications/ElectronNotificationPresenter";
 import { NotificationManager } from "./notifications/NotificationManager";
 import { HistoryStore } from "./persistence/historyStore";
@@ -55,6 +56,7 @@ if (!hasSingleInstanceLock) {
     const windows = new WindowManager(settings, (partialSettings) => settingsStore.update(partialSettings), {
       snapshotProvider: () => hub.getSnapshot(),
       taskMenuActions: {
+        openAgentTask: (taskId) => openAgentForTaskId(hub.getSnapshot(), taskId),
         snoozeTask: (taskId, until) => {
           const taskExists = hub.getSnapshot().tasks.some((task) => task.id === taskId);
 

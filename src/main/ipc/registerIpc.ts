@@ -1,5 +1,4 @@
-import { spawn } from "node:child_process";
-import { BrowserWindow, clipboard, ipcMain, shell } from "electron";
+import { BrowserWindow, clipboard, ipcMain } from "electron";
 import { codePulseChannels } from "../../shared/ipc/channels";
 import { toIpcFailure, toIpcSuccess } from "../../shared/ipc/schema";
 import type { AgentActivity, AgentProvider, AgentTask } from "../../shared/types/agent";
@@ -12,6 +11,13 @@ import type { AgentStateHub } from "../state/AgentStateHub";
 import type { WindowManager } from "../windows/windowManager";
 import { redactDiagnosticText } from "./redaction";
 import {
+  findTaskFromSnapshotOrHistory,
+  findTaskOrThrow,
+  openAgentForTaskId,
+  openTaskProjectDirectory,
+  type TaskHistoryReader
+} from "./taskActions";
+import {
   readHistoryLimit,
   readIslandMode,
   readOptionalProviderId,
@@ -23,8 +29,7 @@ import {
   toIpcError
 } from "./validation";
 
-export interface HistoryReader {
-  getRecentTasks(limit?: number): AgentTask[];
+export interface HistoryReader extends TaskHistoryReader {
   getTaskActivities(taskId: string, limit?: number): AgentActivity[];
   getRuntimeStatus?(): unknown;
 }
@@ -74,48 +79,6 @@ const buildTaskSummary = (task: AgentTask, provider?: AgentProvider): string =>
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
-
-const findTaskOrThrow = (tasks: AgentTask[], taskId: string): AgentTask => {
-  const task = tasks.find((item) => item.id === taskId);
-
-  if (!task) {
-    throw new Error("任务不存在");
-  }
-
-  return task;
-};
-
-const findTaskFromSnapshotOrHistory = (tasks: AgentTask[], taskId: string, historyStore?: HistoryReader): AgentTask => {
-  const task = tasks.find((item) => item.id === taskId);
-
-  if (task) {
-    return task;
-  }
-
-  const historyTask = historyStore?.getRecentTasks(500).find((item) => item.id === taskId);
-
-  if (!historyTask) {
-    throw new Error("任务不存在");
-  }
-
-  return historyTask;
-};
-
-type AgentOpenStrategy = "codexCli" | "projectDirectory";
-
-const resolveAgentOpenStrategy = (task: AgentTask, providers: AgentProvider[]): AgentOpenStrategy => {
-  const provider = providers.find((item) => item.id === task.providerId);
-
-  if (provider?.adapterType === "codex" || task.providerId === "codex") {
-    return "codexCli";
-  }
-
-  if (provider) {
-    return "projectDirectory";
-  }
-
-  throw new Error("该任务暂不支持打开 Agent");
-};
 
 const buildProviderEnabledPatch = (providerId: string, enabled: boolean): AppSettingsPatch => {
   if (providerId === "codex") {
@@ -223,51 +186,6 @@ const applyProviderRuntimeSettings = async (hub: AgentStateHub, settings: AppSet
   }
 };
 
-const openCodexAgent = (task: AgentTask): void => {
-  if (process.platform !== "win32") {
-    throw new Error("当前系统暂不支持打开 Agent");
-  }
-
-  if (!task.projectPath?.trim()) {
-    throw new Error("Agent 启动目录暂不可用");
-  }
-
-  const child = spawn(
-    "powershell.exe",
-    ["-NoProfile", "-NoExit", "-Command", "Set-Location -LiteralPath $args[0]; codex", task.projectPath],
-    {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: false
-    }
-  );
-  child.unref();
-};
-
-const openTaskProjectDirectory = async (task: AgentTask): Promise<void> => {
-  if (!task.projectPath?.trim()) {
-    throw new Error("任务项目目录暂不可用");
-  }
-
-  const openError = await shell.openPath(task.projectPath);
-
-  if (openError) {
-    throw new Error(`项目目录打开失败：${openError}`);
-  }
-};
-
-const openAgentProjectDirectory = async (task: AgentTask): Promise<void> => {
-  if (!task.projectPath?.trim()) {
-    throw new Error("Agent 项目目录暂不可用");
-  }
-
-  const openError = await shell.openPath(task.projectPath);
-
-  if (openError) {
-    throw new Error(`Agent 项目目录打开失败：${openError}`);
-  }
-};
-
 export const registerIpc = (
   hub: AgentStateHub,
   settingsStore: SettingsStore,
@@ -294,15 +212,8 @@ export const registerIpc = (
   ipcMain.handle(codePulseChannels.tasksOpenAgent, (_event, taskId: string) =>
     wrap(async () => {
       const snapshot = hub.getSnapshot();
-      const task = findTaskFromSnapshotOrHistory(snapshot.tasks, readTaskId(taskId), historyStore);
-      const strategy = resolveAgentOpenStrategy(task, snapshot.providers);
 
-      if (strategy === "codexCli") {
-        openCodexAgent(task);
-        return true;
-      }
-
-      await openAgentProjectDirectory(task);
+      await openAgentForTaskId(snapshot, readTaskId(taskId), historyStore);
       return true;
     })
   );

@@ -383,6 +383,49 @@ describe("WindowManager 动态岛拖拽持久化", () => {
     expect(window?.webContents.send).toHaveBeenLastCalledWith("codepulse:island:mode", "collapsed");
   });
 
+  it("右键动态岛时可打开当前任务对应 Agent", async () => {
+    const openAgentTask = vi.fn();
+    const { WindowManager } = await import("./windowManager");
+    const manager = new WindowManager(
+      {
+        ...defaultAppSettings,
+        display: {
+          ...defaultAppSettings.display,
+          islandMode: "normal"
+        }
+      },
+      undefined,
+      {
+        snapshotProvider: () => makeSnapshot("task-1"),
+        taskMenuActions: {
+          openAgentTask
+        }
+      }
+    );
+
+    await manager.createIslandWindow();
+    const window = TestBrowserWindow.instances[0];
+
+    window?.webContents.emit("context-menu");
+
+    const menu = menuMock.buildFromTemplate.mock.results[0]?.value as { template: TestMenuItem[] };
+    expect(menu.template.map((item) => item.label ?? item.type)).toEqual([
+      "打开当前任务",
+      "打开 Agent",
+      "separator",
+      "展开动态岛",
+      "收起动态岛",
+      "隐藏动态岛",
+      "separator",
+      "打开任务中心",
+      "设置"
+    ]);
+
+    menu.template.find((item) => item.label === "打开 Agent")?.click?.();
+
+    expect(openAgentTask).toHaveBeenCalledWith("task-1");
+  });
+
   it("检测到全屏应用时隐藏动态岛和贴边弹窗，退出全屏后恢复动态岛", async () => {
     const fullscreenProbe = {
       isFullscreenActive: vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false)

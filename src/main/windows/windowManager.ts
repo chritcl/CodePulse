@@ -21,6 +21,7 @@ interface WindowManagerOptions {
 }
 
 interface IslandTaskMenuActions {
+  openAgentTask?: (taskId: string) => Promise<void> | void;
   snoozeTask?: (taskId: string, until: string) => Promise<void> | void;
 }
 
@@ -438,6 +439,16 @@ export class WindowManager {
               void this.openTaskCenter(primaryTaskId);
             }
           },
+          ...(this.taskMenuActions?.openAgentTask
+            ? [
+                {
+                  label: "打开 Agent",
+                  click: () => {
+                    this.openAgentTaskFromMenu(primaryTaskId);
+                  }
+                }
+              ]
+            : []),
           ...(this.taskMenuActions?.snoozeTask
             ? [
                 {
@@ -491,6 +502,16 @@ export class WindowManager {
       }
     ]).popup({
       window: this.islandWindow
+    });
+  }
+
+  private openAgentTaskFromMenu(taskId: string): void {
+    if (!this.taskMenuActions?.openAgentTask) {
+      return;
+    }
+
+    void Promise.resolve(this.taskMenuActions.openAgentTask(taskId)).catch((error: unknown) => {
+      console.error("动态岛打开 Agent 失败", error);
     });
   }
 
