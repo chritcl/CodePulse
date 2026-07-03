@@ -736,6 +736,37 @@ button {
   margin-top: 24px;
 }
 
+.settings-status {
+  display: grid;
+  gap: 5px;
+  margin-top: 18px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.settings-status strong {
+  color: #e8edf4;
+  font-size: 13px;
+}
+
+.settings-status span {
+  color: #9ba7b6;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.settings-status--success {
+  border-color: rgba(70, 190, 142, 0.35);
+  background: rgba(70, 190, 142, 0.1);
+}
+
+.settings-status--error {
+  border-color: rgba(255, 99, 99, 0.36);
+  background: rgba(255, 99, 99, 0.1);
+}
+
 .settings-row {
   display: flex;
   align-items: center;

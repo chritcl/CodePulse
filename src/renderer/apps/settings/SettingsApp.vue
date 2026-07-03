@@ -14,10 +14,14 @@ import {
   formatQuietHoursSummary,
   normalizeQuietHourInput
 } from "./settingsNotificationControls";
+import { formatSettingsFailureMessage, formatSettingsSuccessMessage } from "./settingsFailureMessages";
 
 const settings = ref<AppSettings | null>(null);
 const displays = ref<DisplayLike[]>([]);
 const displayErrorMessage = ref<string | null>(null);
+const loadErrorMessage = ref<string | null>(null);
+const saveStatusMessage = ref<string | null>(null);
+const saveStatusType = ref<"success" | "error">("success");
 const saving = ref(false);
 const customCommandArgsText = computed({
   get: () => settings.value?.providers.customCommand.args.join("\n") ?? "",
@@ -130,13 +134,18 @@ const refreshDisplays = async (): Promise<void> => {
 };
 
 onMounted(async () => {
-  const [loadedSettings] = await Promise.all([window.codePulse.settings.get(), refreshDisplays()]);
-  settings.value = loadedSettings;
-  settings.value.display.targetDisplayId = normalizeTargetDisplayId(
-    settings.value.display.targetDisplayId,
-    displays.value,
-    settings.value.display.followActiveDisplay
-  );
+  try {
+    const [loadedSettings] = await Promise.all([window.codePulse.settings.get(), refreshDisplays()]);
+    settings.value = loadedSettings;
+    loadErrorMessage.value = null;
+    settings.value.display.targetDisplayId = normalizeTargetDisplayId(
+      settings.value.display.targetDisplayId,
+      displays.value,
+      settings.value.display.followActiveDisplay
+    );
+  } catch (error) {
+    loadErrorMessage.value = formatSettingsFailureMessage("读取设置", error);
+  }
 });
 
 const normalizeQuietHours = (): void => {
@@ -175,8 +184,18 @@ const save = async (): Promise<void> => {
   normalizeQuietHours();
   normalizeDisplayTarget();
   saving.value = true;
-  settings.value = await window.codePulse.settings.update(settings.value);
-  saving.value = false;
+  saveStatusMessage.value = null;
+
+  try {
+    settings.value = await window.codePulse.settings.update(settings.value);
+    saveStatusType.value = "success";
+    saveStatusMessage.value = formatSettingsSuccessMessage(new Date().toISOString());
+  } catch (error) {
+    saveStatusType.value = "error";
+    saveStatusMessage.value = formatSettingsFailureMessage("保存设置", error);
+  } finally {
+    saving.value = false;
+  }
 };
 </script>
 
@@ -186,6 +205,16 @@ const save = async (): Promise<void> => {
       <h1>设置</h1>
       <span>显示、通知和数据源</span>
     </header>
+
+    <section v-if="loadErrorMessage" class="settings-status settings-status--error">
+      <strong>设置读取失败</strong>
+      <span>{{ loadErrorMessage }}</span>
+    </section>
+
+    <section v-if="saveStatusMessage" class="settings-status" :class="`settings-status--${saveStatusType}`">
+      <strong>{{ saveStatusType === "success" ? "设置已保存" : "设置保存失败" }}</strong>
+      <span>{{ saveStatusMessage }}</span>
+    </section>
 
     <section v-if="settings" class="settings-grid">
       <div class="settings-row">
@@ -432,7 +461,7 @@ const save = async (): Promise<void> => {
     </section>
 
     <footer>
-      <el-button :loading="saving" type="primary" @click="save">保存设置</el-button>
+      <el-button :disabled="!settings" :loading="saving" type="primary" @click="save">保存设置</el-button>
     </footer>
   </main>
 </template>
