@@ -226,6 +226,97 @@ describe("CodexAdapter", () => {
     expect(tasks[0]?.lastActivityText).toBe("需要用户确认");
   });
 
+  it("日志源识别 Codex 原生 session 和 turn 事件并避免暴露提示内容", async () => {
+    const adapter = new CodexAdapter({
+      now: () => fixedNow,
+      scanIntervalMs: 0,
+      processProbe: createProbe([]),
+      logSource: createLogSource([
+        {
+          type: "session.started",
+          session_id: "native-session-1",
+          project: {
+            name: "CodePulse"
+          },
+          timestamp: "2026-07-01T02:56:00.000Z"
+        },
+        {
+          type: "turn.started",
+          session_id: "native-session-1",
+          timestamp: "2026-07-01T02:57:00.000Z",
+          prompt: "请读取 C:\\Users\\fengq\\secret-project 并使用 sk-test-secret"
+        },
+        {
+          type: "assistant.message",
+          session_id: "native-session-1",
+          timestamp: "2026-07-01T02:58:00.000Z",
+          message: "包含敏感路径 C:\\Users\\fengq\\secret-project"
+        },
+        {
+          type: "turn.completed",
+          session_id: "native-session-1",
+          timestamp: "2026-07-01T02:59:00.000Z"
+        }
+      ])
+    });
+
+    await adapter.refresh();
+    const tasks = await adapter.getCurrentTasks();
+
+    expect(await adapter.getConnectionStatus()).toBe("connected");
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({
+      id: "codex-log-native-session-1",
+      sessionId: "native-session-1",
+      title: "Codex 会话",
+      projectName: "CodePulse",
+      projectPath: null,
+      status: "completed",
+      stage: "回合完成",
+      lastActivityText: "Codex 回合已完成",
+      completedAt: "2026-07-01T02:59:00.000Z"
+    });
+    expect(JSON.stringify(tasks[0])).not.toContain("sk-test-secret");
+    expect(JSON.stringify(tasks[0])).not.toContain("secret-project");
+  });
+
+  it("日志源识别 Codex 原生等待输入事件并生成等待动作", async () => {
+    const adapter = new CodexAdapter({
+      now: () => fixedNow,
+      scanIntervalMs: 0,
+      processProbe: createProbe([]),
+      logSource: createLogSource([
+        {
+          event: "session_started",
+          session_id: "native-waiting",
+          timestamp: "2026-07-01T02:56:00.000Z"
+        },
+        {
+          event: "turn.input_requested",
+          session_id: "native-waiting",
+          timestamp: "2026-07-01T02:58:00.000Z"
+        }
+      ])
+    });
+
+    await adapter.refresh();
+    const tasks = await adapter.getCurrentTasks();
+
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({
+      id: "codex-log-native-waiting",
+      sessionId: "native-waiting",
+      status: "waiting",
+      stage: "等待用户输入",
+      lastActivityText: "Codex 正在等待用户输入",
+      waitingAction: {
+        label: "查看任务",
+        description: "Codex 正在等待用户输入",
+        actionId: "open-task"
+      }
+    });
+  });
+
   it("状态源格式错误时降级为连接错误状态", async () => {
     const adapter = new CodexAdapter({
       now: () => fixedNow,

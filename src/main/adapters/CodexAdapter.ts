@@ -216,6 +216,17 @@ const connectionStatuses = new Set<AgentConnectionStatus>([
   "stale"
 ]);
 
+interface NativeCodexEventState {
+  status: AgentTaskStatus;
+  stage: string;
+  lastActivityText: string;
+  progressType: AgentProgressType;
+  completed: boolean;
+  waitingAction: AgentWaitingAction | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+}
+
 const readRequiredString = (record: Record<string, unknown>, key: string): string => {
   const value = record[key];
 
@@ -333,6 +344,178 @@ const readTaskIdentity = (record: Record<string, unknown>): { id: string; sessio
     id: resolvedId,
     sessionId: resolvedSessionId
   };
+};
+
+const readFirstOptionalString = (record: Record<string, unknown>, keys: string[]): string | null => {
+  for (const key of keys) {
+    const value = readOptionalString(record, key);
+
+    if (value && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return null;
+};
+
+const readFirstOptionalIso = (record: Record<string, unknown>, keys: string[], fallback: string): string => {
+  for (const key of keys) {
+    const value = readOptionalString(record, key);
+
+    if (!value) {
+      continue;
+    }
+
+    if (!Number.isFinite(new Date(value).getTime())) {
+      throw new Error("状态源数据格式无法解析");
+    }
+
+    return value;
+  }
+
+  return fallback;
+};
+
+const readOptionalNestedDisplayString = (
+  record: Record<string, unknown>,
+  parentKey: string,
+  childKey: string
+): string | null => {
+  const value = record[parentKey];
+
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    return value.trim().length > 0 ? value.trim() : null;
+  }
+
+  if (!isRecord(value)) {
+    throw new Error("状态源数据格式无法解析");
+  }
+
+  return readOptionalString(value, childKey);
+};
+
+const sanitizeNativeDisplayText = (value: string | null): string | null => {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed || /^[A-Za-z]:(?:\\|\/)/.test(trimmed) || trimmed.includes("\\") || trimmed.includes("/")) {
+    return null;
+  }
+
+  return trimmed.slice(0, 120);
+};
+
+const normalizeLogEventType = (value: string | null): string | null => {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase().replace(/[\s:.-]+/g, "_");
+  return normalized.length > 0 ? normalized : null;
+};
+
+const classifyNativeCodexEvent = (normalizedEventType: string): NativeCodexEventState | null => {
+  const isCodexTaskEvent =
+    normalizedEventType.includes("session") ||
+    normalizedEventType.includes("turn") ||
+    normalizedEventType.includes("assistant") ||
+    normalizedEventType.includes("message");
+
+  if (!isCodexTaskEvent) {
+    return null;
+  }
+
+  if (
+    normalizedEventType.includes("input_requested") ||
+    normalizedEventType.includes("waiting") ||
+    normalizedEventType.includes("requires_action") ||
+    normalizedEventType.includes("user_input")
+  ) {
+    return {
+      status: "waiting",
+      stage: "等待用户输入",
+      lastActivityText: "Codex 正在等待用户输入",
+      progressType: "unavailable",
+      completed: false,
+      waitingAction: {
+        label: "查看任务",
+        description: "Codex 正在等待用户输入",
+        actionId: "open-task"
+      },
+      errorCode: null,
+      errorMessage: null
+    };
+  }
+
+  if (normalizedEventType.includes("failed") || normalizedEventType.includes("failure") || normalizedEventType.includes("error")) {
+    return {
+      status: "failed",
+      stage: "执行失败",
+      lastActivityText: "Codex 执行失败",
+      progressType: "unavailable",
+      completed: true,
+      waitingAction: null,
+      errorCode: "CODEX_NATIVE_EVENT_FAILED",
+      errorMessage: "Codex 执行失败"
+    };
+  }
+
+  if (
+    normalizedEventType.includes("completed") ||
+    normalizedEventType.includes("complete") ||
+    normalizedEventType.includes("finished")
+  ) {
+    return {
+      status: "completed",
+      stage: "回合完成",
+      lastActivityText: "Codex 回合已完成",
+      progressType: "unavailable",
+      completed: true,
+      waitingAction: null,
+      errorCode: null,
+      errorMessage: null
+    };
+  }
+
+  if (normalizedEventType.includes("assistant") || normalizedEventType.includes("message")) {
+    return {
+      status: "executing",
+      stage: "生成回复",
+      lastActivityText: "Codex 生成了新回复",
+      progressType: "indeterminate",
+      completed: false,
+      waitingAction: null,
+      errorCode: null,
+      errorMessage: null
+    };
+  }
+
+  if (
+    normalizedEventType.includes("started") ||
+    normalizedEventType.includes("start") ||
+    normalizedEventType.includes("created") ||
+    normalizedEventType.includes("running")
+  ) {
+    return {
+      status: "executing",
+      stage: normalizedEventType.includes("session") ? "会话启动" : "回合执行",
+      lastActivityText: normalizedEventType.includes("session") ? "Codex 会话已启动" : "Codex 回合执行中",
+      progressType: "indeterminate",
+      completed: false,
+      waitingAction: null,
+      errorCode: null,
+      errorMessage: null
+    };
+  }
+
+  return null;
 };
 
 const readOptionalNumber = (record: Record<string, unknown>, key: string): number | null => {
@@ -755,6 +938,71 @@ export class CodexAdapter implements AgentAdapter, RuntimeConfigurableAgentAdapt
     });
   }
 
+  private normalizeNativeLogTask(
+    rawEvent: Record<string, unknown>,
+    normalizedEventType: string,
+    index: number,
+    occurredAt: string
+  ): Record<string, unknown> | null {
+    const state = classifyNativeCodexEvent(normalizedEventType);
+
+    if (!state) {
+      return null;
+    }
+
+    const identity = readTaskIdentity(rawEvent);
+    const eventTime = readFirstOptionalIso(rawEvent, ["timestamp", "time", "createdAt", "created_at", "updatedAt", "updated_at"], occurredAt);
+    const projectName = sanitizeNativeDisplayText(
+      readFirstOptionalString(rawEvent, ["projectName", "project_name", "workspaceName", "workspace_name"]) ??
+        readOptionalNestedDisplayString(rawEvent, "project", "name") ??
+        readOptionalNestedDisplayString(rawEvent, "workspace", "name")
+    );
+    const title = sanitizeNativeDisplayText(readFirstOptionalString(rawEvent, ["title", "taskTitle", "task_title"]));
+
+    const taskEvent: Record<string, unknown> = {
+      id: identity.id,
+      sessionId: identity.sessionId,
+      status: state.status,
+      stage: state.stage,
+      updatedAt: eventTime,
+      lastActivityAt: eventTime,
+      lastActivityText: state.lastActivityText,
+      progressType: state.progressType,
+      completedAt: state.completed ? eventTime : null,
+      waitingAction: state.waitingAction,
+      errorCode: state.errorCode,
+      errorMessage: state.errorMessage,
+      sourceId: `codex-native-${normalizedEventType}-${index}`
+    };
+
+    if (title) {
+      taskEvent.title = title;
+    }
+
+    if (projectName) {
+      taskEvent.projectName = projectName;
+    }
+
+    return taskEvent;
+  }
+
+  private mergeNativeLogTaskEvent(
+    previous: Record<string, unknown> | undefined,
+    current: Record<string, unknown>
+  ): Record<string, unknown> {
+    if (!previous) {
+      return current;
+    }
+
+    return {
+      ...previous,
+      ...current,
+      startedAt: current.startedAt ?? previous.startedAt,
+      title: current.title ?? previous.title,
+      projectName: current.projectName ?? previous.projectName
+    };
+  }
+
   private normalizeSourceTask(
     rawTask: unknown,
     index: number,
@@ -868,22 +1116,30 @@ export class CodexAdapter implements AgentAdapter, RuntimeConfigurableAgentAdapt
     const taskEvents = new Map<string, Record<string, unknown>>();
     let quotaEvent: Record<string, unknown> | null = null;
 
-    for (const rawEvent of rawEvents) {
+    rawEvents.forEach((rawEvent, index) => {
       if (!isRecord(rawEvent)) {
         throw new Error("日志源数据格式无法解析");
       }
 
       const eventType = readOptionalString(rawEvent, "type") ?? readOptionalString(rawEvent, "event") ?? readOptionalString(rawEvent, "kind");
+      const normalizedEventType = normalizeLogEventType(eventType);
       const isTaskEvent = eventType === "task" || (!eventType && "status" in rawEvent);
-      const isQuotaEvent = eventType === "quota";
+      const isQuotaEvent = eventType === "quota" || normalizedEventType === "quota" || normalizedEventType?.includes("quota_") === true;
 
       if (isTaskEvent) {
         const identity = readTaskIdentity(rawEvent);
         taskEvents.set(identity.sessionId, rawEvent);
       } else if (isQuotaEvent) {
         quotaEvent = rawEvent;
+      } else if (normalizedEventType) {
+        const nativeTaskEvent = this.normalizeNativeLogTask(rawEvent, normalizedEventType, index, occurredAt);
+
+        if (nativeTaskEvent) {
+          const identity = readTaskIdentity(nativeTaskEvent);
+          taskEvents.set(identity.sessionId, this.mergeNativeLogTaskEvent(taskEvents.get(identity.sessionId), nativeTaskEvent));
+        }
       }
-    }
+    });
 
     if (taskEvents.size === 0 && quotaEvent === null) {
       return null;
