@@ -5,6 +5,7 @@ import {
   formatDisplayLabel,
   formatIslandPlacementSummary,
   islandPositionOptions,
+  normalizeIslandCustomPositionInput,
   normalizeTargetDisplayId
 } from "./settingsDisplayControls";
 
@@ -116,5 +117,41 @@ describe("设置页显示和动态岛位置控件", () => {
     expect(normalizeTargetDisplayId("missing", displays, false)).toBeNull();
     expect(normalizeTargetDisplayId("2", displays, true)).toBeNull();
     expect(normalizeTargetDisplayId("2", [], false)).toBe("2");
+  });
+
+  it("归一化自由坐标并限制在目标显示器工作区内", () => {
+    expect(
+      normalizeIslandCustomPositionInput(
+        {
+          displayId: "2",
+          x: 4700,
+          y: -40
+        },
+        displays
+      )
+    ).toEqual({
+      displayId: "2",
+      x: 4480,
+      y: 0
+    });
+    expect(normalizeIslandCustomPositionInput(null, displays)).toEqual({
+      displayId: "1",
+      x: 0,
+      y: 0
+    });
+    expect(
+      normalizeIslandCustomPositionInput(
+        {
+          displayId: "missing",
+          x: 50,
+          y: 60
+        },
+        displays
+      )
+    ).toEqual({
+      displayId: "1",
+      x: 50,
+      y: 60
+    });
   });
 });

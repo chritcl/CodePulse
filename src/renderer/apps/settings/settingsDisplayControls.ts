@@ -1,4 +1,4 @@
-import type { DisplaySettings } from "../../../shared/types/settings";
+import type { DisplaySettings, IslandCustomPosition } from "../../../shared/types/settings";
 import type { DisplayLike, IslandPosition } from "../../../shared/types/window";
 
 export const islandPositionOptions: Array<{ value: IslandPosition; label: string }> = [
@@ -59,4 +59,28 @@ export const normalizeTargetDisplayId = (
   }
 
   return displays.some((display) => display.id === targetDisplayId) ? targetDisplayId : null;
+};
+
+const clamp = (value: number, min: number, max: number): number => Math.min(Math.max(Math.round(value), min), max);
+
+export const normalizeIslandCustomPositionInput = (
+  position: IslandCustomPosition | null,
+  displays: DisplayLike[]
+): IslandCustomPosition => {
+  const targetDisplay =
+    displays.find((display) => display.id === position?.displayId) ?? displays.find((display) => display.primary) ?? displays[0] ?? null;
+
+  if (!targetDisplay) {
+    return {
+      displayId: position?.displayId ?? null,
+      x: Math.max(Math.round(position?.x ?? 0), 0),
+      y: Math.max(Math.round(position?.y ?? 0), 0)
+    };
+  }
+
+  return {
+    displayId: targetDisplay.id,
+    x: clamp(position?.x ?? targetDisplay.workArea.x, targetDisplay.workArea.x, targetDisplay.workArea.x + targetDisplay.workArea.width),
+    y: clamp(position?.y ?? targetDisplay.workArea.y, targetDisplay.workArea.y, targetDisplay.workArea.y + targetDisplay.workArea.height)
+  };
 };

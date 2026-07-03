@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import type { AppSettings } from "../../../shared/types/settings";
+import type { AppSettings, IslandCustomPosition } from "../../../shared/types/settings";
 import type { DisplayLike } from "../../../shared/types/window";
 import {
   formatDisplayLabel,
   formatIslandPlacementSummary,
   islandPositionOptions,
+  normalizeIslandCustomPositionInput,
   normalizeTargetDisplayId
 } from "./settingsDisplayControls";
 import {
@@ -55,6 +56,55 @@ const displayOptions = computed(() =>
   }))
 );
 
+const getFallbackCustomPosition = (): IslandCustomPosition => ({
+  displayId: settings.value?.display.targetDisplayId ?? displays.value.find((display) => display.primary)?.id ?? displays.value[0]?.id ?? null,
+  x: 0,
+  y: 0
+});
+
+const updateIslandCustomPosition = (partial: Partial<IslandCustomPosition>): void => {
+  if (!settings.value) {
+    return;
+  }
+
+  const currentPosition = settings.value.display.islandCustomPosition ?? getFallbackCustomPosition();
+  settings.value.display.islandPosition = "free";
+  settings.value.display.islandCustomPosition = normalizeIslandCustomPositionInput(
+    {
+      ...currentPosition,
+      ...partial
+    },
+    displays.value
+  );
+};
+
+const islandCustomDisplayId = computed({
+  get: () => settings.value?.display.islandCustomPosition?.displayId ?? getFallbackCustomPosition().displayId,
+  set: (value: string | null) => {
+    updateIslandCustomPosition({
+      displayId: value
+    });
+  }
+});
+
+const islandCustomX = computed({
+  get: () => settings.value?.display.islandCustomPosition?.x ?? 0,
+  set: (value: number | undefined) => {
+    updateIslandCustomPosition({
+      x: value ?? 0
+    });
+  }
+});
+
+const islandCustomY = computed({
+  get: () => settings.value?.display.islandCustomPosition?.y ?? 0,
+  set: (value: number | undefined) => {
+    updateIslandCustomPosition({
+      y: value ?? 0
+    });
+  }
+});
+
 const refreshDisplays = async (): Promise<void> => {
   try {
     displays.value = await window.codePulse.system.getDisplays();
@@ -66,6 +116,13 @@ const refreshDisplays = async (): Promise<void> => {
         displays.value,
         settings.value.display.followActiveDisplay
       );
+
+      if (settings.value.display.islandCustomPosition) {
+        settings.value.display.islandCustomPosition = normalizeIslandCustomPositionInput(
+          settings.value.display.islandCustomPosition,
+          displays.value
+        );
+      }
     }
   } catch (error) {
     displayErrorMessage.value = error instanceof Error ? error.message : "显示器列表读取失败";
@@ -101,6 +158,13 @@ const normalizeDisplayTarget = (): void => {
     displays.value,
     settings.value.display.followActiveDisplay
   );
+
+  if (settings.value.display.islandPosition === "free" || settings.value.display.islandCustomPosition) {
+    settings.value.display.islandCustomPosition = normalizeIslandCustomPositionInput(
+      settings.value.display.islandCustomPosition,
+      displays.value
+    );
+  }
 };
 
 const save = async (): Promise<void> => {
@@ -167,6 +231,29 @@ const save = async (): Promise<void> => {
           <el-button @click="refreshDisplays">刷新显示器</el-button>
         </div>
         <small>{{ displayErrorMessage ?? (settings.display.followActiveDisplay ? "当前会跟随活动显示器" : "显示器断开时会回落到主显示器") }}</small>
+      </div>
+      <div
+        v-if="settings.display.islandPosition === 'free'"
+        class="settings-row settings-row--wide settings-row--stacked settings-row--policy"
+      >
+        <span>自由坐标</span>
+        <div class="settings-coordinate-fields">
+          <label>
+            <small>显示器</small>
+            <el-select v-model="islandCustomDisplayId" placeholder="选择坐标所属显示器" @change="save">
+              <el-option v-for="item in displayOptions" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </label>
+          <label>
+            <small>X 坐标</small>
+            <el-input-number v-model="islandCustomX" :min="0" :step="1" @change="save" />
+          </label>
+          <label>
+            <small>Y 坐标</small>
+            <el-input-number v-model="islandCustomY" :min="0" :step="1" @change="save" />
+          </label>
+        </div>
+        <small>保存时会按目标显示器工作区自动限制坐标，避免动态岛移动到屏幕外。</small>
       </div>
       <div class="settings-row">
         <span>全屏自动隐藏</span>
