@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AgentActivity, AgentProvider, AgentStateSnapshot, AgentTask } from "../../shared/types/agent";
-import { HistoryStore } from "./historyStore";
+import { HistoryStore, type DiagnosticEvent } from "./historyStore";
 
 const provider: AgentProvider = {
   id: "codex",
@@ -213,6 +213,12 @@ describe("HistoryStore", () => {
         recoveredFromCorruption: true,
         lastCorruptBackupPath: expect.stringContaining("history.sqlite.corrupt-")
       });
+      expect(store.getRecentDiagnosticEvents(1)[0]).toMatchObject({
+        level: "error",
+        source: "database",
+        title: "历史数据库损坏",
+        message: expect.stringContaining("历史数据库")
+      });
 
       await store.saveSnapshot(snapshot([task], [activity]));
       expect(store.getRecentTasks().map((item) => item.id)).toEqual(["task-1"]);
@@ -280,6 +286,57 @@ describe("HistoryStore", () => {
       });
 
       await store.close();
+    } finally {
+      await rm(directory, {
+        recursive: true,
+        force: true
+      });
+    }
+  });
+
+  it("保存诊断事件并可重新打开读取", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "codepulse-history-"));
+    const filePath = path.join(directory, "history.sqlite");
+    const diagnosticEvent: DiagnosticEvent = {
+      id: "diagnostic-1",
+      level: "error",
+      source: "database",
+      title: "数据库损坏",
+      message: "历史数据库完整性检查失败",
+      createdAt: "2026-07-02T09:00:00.000Z",
+      metadata: {
+        backupPath: "C:\\Users\\fengq\\AppData\\Roaming\\CodePulse\\history.sqlite.corrupt"
+      }
+    };
+
+    try {
+      const store = new HistoryStore(filePath);
+      await store.load();
+      await store.recordDiagnosticEvent(diagnosticEvent);
+
+      expect(store.getRecentDiagnosticEvents()).toMatchObject([
+        {
+          id: "diagnostic-1",
+          level: "error",
+          source: "database",
+          title: "数据库损坏"
+        }
+      ]);
+
+      await store.close();
+
+      const reopened = new HistoryStore(filePath);
+      await reopened.load();
+
+      expect(reopened.getRecentDiagnosticEvents(5)[0]).toMatchObject({
+        id: "diagnostic-1",
+        message: "历史数据库完整性检查失败",
+        metadata: {
+          backupPath: "C:\\Users\\fengq\\AppData\\Roaming\\CodePulse\\history.sqlite.corrupt"
+        }
+      });
+
+      await reopened.close();
     } finally {
       await rm(directory, {
         recursive: true,

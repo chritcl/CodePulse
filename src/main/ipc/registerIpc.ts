@@ -5,6 +5,7 @@ import type { AgentActivity } from "../../shared/types/agent";
 import type { AppSettingsPatch } from "../../shared/types/settings";
 import type { IslandMode } from "../../shared/types/window";
 import type { NotificationManager } from "../notifications/NotificationManager";
+import type { DiagnosticEvent } from "../persistence/historyStore";
 import type { SettingsStore } from "../persistence/settingsStore";
 import { getDisplays } from "../system/displays";
 import type { AgentStateHub } from "../state/AgentStateHub";
@@ -33,6 +34,7 @@ import {
 export interface HistoryReader extends TaskHistoryReader {
   getTaskActivities(taskId: string, limit?: number): AgentActivity[];
   getRuntimeStatus?(): unknown;
+  getRecentDiagnosticEvents?(limit?: number): DiagnosticEvent[];
 }
 
 const sendSnapshotToWindows = (snapshot: unknown): void => {
@@ -285,7 +287,8 @@ export const registerIpc = (
           {
             snapshot: hub.getSnapshot(),
             notifications: notifications?.getRuntimeStatus() ?? null,
-            history: historyStore?.getRuntimeStatus?.() ?? null
+            history: historyStore?.getRuntimeStatus?.() ?? null,
+            diagnosticEvents: historyStore?.getRecentDiagnosticEvents?.(50) ?? []
           },
           null,
           2

@@ -11,7 +11,18 @@ export interface HistoryStoreOptions {
   retentionDays?: number;
   maxTasks?: number;
   maxActivities?: number;
+  maxDiagnosticEvents?: number;
   now?: () => Date;
+}
+
+export interface DiagnosticEvent {
+  id: string;
+  level: "info" | "warning" | "error";
+  source: string;
+  title: string;
+  message: string;
+  createdAt: string;
+  metadata: Record<string, unknown>;
 }
 
 export interface HistoryStoreRuntimeStatus {
@@ -22,9 +33,11 @@ export interface HistoryStoreRuntimeStatus {
   lastCleanupAt: string | null;
   lastCleanupDeletedTaskCount: number;
   lastCleanupDeletedActivityCount: number;
+  lastCleanupDeletedDiagnosticEventCount: number;
   retentionDays: number;
   maxTasks: number;
   maxActivities: number;
+  maxDiagnosticEvents: number;
   lastError: string | null;
 }
 
@@ -32,6 +45,7 @@ const resolveSqlJsFile = (file: string): string => path.join(path.dirname(requir
 const defaultRetentionDays = 90;
 const defaultMaxTasks = 5000;
 const defaultMaxActivities = 50000;
+const defaultMaxDiagnosticEvents = 1000;
 
 const createSchema = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -65,6 +79,18 @@ CREATE TABLE IF NOT EXISTS activities (
 );
 
 CREATE INDEX IF NOT EXISTS idx_activities_task_created ON activities(task_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS diagnostic_events (
+  id TEXT PRIMARY KEY,
+  level TEXT NOT NULL,
+  source TEXT NOT NULL,
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_diagnostic_events_created ON diagnostic_events(created_at DESC);
 `;
 
 const taskUpsertSql = `
@@ -142,6 +168,33 @@ ON CONFLICT(id) DO UPDATE SET
   snapshot_json = excluded.snapshot_json;
 `;
 
+const diagnosticEventUpsertSql = `
+INSERT INTO diagnostic_events (
+  id,
+  level,
+  source,
+  title,
+  message,
+  created_at,
+  snapshot_json
+) VALUES (
+  :id,
+  :level,
+  :source,
+  :title,
+  :message,
+  :createdAt,
+  :snapshotJson
+)
+ON CONFLICT(id) DO UPDATE SET
+  level = excluded.level,
+  source = excluded.source,
+  title = excluded.title,
+  message = excluded.message,
+  created_at = excluded.created_at,
+  snapshot_json = excluded.snapshot_json;
+`;
+
 const firstColumnValues = (database: SqlDatabase, sql: string, params?: Record<string, string | number>): string[] => {
   const [result] = database.exec(sql, params);
 
@@ -174,12 +227,14 @@ export class HistoryStore {
   private readonly retentionDays: number;
   private readonly maxTasks: number;
   private readonly maxActivities: number;
+  private readonly maxDiagnosticEvents: number;
   private readonly now: () => Date;
   private recoveredFromCorruption = false;
   private lastCorruptBackupPath: string | null = null;
   private lastCleanupAt: string | null = null;
   private lastCleanupDeletedTaskCount = 0;
   private lastCleanupDeletedActivityCount = 0;
+  private lastCleanupDeletedDiagnosticEventCount = 0;
   private lastError: string | null = null;
 
   constructor(
@@ -192,6 +247,7 @@ export class HistoryStore {
     this.retentionDays = readPositiveInteger(options.retentionDays, defaultRetentionDays);
     this.maxTasks = readPositiveInteger(options.maxTasks, defaultMaxTasks);
     this.maxActivities = readPositiveInteger(options.maxActivities, defaultMaxActivities);
+    this.maxDiagnosticEvents = readPositiveInteger(options.maxDiagnosticEvents, defaultMaxDiagnosticEvents);
     this.now = options.now ?? (() => new Date());
   }
 
@@ -202,6 +258,7 @@ export class HistoryStore {
 
     this.database = await this.openDatabase(SQL);
     this.database.run(createSchema);
+    this.recordCorruptionDiagnosticIfNeeded(this.database);
     this.cleanupHistory(this.database);
     await this.flush();
   }
@@ -257,6 +314,27 @@ export class HistoryStore {
     return saveOperation;
   }
 
+  async recordDiagnosticEvent(event: DiagnosticEvent): Promise<void> {
+    const saveOperation = this.saveQueue.catch(() => undefined).then(async () => {
+      const database = this.requireDatabase();
+
+      database.run("BEGIN TRANSACTION");
+      try {
+        this.insertDiagnosticEvent(database, event);
+        database.run("COMMIT");
+      } catch (error) {
+        database.run("ROLLBACK");
+        throw error;
+      }
+
+      this.cleanupHistory(database);
+      await this.flush();
+    });
+
+    this.saveQueue = saveOperation.catch(() => undefined);
+    return saveOperation;
+  }
+
   getRecentTasks(limit = 100): AgentTask[] {
     const database = this.requireDatabase();
     return firstColumnValues(
@@ -280,6 +358,17 @@ export class HistoryStore {
     ).map((item) => JSON.parse(item) as AgentActivity);
   }
 
+  getRecentDiagnosticEvents(limit = 100): DiagnosticEvent[] {
+    const database = this.requireDatabase();
+    return firstColumnValues(
+      database,
+      "SELECT snapshot_json FROM diagnostic_events ORDER BY created_at DESC LIMIT :limit",
+      {
+        ":limit": limit
+      }
+    ).map((item) => JSON.parse(item) as DiagnosticEvent);
+  }
+
   async close(): Promise<void> {
     await this.saveQueue;
     await this.flush();
@@ -296,9 +385,11 @@ export class HistoryStore {
       lastCleanupAt: this.lastCleanupAt,
       lastCleanupDeletedTaskCount: this.lastCleanupDeletedTaskCount,
       lastCleanupDeletedActivityCount: this.lastCleanupDeletedActivityCount,
+      lastCleanupDeletedDiagnosticEventCount: this.lastCleanupDeletedDiagnosticEventCount,
       retentionDays: this.retentionDays,
       maxTasks: this.maxTasks,
       maxActivities: this.maxActivities,
+      maxDiagnosticEvents: this.maxDiagnosticEvents,
       lastError: this.lastError
     };
   }
@@ -358,6 +449,40 @@ export class HistoryStore {
     }
   }
 
+  private recordCorruptionDiagnosticIfNeeded(database: SqlDatabase): void {
+    if (!this.recoveredFromCorruption) {
+      return;
+    }
+
+    const createdAt = this.now().toISOString();
+
+    this.insertDiagnosticEvent(database, {
+      id: `history-corruption-${createdAt}`,
+      level: "error",
+      source: "database",
+      title: "历史数据库损坏",
+      message: `历史数据库损坏：${this.lastError ?? "未知错误"}`,
+      createdAt,
+      metadata: {
+        filePath: this.filePath,
+        backupPath: this.lastCorruptBackupPath,
+        originalError: this.lastError
+      }
+    });
+  }
+
+  private insertDiagnosticEvent(database: SqlDatabase, event: DiagnosticEvent): void {
+    database.run(diagnosticEventUpsertSql, {
+      ":id": event.id,
+      ":level": event.level,
+      ":source": event.source,
+      ":title": event.title,
+      ":message": event.message,
+      ":createdAt": event.createdAt,
+      ":snapshotJson": JSON.stringify(event)
+    });
+  }
+
   private cleanupHistory(database: SqlDatabase): void {
     const now = this.now();
     const nowMs = now.getTime();
@@ -368,6 +493,7 @@ export class HistoryStore {
 
     let deletedTaskCount = 0;
     let deletedActivityCount = 0;
+    let deletedDiagnosticEventCount = 0;
     const cutoff = new Date(nowMs - this.retentionDays * 24 * 60 * 60 * 1000).toISOString();
 
     deletedActivityCount += this.deleteByCount(
@@ -407,10 +533,27 @@ export class HistoryStore {
         ":limit": this.maxActivities
       }
     );
+    deletedDiagnosticEventCount += this.deleteByCount(
+      database,
+      "SELECT COUNT(*) FROM diagnostic_events WHERE created_at < :cutoff",
+      "DELETE FROM diagnostic_events WHERE created_at < :cutoff",
+      {
+        ":cutoff": cutoff
+      }
+    );
+    deletedDiagnosticEventCount += this.deleteByCount(
+      database,
+      "SELECT COUNT(*) FROM diagnostic_events WHERE id NOT IN (SELECT id FROM diagnostic_events ORDER BY created_at DESC LIMIT :limit)",
+      "DELETE FROM diagnostic_events WHERE id NOT IN (SELECT id FROM diagnostic_events ORDER BY created_at DESC LIMIT :limit)",
+      {
+        ":limit": this.maxDiagnosticEvents
+      }
+    );
 
     this.lastCleanupAt = now.toISOString();
     this.lastCleanupDeletedTaskCount = deletedTaskCount;
     this.lastCleanupDeletedActivityCount = deletedActivityCount;
+    this.lastCleanupDeletedDiagnosticEventCount = deletedDiagnosticEventCount;
   }
 
   private deleteByCount(

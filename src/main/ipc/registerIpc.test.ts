@@ -1016,7 +1016,20 @@ describe("registerIpc", () => {
         recoveredFromCorruption: true,
         filePath: "C:\\Users\\fengq\\AppData\\Roaming\\CodePulse\\history.sqlite",
         lastCorruptBackupPath: "C:\\Users\\fengq\\AppData\\Roaming\\CodePulse\\history.sqlite.corrupt-20260701090500"
-      }))
+      })),
+      getRecentDiagnosticEvents: vi.fn(() => [
+        {
+          id: "diagnostic-1",
+          level: "error",
+          source: "database",
+          title: "数据库损坏",
+          message: "历史数据库完整性检查失败",
+          createdAt: "2026-07-01T09:05:00.000Z",
+          metadata: {
+            backupPath: "C:\\Users\\fengq\\AppData\\Roaming\\CodePulse\\history.sqlite.corrupt-20260701090500"
+          }
+        }
+      ])
     };
 
     registerIpc(hub as never, settingsStore as never, windows as never, notifications as never, historyStore as never);
@@ -1032,8 +1045,13 @@ describe("registerIpc", () => {
     expect(result && typeof result === "object" && "data" in result ? result.data : "").toContain(
       "\"recoveredFromCorruption\": true"
     );
+    expect(result && typeof result === "object" && "data" in result ? result.data : "").toContain(
+      "\"diagnosticEvents\""
+    );
+    expect(result && typeof result === "object" && "data" in result ? result.data : "").toContain("\"数据库损坏\"");
     expect(result && typeof result === "object" && "data" in result ? result.data : "").not.toContain(
       "C:\\Users\\fengq"
     );
+    expect(historyStore.getRecentDiagnosticEvents).toHaveBeenCalledWith(50);
   });
 });
