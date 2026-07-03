@@ -8,6 +8,7 @@ type TestMenuItem = {
   label?: string;
   type?: string;
   click?: () => void;
+  submenu?: TestMenuItem[];
 };
 
 class TestWebContents {
@@ -78,17 +79,45 @@ const screenMock = vi.hoisted(() => ({
   }
 }));
 
-const makeSnapshot = (primaryTaskId: string | null): AgentStateSnapshot => ({
+const makeTask = (id: string, title: string, stage: string): AgentStateSnapshot["tasks"][number] => ({
+  id,
+  providerId: "codex",
+  sessionId: id,
+  title,
+  projectName: "CodePulse",
+  projectPath: null,
+  status: "executing",
+  stage,
+  priority: "executing",
+  startedAt: "2026-07-02T12:00:00.000Z",
+  updatedAt: "2026-07-02T12:01:00.000Z",
+  completedAt: null,
+  lastActivityAt: "2026-07-02T12:01:00.000Z",
+  lastActivityText: stage,
+  progressType: "indeterminate",
+  progressValue: null,
+  completedSteps: null,
+  totalSteps: null,
+  waitingAction: null,
+  errorCode: null,
+  errorMessage: null,
+  sourceId: "test"
+});
+
+const makeSnapshot = (
+  primaryTaskId: string | null,
+  tasks: AgentStateSnapshot["tasks"] = primaryTaskId ? [makeTask(primaryTaskId, "当前任务", "执行中")] : []
+): AgentStateSnapshot => ({
   version: 1,
   generatedAt: "2026-07-02T12:00:00.000Z",
   providers: [],
-  tasks: [],
+  tasks,
   activities: [],
   quotas: [],
   summary: {
     status: primaryTaskId ? "executing" : "idle",
     label: primaryTaskId ? "运行中" : "空闲",
-    runningTaskCount: primaryTaskId ? 1 : 0,
+    runningTaskCount: tasks.length,
     waitingTaskCount: 0,
     failedTaskCount: 0,
     completedTaskCount: 0,
@@ -467,6 +496,48 @@ describe("WindowManager 动态岛拖拽持久化", () => {
     menu.template.find((item) => item.label === "复制摘要")?.click?.();
 
     expect(copySummaryTask).toHaveBeenCalledWith("task-1");
+  });
+
+  it("右键动态岛时多任务菜单可定位任意任务", async () => {
+    const { WindowManager } = await import("./windowManager");
+    const manager = new WindowManager(
+      {
+        ...defaultAppSettings,
+        display: {
+          ...defaultAppSettings.display,
+          islandMode: "normal"
+        }
+      },
+      undefined,
+      {
+        snapshotProvider: () =>
+          makeSnapshot("task-1", [
+            makeTask("task-1", "修复通知策略", "执行中"),
+            makeTask("task-2", "整理诊断数据", "等待处理"),
+            makeTask("task-3", "打包安装器", "测试中")
+          ])
+      }
+    );
+
+    await manager.createIslandWindow();
+    const window = TestBrowserWindow.instances[0];
+
+    window?.webContents.emit("context-menu");
+
+    const menu = menuMock.buildFromTemplate.mock.results[0]?.value as { template: TestMenuItem[] };
+    const taskListItem = menu.template.find((item) => item.label === "任务列表");
+    expect(taskListItem?.submenu?.map((item) => item.label)).toEqual([
+      "修复通知策略 · 执行中",
+      "整理诊断数据 · 等待处理",
+      "打包安装器 · 测试中"
+    ]);
+
+    taskListItem?.submenu?.[1]?.click?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const centerWindow = TestBrowserWindow.instances[1];
+    expect(centerWindow?.webContents.send).toHaveBeenCalledWith("codepulse:task:focus", "task-2");
   });
 
   it("检测到全屏应用时隐藏动态岛和贴边弹窗，退出全屏后恢复动态岛", async () => {

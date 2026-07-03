@@ -431,50 +431,59 @@ export class WindowManager {
       return;
     }
 
-    const primaryTaskId = this.getPrimaryTaskIdForMenu();
-    const taskMenuItems: Electron.MenuItemConstructorOptions[] = primaryTaskId
-      ? [
-          {
-            label: "打开当前任务",
-            click: () => {
-              void this.openTaskCenter(primaryTaskId);
-            }
-          },
-          ...(this.taskMenuActions?.openAgentTask
-            ? [
-                {
-                  label: "打开 Agent",
-                  click: () => {
-                    this.openAgentTaskFromMenu(primaryTaskId);
-                  }
-                }
-              ]
-            : []),
-          ...(this.taskMenuActions?.copySummaryTask
-            ? [
-                {
-                  label: "复制摘要",
-                  click: () => {
-                    this.copySummaryTaskFromMenu(primaryTaskId);
-                  }
-                }
-              ]
-            : []),
-          ...(this.taskMenuActions?.snoozeTask
-            ? [
-                {
-                  label: "稍后提醒 15 分钟",
-                  click: () => {
-                    this.snoozeTaskFromMenu(primaryTaskId);
-                  }
-                }
-              ]
-            : []),
-          {
-            type: "separator"
+    const snapshot = this.getSnapshotForMenu();
+    const primaryTaskId = snapshot?.summary.primaryTaskId ?? null;
+    const taskListMenuItems = this.buildTaskListMenuItems(snapshot?.tasks ?? []);
+    const taskMenuItems: Electron.MenuItemConstructorOptions[] = [];
+
+    if (primaryTaskId) {
+      taskMenuItems.push({
+        label: "打开当前任务",
+        click: () => {
+          void this.openTaskCenter(primaryTaskId);
+        }
+      });
+
+      if (this.taskMenuActions?.openAgentTask) {
+        taskMenuItems.push({
+          label: "打开 Agent",
+          click: () => {
+            this.openAgentTaskFromMenu(primaryTaskId);
           }
-        ]
-      : [];
+        });
+      }
+
+      if (this.taskMenuActions?.copySummaryTask) {
+        taskMenuItems.push({
+          label: "复制摘要",
+          click: () => {
+            this.copySummaryTaskFromMenu(primaryTaskId);
+          }
+        });
+      }
+
+      if (this.taskMenuActions?.snoozeTask) {
+        taskMenuItems.push({
+          label: "稍后提醒 15 分钟",
+          click: () => {
+            this.snoozeTaskFromMenu(primaryTaskId);
+          }
+        });
+      }
+    }
+
+    if (taskListMenuItems.length > 1) {
+      taskMenuItems.push({
+        label: "任务列表",
+        submenu: taskListMenuItems
+      });
+    }
+
+    if (taskMenuItems.length > 0) {
+      taskMenuItems.push({
+        type: "separator"
+      });
+    }
 
     Menu.buildFromTemplate([
       ...taskMenuItems,
@@ -552,12 +561,21 @@ export class WindowManager {
     }
   }
 
-  private getPrimaryTaskIdForMenu(): string | null {
+  private getSnapshotForMenu(): AgentStateSnapshot | null {
     try {
-      return this.snapshotProvider?.().summary.primaryTaskId ?? null;
+      return this.snapshotProvider?.() ?? null;
     } catch {
       return null;
     }
+  }
+
+  private buildTaskListMenuItems(tasks: AgentStateSnapshot["tasks"]): Electron.MenuItemConstructorOptions[] {
+    return tasks.slice(0, 5).map((task) => ({
+      label: `${task.title} · ${task.stage}`,
+      click: () => {
+        void this.openTaskCenter(task.id);
+      }
+    }));
   }
 
   private setIslandBounds(bounds: RectLike): void {
