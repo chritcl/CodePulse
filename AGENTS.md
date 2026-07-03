@@ -13,6 +13,8 @@
 
 ## 项目结构
 
+### 当前结构
+
 ```
 CodePulse/
 ├── src/                        # 前端 (Vue 3 + TypeScript)
@@ -53,6 +55,7 @@ CodePulse/
 | 前端框架 | Vue 3 | 3.5 |
 | 构建工具 | Vite | 6.x |
 | 路由 | Vue Router | 5.x |
+| 状态管理 | Pinia | 2.x (待引入) |
 | 图表 | ECharts | 6.x |
 | 图标 | Lucide Vue Next | 0.577 |
 | 系统监控 | sysinfo (Rust) | 0.30 |
@@ -60,7 +63,7 @@ CodePulse/
 | HTTP 客户端 | reqwest (Rust) | 0.12 |
 | 媒体控制 | Windows SMTC API | windows 0.58 |
 | Windows API | windows-sys + winapi | 0.59 / 0.3 |
-| 本地存储 | localStorage | — |
+| 本地存储 | localStorage | — (待迁移到 Rust 存储) |
 
 ---
 
@@ -81,6 +84,7 @@ CodePulse/
 - 窗口间通信使用 Tauri 事件系统 (`emit` / `listen`)。
 - Tauri 命令调用使用 `@tauri-apps/api` 的 `invoke`。
 - CSS 直接写在 Vue SFC 的 `<style scoped>` 中，无 CSS 框架。
+- 组件文件不超过 300 行，单个 composable 不超过 200 行。
 
 ### Rust 后端
 
@@ -89,6 +93,61 @@ CodePulse/
 - Tauri 管理状态通过 `State<T>` 注入。
 - 异步任务使用 `tokio::spawn` 或 `std::thread::spawn`。
 - Win32 API 调用封装在 `unsafe` 块中，添加注释说明安全性。
+- 模块文件不超过 300 行，每个函数不超过 50 行。
+
+---
+
+## 重构计划
+
+> 详细计划参见 `docs/NetSpeed-Dynamic-现有项目重构计划.md`
+
+### 重构原则
+
+1. **不改变现有功能**: 重构过程中所有现有功能必须继续可用。
+2. **Rust 作为运行状态源**: Rust 负责系统数据、窗口控制和长期运行状态；Vue 负责渲染和临时交互状态；Pinia 只作为前端快照缓存。
+3. **所有通信必须类型化**: 所有 Tauri 命令、事件和 Payload 都应有统一定义。
+4. **先兼容，再替换**: 重构过程中可暂时保留旧事件，在新模块稳定后逐步移除。
+5. **每个阶段都可独立运行**: 每个重构阶段结束后，项目必须能够正常启动、构建和使用。
+
+### 分阶段实施
+
+#### 阶段 R1：工程基线
+
+- 切换 pnpm
+- 统一版本号
+- 添加 ESLint、Prettier、Vitest
+- 添加 Rust 格式和 Clippy 检查
+- 建立 `shared/ipc`
+- 建立统一 TypeScript 类型
+
+#### 阶段 R2：前端组件拆分
+
+- 拆分 `MainPanel.vue` → `DashboardView.vue` + 子组件
+- 拆分 `WidgetIsland.vue` → `IslandView.vue` + 子组件
+- 抽取 Composable
+- 引入 Pinia
+- 保持旧事件兼容
+
+#### 阶段 R3：Rust 模块拆分
+
+- 拆分 `lib.rs` → `commands/`, `state/`, `media/`, `system/`, `animation/`
+- 精简 `lib.rs` 只保留启动与模块注册
+- 建立统一 AppState
+- 建立后台 Scheduler
+
+#### 阶段 R4：统一状态与通信
+
+- 建立 `AppSnapshot` 统一快照
+- 建立统一设置更新接口
+- 建立统一状态广播事件
+- 逐步移除旧事件
+
+#### 阶段 R5：存储迁移与稳定性
+
+- 设置迁移到 Rust 存储
+- 流量统计预留 SQLite
+- 增加异常恢复和日志
+- 修复 GPU 临时实现
 
 ---
 
@@ -178,54 +237,90 @@ CodePulse/
 
 ```
 src/
-├── main.ts
-├── App.vue
-├── router/
-│   └── index.ts
+├── app/
+│   ├── bootstrap.ts            # 应用启动引导
+│   └── router/
+├── windows/
+│   ├── dashboard/
+│   │   ├── DashboardView.vue   # 主控制台 (~100 行)
+│   │   └── components/
+│   │       ├── DashboardHeader.vue
+│   │       ├── RealtimeNetworkCard.vue
+│   │       ├── TrafficStatisticsCard.vue
+│   │       ├── GeneralSettingsCard.vue
+│   │       ├── IslandSettingsPanel.vue
+│   │       ├── MusicSettings.vue
+│   │       ├── NotificationSettings.vue
+│   │       ├── HardwareSettings.vue
+│   │       ├── UpdateChecker.vue
+│   │       └── AppDialog.vue
+│   └── island/
+│       ├── IslandView.vue      # 灵动岛 (~100 行)
+│       └── components/
+│           ├── IslandShell.vue
+│           ├── NetworkIslandContent.vue
+│           ├── MusicIslandContent.vue
+│           ├── HardwareIslandContent.vue
+│           ├── NotificationIslandContent.vue
+│           ├── IslandStatusIndicator.vue
+│           └── IslandContextMenu.ts
+├── modules/
+│   ├── network/
+│   │   ├── composables/
+│   │   │   └── useNetworkSpeed.ts
+│   │   └── types.ts
+│   ├── hardware/
+│   │   ├── composables/
+│   │   │   └── useHardwareMonitor.ts
+│   │   └── types.ts
+│   ├── music/
+│   │   ├── composables/
+│   │   │   ├── useMusicControl.ts
+│   │   │   └── useMusicController.ts
+│   │   └── types.ts
+│   ├── notifications/
+│   │   ├── composables/
+│   │   │   └── useSystemNotification.ts
+│   │   └── types.ts
+│   ├── settings/
+│   │   ├── composables/
+│   │   │   ├── useAppTheme.ts
+│   │   │   ├── useAppVersion.ts
+│   │   │   ├── useUpdateChecker.ts
+│   │   │   ├── useAutostart.ts
+│   │   │   └── useIslandSettings.ts
+│   │   └── types.ts
+│   └── island/
+│       ├── composables/
+│       │   ├── useIslandWindow.ts
+│       │   ├── useIslandPosition.ts
+│       │   ├── useIslandAnimation.ts
+│       │   ├── useIslandDrag.ts
+│       │   └── useIslandDisplayMode.ts
+│       └── types.ts
 ├── stores/                     # Pinia stores
-│   ├── settings.ts             # 主题、透明度、自启等设置
-│   ├── network.ts              # 网速、流量统计
-│   ├── music.ts                # 播放状态、歌曲信息
-│   ├── hardware.ts             # CPU/GPU/RAM 数据
-│   ├── notifications.ts        # 消息通知队列
-│   └── agent.ts                # AI agent 状态 (未来)
-├── composables/                # 可复用逻辑
-│   ├── useTauriCommand.ts      # 统一的 Tauri invoke 封装
-│   ├── useNetworkSpeed.ts      # 网速轮询逻辑
-│   ├── useMusicControl.ts      # 音乐控制逻辑
-│   ├── useHardwareMonitor.ts   # 硬件监控轮询
-│   ├── useNotification.ts      # 通知监听逻辑
-│   ├── useIslandAnimation.ts   # 灵动岛动画控制
-│   └── useTheme.ts             # 主题切换
-├── components/                 # 可复用 UI 组件
-│   ├── island/                 # 灵动岛相关
-│   │   ├── IslandContainer.vue # 岛容器 + 拖拽 + 动画
-│   │   ├── SpeedDisplay.vue    # 网速展示
-│   │   ├── MusicPlayer.vue     # 音乐控制
-│   │   ├── HardwareStats.vue   # 硬件监控
-│   │   ├── NotificationCard.vue# 通知卡片
-│   │   └── AgentStatus.vue     # AI agent 状态 (未来)
-│   ├── panel/                  # 控制台相关
-│   │   ├── PanelHeader.vue     # 头部品牌 + 开关
-│   │   ├── SpeedCard.vue       # 实时网速卡片
-│   │   ├── SettingsCard.vue    # 设置面板
-│   │   ├── StatsCard.vue       # 流量统计
-│   │   └── DynamicIslandSettings.vue # 灵动岛设置
-│   └── shared/                 # 通用组件
-│       ├── ToggleSwitch.vue
-│       ├── ThemeSelect.vue
-│       └── ChartWrapper.vue
-├── views/
-│   ├── MainPanel.vue           # 组合 panel/* 组件 (~100 行)
-│   └── WidgetIsland.vue        # 组合 island/* 组件 (~100 行)
-├── types/                      # TypeScript 类型定义
-│   ├── network.ts
-│   ├── music.ts
-│   ├── hardware.ts
-│   └── tauri-commands.ts       # Tauri command 参数/返回值类型
-├── utils/                      # 工具函数
-│   ├── format.ts               # 速度格式化、单位转换
-│   └── storage.ts              # localStorage 封装
+│   ├── app.store.ts            # 应用全局状态
+│   ├── settings.store.ts       # 设置快照
+│   ├── island.store.ts         # 灵动岛状态
+│   └── app.d.ts                # AppSnapshot 类型定义
+├── shared/
+│   ├── ipc/
+│   │   ├── commands.ts         # Tauri 命令封装
+│   │   ├── events.ts           # 事件常量定义
+│   │   └── contracts.ts        # 事件 Payload 类型
+│   ├── components/             # 通用组件
+│   │   ├── ToggleSwitch.vue
+│   │   ├── ThemeSelect.vue
+│   │   └── ChartWrapper.vue
+│   ├── types/                  # 通用类型定义
+│   └── utils/                  # 工具函数
+│       ├── format.ts           # 速度格式化、单位转换
+│       └── storage.ts          # localStorage 封装 (兼容层)
+├── views/                      # 兼容层，逐步迁移到 windows/
+│   ├── MainPanel.vue
+│   └── WidgetIsland.vue
+├── App.vue
+├── main.ts
 └── assets/
 ```
 
@@ -234,47 +329,53 @@ src/
 ```
 src-tauri/src/
 ├── main.rs                     # 入口，调用 lib::run()
-├── lib.rs                      # run() 函数 + plugin 注册
-├── commands/                   # Tauri command 处理函数
+├── lib.rs                      # run() 函数 + plugin 注册 (精简版)
+├── app/
+│   ├── bootstrap.rs            # 应用启动流程
+│   ├── state.rs                # 全局 AppState
+│   └── scheduler.rs            # 后台任务调度器
+├── commands/
 │   ├── mod.rs
-│   ├── media.rs                # 音乐播放控制 (SMTC)
-│   ├── network.rs              # 网速、延迟、流量
-│   ├── hardware.rs             # CPU/GPU/RAM 监控
-│   ├── notification.rs         # 系统通知捕获
-│   ├── window.rs               # 窗口管理 (置顶、位置、大小)
-│   └── cover.rs                # 专辑封面获取
-├── state/                      # 应用状态
+│   ├── settings_commands.rs    # 设置相关命令
+│   ├── system_commands.rs      # 系统监控命令
+│   ├── media_commands.rs       # 媒体控制命令
+│   └── window_commands.rs      # 窗口管理命令
+├── domain/
 │   ├── mod.rs
-│   ├── app_state.rs            # AppState 结构体
-│   └── animation_state.rs      # 动画状态原子变量
-├── media/                      # 媒体控制封装
+│   ├── settings.rs             # 设置领域模型
+│   ├── metrics.rs              # 指标领域模型
+│   ├── media.rs                # 媒体领域模型
+│   └── notification.rs         # 通知领域模型
+├── services/
 │   ├── mod.rs
-│   └── smtc.rs                 # Windows SMTC API 封装
-├── system/                     # 系统交互
+│   ├── settings_service.rs     # 设置服务
+│   ├── metrics_service.rs      # 指标采集服务
+│   ├── media_service.rs        # 媒体控制服务
+│   ├── notification_service.rs # 通知服务
+│   └── window_service.rs       # 窗口管理服务
+├── platform/
+│   └── windows/
+│       ├── mod.rs
+│       ├── media.rs            # Windows SMTC API
+│       ├── notifications.rs    # Windows 通知 API
+│       ├── process.rs          # 进程管理
+│       └── window.rs           # 窗口 API
+├── storage/
 │   ├── mod.rs
-│   ├── tray.rs                 # 系统托盘
-│   ├── autostart.rs            # 开机自启
-│   └── dwm.rs                  # DWM 窗口效果
-├── animation/                  # 动画引擎
-│   ├── mod.rs
-│   └── spring.rs               # 弹簧物理动画
+│   ├── settings_store.rs       # 设置持久化
+│   └── history_store.rs        # 历史数据存储
 └── error.rs                    # 统一错误类型
 ```
 
 ### 重构优先级
 
-| 优先级 | 任务 | 理由 |
-|--------|------|------|
-| P0 | 引入 ESLint + Prettier + clippy | 代码质量基线 |
-| P0 | 定义 TypeScript 类型系统 | 为拆分组件打基础 |
-| P1 | 前端拆分组件 + composables | 当前巨型文件无法维护 |
-| P1 | Rust 拆分模块 | 同上 |
-| P1 | 引入 Pinia 状态管理 | 状态散落，窗口间同步困难 |
-| P2 | 引入 vitest + cargo test | 防止重构引入回归 |
-| P2 | 统一 WinAPI crate | 减少编译时间和二进制体积 |
-| P2 | 统一错误处理 | 提高健壮性 |
-| P3 | CI/CD 流程 | 自动化质量保障 |
-| P3 | AI Agent 监控功能 | 新功能扩展 |
+| 阶段 | 优先级 | 任务 | 理由 |
+|------|--------|------|------|
+| R1 | P0 | 工程基线 | 建立代码质量基线 |
+| R2 | P1 | 前端组件拆分 | 当前巨型文件无法维护 |
+| R3 | P1 | Rust 模块拆分 | 同上 |
+| R4 | P1 | 统一状态与通信 | 状态散落，窗口间同步困难 |
+| R5 | P2 | 存储迁移与稳定性 | 防止重构引入回归 |
 
 ---
 
@@ -285,36 +386,49 @@ src-tauri/src/
 - Node.js >= 18
 - Rust >= 1.70
 - Tauri 2 CLI
+- pnpm (推荐)
 
 ### 常用命令
 
 ```powershell
 # 安装依赖
-npm install
+pnpm install
 
 # 开发模式 (前端 + Rust 热重载)
-npm run tauri dev
+pnpm tauri dev
 
 # 仅前端构建检查
-npm run build
+pnpm build
 
 # 类型检查
-npx vue-tsc --noEmit
+pnpm typecheck
+
+# Lint 检查
+pnpm lint
+
+# 格式化
+pnpm format
+
+# 前端测试
+pnpm test
 
 # Rust 构建
 cd src-tauri; cargo build
 
-# Rust 测试 (待配置)
+# Rust 测试
 cd src-tauri; cargo test
 
-# 前端测试 (待配置)
-npx vitest run
+# Rust 格式检查
+cd src-tauri; cargo fmt --check
+
+# Rust Clippy 检查
+cd src-tauri; cargo clippy --all-targets --all-features -- -D warnings
 ```
 
 ### 构建发布
 
 ```powershell
-npm run tauri build
+pnpm tauri build
 ```
 
 产物位于 `src-tauri/target/release/bundle/`。
@@ -342,6 +456,42 @@ npm run tauri build
 ### 通知过滤
 
 自动过滤微信通知 (`WeChat` / `WeChatService`)，通过 `AUMID` 识别。其他通知通过协议唤起对应应用。
+
+---
+
+## 测试清单
+
+### 功能回归
+
+- [ ] 主窗口启动正常
+- [ ] 灵动岛显示和隐藏正常
+- [ ] 网速实时更新
+- [ ] 网络状态灯正常
+- [ ] 音乐信息正常
+- [ ] 上一首、播放暂停、下一首正常
+- [ ] 硬件信息正常
+- [ ] Windows 通知正常
+- [ ] 通知点击唤起应用正常
+- [ ] 灵动岛展开和收缩动画正常
+- [ ] 任务栏停靠正常
+- [ ] 多显示器位置正常
+- [ ] DPI 缩放正常
+- [ ] 拖拽和位置锁定正常
+- [ ] 轮换模式正常
+- [ ] 静默模式正常
+- [ ] 托盘菜单正常
+- [ ] 开机自启动正常
+- [ ] 检查更新正常
+- [ ] 深色和浅色主题正常
+
+### 稳定性
+
+- [ ] 连续运行 8 小时无明显内存增长
+- [ ] 主窗口反复打开关闭不重复注册监听器
+- [ ] 灵动岛反复显隐不重复启动定时器
+- [ ] 系统休眠恢复后状态正常
+- [ ] 网络断开和恢复后状态正常
+- [ ] Agent 功能未接入前不影响现有体验
 
 ---
 

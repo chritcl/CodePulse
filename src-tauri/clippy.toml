@@ -1,0 +1,17 @@
+# Clippy 配置
+# 文档: https://doc.rust-lang.org/clippy/configuration.html
+
+# 类型复杂度阈值
+type-complexity-threshold = 250
+
+# 函数参数最大数量
+too-many-arguments-threshold = 8
+
+# 单行最大字符数
+too-many-lines-threshold = 100
+
+# 结构体最大字段数
+struct-field-names-threshold = 5
+
+# 循环最大嵌套深度
+cognitive-complexity-threshold = 25

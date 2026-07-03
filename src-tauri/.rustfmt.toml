@@ -1,0 +1,33 @@
+# Rust 格式化配置
+# 文档: https://rust-lang.github.io/rustfmt/
+
+# 最大行宽
+max_width = 100
+
+# 缩进
+tab_spaces = 4
+
+# 换行符风格
+newline_style = "Unix"
+
+# 导入排序
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+
+# 代码块风格
+brace_style = "SameLineWhere"
+control_brace_style = "AlwaysSameLine"
+
+# 链式调用格式
+chain_width = 80
+
+# 函数参数格式
+fn_params_layout = "Tall"
+
+# 注释格式
+comment_width = 80
+wrap_comments = false
+
+# 其他
+use_field_init_shorthand = true
+use_try_shorthand = true

@@ -1,13 +1,13 @@
-import { createRouter, createWebHistory } from 'vue-router'
-import MainPanel from '../views/MainPanel.vue'
-import WidgetIsland from '../views/WidgetIsland.vue'
+import { createRouter, createWebHistory } from 'vue-router';
+import DashboardView from '../components/dashboard/DashboardView.vue';
+import IslandView from '../components/island/IslandView.vue';
 
 const router = createRouter({
-    history: createWebHistory(),
-    routes: [
-        { path: '/', component: MainPanel },
-        { path: '/widget', component: WidgetIsland }
-    ]
-})
+  history: createWebHistory(),
+  routes: [
+    { path: '/', component: DashboardView },
+    { path: '/widget', component: IslandView },
+  ],
+});
 
-export default router
+export default router;
