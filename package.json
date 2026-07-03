@@ -1,44 +1,28 @@
 {
-  "name": "codepulse",
-  "version": "0.1.0",
-  "description": "Windows 本地 AI Agent 状态助手",
-  "author": "CodePulse",
+  "name": "NetSpeed Dynamic",
   "private": true,
-  "main": "dist/main/index.js",
-  "type": "commonjs",
-  "packageManager": "pnpm@11.7.0",
+  "version": "0.1.0",
+  "type": "module",
   "scripts": {
-    "dev:renderer": "vite --host 127.0.0.1",
-    "build:node": "tsc -p tsconfig.node.json",
-    "build:renderer": "vite build",
-    "typecheck": "vue-tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.vitest.json --noEmit",
-    "test": "vitest run --config vite.config.ts",
-    "build": "pnpm run typecheck && pnpm run test && pnpm run build:node && pnpm run build:renderer",
-    "start": "pnpm run build && electron .",
-    "dist": "pnpm run build && electron-builder"
-  },
-  "pnpm": {
-    "ignoredBuiltDependencies": [
-      "electron-winstaller"
-    ]
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/plugin-autostart": "^2.5.1",
+    "@tauri-apps/plugin-opener": "^2",
     "echarts": "^6.1.0",
-    "element-plus": "^2.14.2",
-    "pinia": "^3.0.4",
-    "sql.js": "^1.14.1",
-    "vue": "^3.5.39",
+    "lucide-vue-next": "^0.577.0",
+    "vue": "^3.5.13",
     "vue-router": "^5.1.0"
   },
   "devDependencies": {
-    "@types/node": "^26.0.1",
-    "@types/sql.js": "^1.4.11",
-    "@vitejs/plugin-vue": "^6.0.7",
-    "electron": "^42.5.1",
-    "electron-builder": "^25.1.8",
-    "typescript": "^6.0.3",
-    "vite": "^8.1.0",
-    "vitest": "^4.1.9",
-    "vue-tsc": "^3.3.5"
+    "@tauri-apps/cli": "^2",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.3",
+    "vue-tsc": "^2.1.10"
   }
 }
