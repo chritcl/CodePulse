@@ -240,6 +240,101 @@ const readOptionalString = (record: Record<string, unknown>, key: string): strin
   return value;
 };
 
+const readOptionalIdentityString = (record: Record<string, unknown>, key: string): string | null => {
+  const value = record[key];
+
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    throw new Error("状态源数据格式无法解析");
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const readFirstIdentityString = (record: Record<string, unknown>, keys: string[]): string | null => {
+  for (const key of keys) {
+    const value = readOptionalIdentityString(record, key);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+};
+
+const directTaskIdentityKeys = ["id", "taskId", "task_id"];
+const directSessionIdentityKeys = [
+  "sessionId",
+  "session_id",
+  "codexSessionId",
+  "codex_session_id",
+  "conversationId",
+  "conversation_id",
+  "threadId",
+  "thread_id"
+];
+const nestedIdentityKeys = ["session", "conversation", "thread"];
+const nestedSessionIdentityKeys = [
+  "id",
+  "sessionId",
+  "session_id",
+  "codexSessionId",
+  "codex_session_id",
+  "conversationId",
+  "conversation_id",
+  "threadId",
+  "thread_id"
+];
+
+const readNestedSessionIdentity = (record: Record<string, unknown>): string | null => {
+  for (const key of nestedIdentityKeys) {
+    const value = record[key];
+
+    if (value === undefined || value === null) {
+      continue;
+    }
+
+    if (!isRecord(value)) {
+      throw new Error("状态源数据格式无法解析");
+    }
+
+    const sessionId = readFirstIdentityString(value, nestedSessionIdentityKeys);
+
+    if (sessionId) {
+      return sessionId;
+    }
+  }
+
+  return null;
+};
+
+const readTaskIdentity = (record: Record<string, unknown>): { id: string; sessionId: string } => {
+  const id = readFirstIdentityString(record, directTaskIdentityKeys);
+  const sessionId =
+    readFirstIdentityString(record, directSessionIdentityKeys) ?? readNestedSessionIdentity(record) ?? id;
+
+  if (!id && !sessionId) {
+    throw new Error("状态源数据格式无法解析");
+  }
+
+  const resolvedId = id ?? sessionId;
+  const resolvedSessionId = sessionId ?? resolvedId;
+
+  if (!resolvedId || !resolvedSessionId) {
+    throw new Error("状态源数据格式无法解析");
+  }
+
+  return {
+    id: resolvedId,
+    sessionId: resolvedSessionId
+  };
+};
+
 const readOptionalNumber = (record: Record<string, unknown>, key: string): number | null => {
   const value = record[key];
 
@@ -674,7 +769,7 @@ export class CodexAdapter implements AgentAdapter, RuntimeConfigurableAgentAdapt
       throw new Error("状态源数据格式无法解析");
     }
 
-    const id = readRequiredString(rawTask, "id");
+    const identity = readTaskIdentity(rawTask);
     const status = readTaskStatus(rawTask);
     const progressType = readProgressType(rawTask);
     const progressValue = progressType === "determinate" ? sanitizePercent(readOptionalNumber(rawTask, "progressValue")) : null;
@@ -684,9 +779,9 @@ export class CodexAdapter implements AgentAdapter, RuntimeConfigurableAgentAdapt
     const startedAt = readOptionalIso(rawTask, "startedAt", updatedAt);
 
     return {
-      id: `${source.idPrefix}-${id}`,
+      id: `${source.idPrefix}-${identity.id}`,
       providerId: this.provider.id,
-      sessionId: readOptionalString(rawTask, "sessionId") ?? id,
+      sessionId: identity.sessionId,
       title: readOptionalString(rawTask, "title") ?? "Codex 会话",
       projectName: readOptionalString(rawTask, "projectName") ?? "Codex",
       projectPath: readOptionalString(rawTask, "projectPath"),
@@ -783,7 +878,8 @@ export class CodexAdapter implements AgentAdapter, RuntimeConfigurableAgentAdapt
       const isQuotaEvent = eventType === "quota";
 
       if (isTaskEvent) {
-        taskEvents.set(readRequiredString(rawEvent, "id"), rawEvent);
+        const identity = readTaskIdentity(rawEvent);
+        taskEvents.set(identity.sessionId, rawEvent);
       } else if (isQuotaEvent) {
         quotaEvent = rawEvent;
       }

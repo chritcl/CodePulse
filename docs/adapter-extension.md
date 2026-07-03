@@ -50,8 +50,9 @@
 10. 可通过 `logFilePath` 或 `CODEPULSE_CODEX_LOG_FILE` 读取 UTF-8 JSONL 日志源。
 11. 日志源支持 `type: "task"` 和 `type: "quota"` 事件，同一任务多条记录取最新记录，任务和额度会转换为统一模型。
 12. 日志源为空时回退到进程检测；日志源格式错误、文件过大或无法解析时降级为连接错误状态。
+13. 状态源和日志源任务会话标识支持 `id`、`taskId`、`task_id`、`sessionId`、`session_id`、`codexSessionId`、`codex_session_id`、`conversationId`、`conversation_id`、`threadId`、`thread_id` 以及 `session`、`conversation`、`thread` 嵌套对象；缺少任务 ID 时会使用会话标识生成稳定任务 ID，日志源同一会话多条任务记录取最新记录。
 
-状态源和日志源路径已可通过设置页持久化配置，并会通过 `settings.update(partialSettings)` 同步到运行期适配器。运行期修改路径后，下一次刷新会读取新路径；运行期清空路径后，不得继续沿用旧文件，状态源和日志源都会回退到进程检测。后续增加更完整的 Codex 会话识别时，仍必须通过 `AgentStateHub` 输出统一快照，不得由界面直接读取日志或进程。
+状态源和日志源路径已可通过设置页持久化配置，并会通过 `settings.update(partialSettings)` 同步到运行期适配器。运行期修改路径后，下一次刷新会读取新路径；运行期清空路径后，不得继续沿用旧文件，状态源和日志源都会回退到进程检测。后续增加更多 Codex 原生日志格式覆盖时，仍必须通过 `AgentStateHub` 输出统一快照，不得由界面直接读取日志或进程。
 
 ## ProcessAdapter 当前边界
 

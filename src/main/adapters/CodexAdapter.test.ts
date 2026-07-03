@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { CodexAdapter, type CodexProcessProbe, type CodexStatusSource } from "./CodexAdapter";
+import { CodexAdapter, type CodexLogSource, type CodexProcessProbe, type CodexStatusSource } from "./CodexAdapter";
 
 const fixedNow = new Date("2026-07-01T03:00:00.000Z");
 
@@ -12,6 +12,10 @@ const createProbe = (processes: Awaited<ReturnType<CodexProcessProbe["listProces
 
 const createStatusSource = (status: Awaited<ReturnType<CodexStatusSource["readStatus"]>>): CodexStatusSource => ({
   readStatus: async () => status
+});
+
+const createLogSource = (events: Awaited<ReturnType<CodexLogSource["readEvents"]>>): CodexLogSource => ({
+  readEvents: async () => events
 });
 
 describe("CodexAdapter", () => {
@@ -159,6 +163,67 @@ describe("CodexAdapter", () => {
     expect(await adapter.getConnectionStatus()).toBe("connected");
     expect(tasks[0]?.sourceId).toBe("codex-process");
     expect(tasks[0]?.stage).toBe("进程运行");
+  });
+
+  it("状态源仅提供 snake_case 会话字段时仍生成稳定会话任务", async () => {
+    const adapter = new CodexAdapter({
+      now: () => fixedNow,
+      scanIntervalMs: 0,
+      processProbe: createProbe([]),
+      statusSource: createStatusSource({
+        tasks: [
+          {
+            session_id: "codex-session-7",
+            title: "识别 Codex 会话",
+            status: "executing",
+            stage: "读取会话标识"
+          }
+        ]
+      })
+    });
+
+    await adapter.refresh();
+    const tasks = await adapter.getCurrentTasks();
+
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]?.id).toBe("codex-status-codex-session-7");
+    expect(tasks[0]?.sessionId).toBe("codex-session-7");
+    expect(tasks[0]?.title).toBe("识别 Codex 会话");
+  });
+
+  it("日志源使用 conversation_id 时按会话合并最新任务事件", async () => {
+    const adapter = new CodexAdapter({
+      now: () => fixedNow,
+      scanIntervalMs: 0,
+      processProbe: createProbe([]),
+      logSource: createLogSource([
+        {
+          type: "task",
+          conversation_id: "conv-1",
+          title: "会话事件",
+          status: "executing",
+          stage: "开始执行"
+        },
+        {
+          type: "task",
+          conversation_id: "conv-1",
+          title: "会话事件",
+          status: "waiting",
+          stage: "等待确认",
+          lastActivityText: "需要用户确认"
+        }
+      ])
+    });
+
+    await adapter.refresh();
+    const tasks = await adapter.getCurrentTasks();
+
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]?.id).toBe("codex-log-conv-1");
+    expect(tasks[0]?.sessionId).toBe("conv-1");
+    expect(tasks[0]?.status).toBe("waiting");
+    expect(tasks[0]?.stage).toBe("等待确认");
+    expect(tasks[0]?.lastActivityText).toBe("需要用户确认");
   });
 
   it("状态源格式错误时降级为连接错误状态", async () => {
