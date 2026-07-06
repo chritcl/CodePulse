@@ -3,11 +3,22 @@
     <!-- 音乐控制平台 -->
     <div
       class="set-item-top"
-      style="grid-column: span 2; flex-direction: column; align-items: flex-start; justify-content: center; gap: 8px"
+      style="
+        grid-column: span 2;
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: center;
+        gap: 8px;
+      "
     >
       <div
         class="set-item-meta"
-        style="flex-direction: row; justify-content: space-between; width: 100%; align-items: center"
+        style="
+          flex-direction: row;
+          justify-content: space-between;
+          width: 100%;
+          align-items: center;
+        "
       >
         <span class="set-item-title-top">音乐控制平台</span>
         <span class="set-item-desc" style="font-size: 11px">选择灵动岛显示的音乐平台</span>
@@ -58,7 +69,9 @@
           <p class="set-item-pro-tag">PRO</p>
         </span>
         <span class="set-item-desc">
-          {{ settingsStore.enableRotation ? '轮换开启中，已禁用' : '支持网易云音乐控制及歌曲信息显示' }}
+          {{
+            settingsStore.enableRotation ? '轮换开启中，已禁用' : '支持网易云音乐控制及歌曲信息显示'
+          }}
         </span>
       </div>
       <label class="switch">
@@ -96,7 +109,9 @@
           <p class="set-item-pro-tag">PRO</p>
         </span>
         <span class="set-item-desc">
-          {{ settingsStore.enableMusicCtrl ? '音乐控制器开启中，已禁用' : 'CPU / 内存占用实时监控' }}
+          {{
+            settingsStore.enableMusicCtrl ? '音乐控制器开启中，已禁用' : 'CPU / 内存占用实时监控'
+          }}
         </span>
       </div>
       <label class="switch">

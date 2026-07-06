@@ -8,6 +8,7 @@ import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import type { TrafficStats } from '@/types';
+import { readString, writeString } from '@/shared/utils/storage';
 
 export const useNetworkStore = defineStore('network', () => {
   // ============================================================
@@ -100,7 +101,7 @@ export const useNetworkStore = defineStore('network', () => {
   /** 加载流量统计数据 */
   const loadTrafficData = () => {
     try {
-      const stored = localStorage.getItem('nsd_traffic_stats');
+      const stored = readString('nsd_traffic_stats', '');
       if (stored) trafficData.value = JSON.parse(stored);
     } catch (e) {
       console.error('加载统计数据失败', e);
@@ -109,7 +110,7 @@ export const useNetworkStore = defineStore('network', () => {
 
   /** 保存流量统计数据 */
   const saveTrafficData = () => {
-    localStorage.setItem('nsd_traffic_stats', JSON.stringify(trafficData.value));
+    writeString('nsd_traffic_stats', JSON.stringify(trafficData.value));
   };
 
   /** 获取并更新网速 */

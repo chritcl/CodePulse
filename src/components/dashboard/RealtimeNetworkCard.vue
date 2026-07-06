@@ -111,14 +111,20 @@ const handleResize = () => {
 };
 
 // 监听图表数据变化
-watch(() => networkStore.chartDataQueue, () => {
-  chartInstance?.setOption({ series: [{ data: networkStore.chartDataQueue }] });
-});
+watch(
+  () => networkStore.chartDataQueue,
+  () => {
+    chartInstance?.setOption({ series: [{ data: networkStore.chartDataQueue }] });
+  }
+);
 
 // 监听主题变化
-watch(() => settingsStore.themeMode, () => {
-  updateChartOption();
-});
+watch(
+  () => settingsStore.themeMode,
+  () => {
+    updateChartOption();
+  }
+);
 
 onMounted(() => {
   initChart();

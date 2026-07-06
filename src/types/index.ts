@@ -20,7 +20,7 @@ export type IslandTheme = 'black' | 'white';
 
 /** 网速数据 */
 export interface SpeedData {
-  upload: number;   // bytes/s
+  upload: number; // bytes/s
   download: number; // bytes/s
   timestamp: number;
 }
@@ -37,8 +37,8 @@ export interface FormattedSpeed {
 
 /** 每日流量数据 */
 export interface DailyTraffic {
-  up: number;    // bytes
-  down: number;  // bytes
+  up: number; // bytes
+  down: number; // bytes
 }
 
 /** 流量统计集合 */
@@ -58,8 +58,8 @@ export interface MusicState {
   album?: string;
   coverUrl?: string;
   isPlaying: boolean;
-  progress?: number;  // 0.0 - 1.0
-  duration?: number;  // 毫秒
+  progress?: number; // 0.0 - 1.0
+  duration?: number; // 毫秒
 }
 
 // ============================================================
@@ -68,9 +68,9 @@ export interface MusicState {
 
 /** 硬件状态数据 */
 export interface HardwareData {
-  cpu: number;      // 百分比 0-100
-  memory: number;   // 百分比 0-100
-  gpu?: number;     // 百分比 0-100 (估算值)
+  cpu: number; // 百分比 0-100
+  memory: number; // 百分比 0-100
+  gpu?: number; // 百分比 0-100 (估算值)
   timestamp: number;
 }
 

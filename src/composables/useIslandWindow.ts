@@ -12,6 +12,9 @@ import {
   PhysicalSize,
 } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
+import { readBoolean, readEnum, readNumber, writeBoolean } from '@/shared/utils/storage';
+
+const ISLAND_THEMES = ['black', 'white'] as const;
 
 export function useIslandWindow() {
   // ============================================================
@@ -25,16 +28,16 @@ export function useIslandWindow() {
   const currentHeight = ref(42);
 
   /** 灵动岛透明度 */
-  const islandOpacity = ref(Number(localStorage.getItem('nsd_island_opacity') || '100'));
+  const islandOpacity = ref(readNumber('nsd_island_opacity', 100));
 
   /** 灵动岛主题 */
-  const islandTheme = ref(localStorage.getItem('nsd_island_theme') || 'black');
+  const islandTheme = ref(readEnum('nsd_island_theme', 'black', ISLAND_THEMES));
 
   /** 是否置于任务栏 */
-  const isPinnedToTaskbar = ref(localStorage.getItem('nsd_pin_taskbar') === 'true');
+  const isPinnedToTaskbar = ref(readBoolean('nsd_pin_taskbar'));
 
   /** 是否锁定位置 */
-  const isPositionLocked = ref(localStorage.getItem('nsd_position_locked') === 'true');
+  const isPositionLocked = ref(readBoolean('nsd_position_locked'));
 
   // ============================================================
   // 计算属性
@@ -158,7 +161,8 @@ export function useIslandWindow() {
         const monitorHeightPhysical = monitor.size.height;
 
         const x = monitorLeftPhysical + 10 * scaleFactor;
-        const y = monitorTopPhysical + monitorHeightPhysical - (WINDOW_INIT_HEIGHT + 3) * scaleFactor;
+        const y =
+          monitorTopPhysical + monitorHeightPhysical - (WINDOW_INIT_HEIGHT + 3) * scaleFactor;
 
         await appWindow.hide();
         await appWindow.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
@@ -191,7 +195,7 @@ export function useIslandWindow() {
 
   /** 设置主题 */
   const setTheme = (theme: string) => {
-    islandTheme.value = theme;
+    islandTheme.value = theme === 'white' ? 'white' : 'black';
   };
 
   /** 设置是否置于任务栏 */
@@ -202,7 +206,7 @@ export function useIslandWindow() {
   /** 设置是否锁定位置 */
   const setPositionLocked = (locked: boolean) => {
     isPositionLocked.value = locked;
-    localStorage.setItem('nsd_position_locked', String(locked));
+    writeBoolean('nsd_position_locked', locked);
   };
 
   // ============================================================

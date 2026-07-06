@@ -19,7 +19,7 @@ export function useAutoStart(showDialog: (title: string, message: string) => voi
       } else {
         await disable();
       }
-    } catch (error) {
+    } catch {
       settingsStore.setAutoStart(!settingsStore.autoStart);
       showDialog('设置失败', '无法修改开机自启动状态，请检查系统权限。');
     }

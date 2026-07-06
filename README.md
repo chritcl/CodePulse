@@ -89,12 +89,12 @@
 | 构建工具 | Vite 6 |
 | 路由 | Vue Router 5 |
 | 图表 | ECharts 6 |
-| 图标 | Lucide Vue Next |
+| 图标 | 预留 @lucide/vue |
 | 网络监控 | sysinfo (Rust) |
 | 异步运行时 | Tokio (Rust) |
 | HTTP 客户端 | reqwest (Rust) |
 | 媒体控制 | Windows SMTC API |
-| Windows API | windows-sys + winapi |
+| Windows API | windows + windows-sys + winapi |
 | 本地存储 | localStorage |
 
 ## 项目结构
@@ -104,17 +104,24 @@ NetSpeed-Dynamic/
 ├── src/                    # 前端源码
 │   ├── main.ts             # 应用入口
 │   ├── router/index.ts     # 路由配置
-│   ├── views/
-│   │   ├── MainPanel.vue   # 主控制台（设置、统计、音乐平台切换）
-│   │   └── WidgetIsland.vue # 灵动岛悬浮窗（网速、音乐、消息、硬件）
+│   ├── components/
+│   │   ├── dashboard/      # 主控制台组件
+│   │   └── island/         # 灵动岛组件
+│   ├── composables/        # 前端组合式逻辑
+│   ├── stores/             # Pinia 状态管理
+│   ├── shared/ipc/         # Tauri 命令、事件和类型封装
 │   └── assets/             # 静态资源（图标、截图）
 ├── src-tauri/              # Tauri 后端
 │   ├── src/
 │   │   ├── main.rs         # Rust 入口
-│   │   └── lib.rs          # 核心逻辑（网络、音乐、通知、动画）
+│   │   ├── lib.rs          # Tauri 启动和模块注册
+│   │   ├── app/            # 全局状态
+│   │   ├── commands/       # Tauri 命令
+│   │   └── error.rs        # 统一错误类型
 │   ├── Cargo.toml          # Rust 依赖
 │   └── tauri.conf.json     # Tauri 配置
-└── package.json            # 前端依赖
+├── package.json            # 前端依赖
+└── pnpm-lock.yaml          # pnpm 锁文件
 ```
 
 ## 开发环境
@@ -124,20 +131,21 @@ NetSpeed-Dynamic/
 - Node.js >= 18
 - Rust >= 1.70
 - Tauri 2 CLI
+- pnpm 10.33.2
 
 ### 安装与运行
 
 ```bash
 git clone https://github.com/GEORGEWWWU/NetSpeed-Dynamic.git
 cd NetSpeed-Dynamic
-npm install
-npm run tauri dev
+pnpm install
+pnpm run tauri dev
 ```
 
 ### 构建发布
 
 ```bash
-npm run tauri build
+pnpm run tauri build
 ```
 
 产物位于 `src-tauri/target/release/bundle/`。

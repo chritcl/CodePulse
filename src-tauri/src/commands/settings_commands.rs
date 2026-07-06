@@ -1,12 +1,11 @@
+use serde::{Deserialize, Serialize};
 /**
  * 设置相关命令
  *
  * 包含统一的设置更新和快照获取命令。
  * 用于替代分散的控制事件，实现统一状态管理。
  */
-
-use tauri::{Manager, Emitter};
-use serde::{Deserialize, Serialize};
+use tauri::{Emitter, Manager};
 
 /// 灵动岛设置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,7 +101,10 @@ pub fn get_app_snapshot() -> AppSnapshot {
 ///
 /// 接收前端的设置补丁，更新对应设置并广播变更事件。
 #[tauri::command]
-pub fn update_settings(app: tauri::AppHandle, patch: serde_json::Value) -> Result<AppSettings, String> {
+pub fn update_settings(
+    app: tauri::AppHandle,
+    patch: serde_json::Value,
+) -> Result<AppSettings, String> {
     // 解析补丁
     // 注意：这里使用简化的实现，实际应该合并到现有设置中
 
@@ -119,7 +121,10 @@ pub fn update_settings(app: tauri::AppHandle, patch: serde_json::Value) -> Resul
 #[tauri::command]
 pub fn set_island_visible(app: tauri::AppHandle, visible: bool) -> Result<(), String> {
     // 广播显隐事件
-    let _ = app.emit("app.island.visibility", serde_json::json!({ "visible": visible }));
+    let _ = app.emit(
+        "app.island.visibility",
+        serde_json::json!({ "visible": visible }),
+    );
 
     // 控制窗口显隐
     if let Some(widget_window) = app.get_webview_window("widget") {

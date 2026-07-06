@@ -124,8 +124,7 @@ export const settingsCommands = {
    * 设置灵动岛可见性
    * @param visible - 是否可见
    */
-  setIslandVisible: (visible: boolean): Promise<void> =>
-    invoke('set_island_visible', { visible }),
+  setIslandVisible: (visible: boolean): Promise<void> => invoke('set_island_visible', { visible }),
 };
 
 // ============================================================

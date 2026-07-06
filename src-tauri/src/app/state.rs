@@ -3,7 +3,6 @@
  *
  * 定义应用程序的全局状态结构，由 Tauri 管理。
  */
-
 use std::sync::Mutex;
 use sysinfo::{Networks, System};
 

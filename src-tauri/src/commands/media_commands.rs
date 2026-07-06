@@ -3,12 +3,10 @@
  *
  * 包含音乐播放控制、封面获取等相关命令。
  */
-
 use std::sync::Mutex;
 use windows::Media::Control::{
-    GlobalSystemMediaTransportControlsSessionManager,
+    GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus,
-    GlobalSystemMediaTransportControlsSession,
 };
 
 /// 全局记录当前选中的音乐平台
@@ -27,14 +25,20 @@ pub fn set_target_player(player: String) {
 /// 根据前端设置的目标平台，查找对应的媒体控制会话。
 pub fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSession> {
     let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-        .ok()?.get().ok()?;
+        .ok()?
+        .get()
+        .ok()?;
 
     let sessions = manager.GetSessions().ok()?;
 
     // 获取当前的目标平台
     let target = match TARGET_PLAYER.lock() {
         Ok(guard) => {
-            if guard.is_empty() { "netease".to_string() } else { guard.clone() }
+            if guard.is_empty() {
+                "netease".to_string()
+            } else {
+                guard.clone()
+            }
         }
         Err(e) => {
             eprintln!("[NSD] 获取目标平台失败: {}", e);
@@ -46,12 +50,13 @@ pub fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSe
         if let Ok(app_id) = session.SourceAppUserModelId() {
             let app_id_str = app_id.to_string().to_lowercase();
 
-            // 网易云特殊处理：包名可能叫 cloudmusic 或 netease
-            if target == "netease" && (app_id_str.contains("cloudmusic") || app_id_str.contains("netease")) {
-                return Some(session);
-            }
-            // 其他平台直接用名字匹配
-            else if target != "netease" && app_id_str.contains(&target) {
+            let matches_target = if target == "netease" {
+                app_id_str.contains("cloudmusic") || app_id_str.contains("netease")
+            } else {
+                app_id_str.contains(&target)
+            };
+
+            if matches_target {
                 return Some(session);
             }
         }
@@ -81,7 +86,8 @@ pub async fn fetch_netease_music_info() -> Result<Option<(String, String, bool)>
     };
 
     // 获取歌曲属性
-    let properties = session.TryGetMediaPropertiesAsync()
+    let properties = session
+        .TryGetMediaPropertiesAsync()
         .map_err(|e| e.to_string())?
         .get()
         .map_err(|e| e.to_string())?;
@@ -101,9 +107,15 @@ pub async fn fetch_netease_music_info() -> Result<Option<(String, String, bool)>
 pub async fn control_system_media(action: String) -> Result<(), String> {
     if let Some(session) = get_target_media_session() {
         match action.as_str() {
-            "play_pause" => { let _ = session.TryTogglePlayPauseAsync(); },
-            "next" => { let _ = session.TrySkipNextAsync(); },
-            "prev" => { let _ = session.TrySkipPreviousAsync(); },
+            "play_pause" => {
+                let _ = session.TryTogglePlayPauseAsync();
+            }
+            "next" => {
+                let _ = session.TrySkipNextAsync();
+            }
+            "prev" => {
+                let _ = session.TrySkipPreviousAsync();
+            }
             _ => {}
         }
     }
@@ -113,7 +125,7 @@ pub async fn control_system_media(action: String) -> Result<(), String> {
 /// Base64 编码器
 fn inline_base64_encode(input: &[u8]) -> String {
     const CHARSET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((input.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {
         match chunk.len() {
             3 => {
@@ -125,12 +137,12 @@ fn inline_base64_encode(input: &[u8]) -> String {
             2 => {
                 result.push(CHARSET[(chunk[0] >> 2) as usize] as char);
                 result.push(CHARSET[(((chunk[0] & 0x03) << 4) | (chunk[1] >> 4)) as usize] as char);
-                result.push(CHARSET[(((chunk[1] & 0x0F) << 2)) as usize] as char);
+                result.push(CHARSET[((chunk[1] & 0x0F) << 2) as usize] as char);
                 result.push('=');
             }
             1 => {
                 result.push(CHARSET[(chunk[0] >> 2) as usize] as char);
-                result.push(CHARSET[(((chunk[0] & 0x03) << 4)) as usize] as char);
+                result.push(CHARSET[((chunk[0] & 0x03) << 4) as usize] as char);
                 result.push('=');
                 result.push('=');
             }
@@ -142,14 +154,16 @@ fn inline_base64_encode(input: &[u8]) -> String {
 
 /// 从 SMTC 获取本地封面
 fn get_smtc_thumbnail() -> Option<String> {
-    use windows::Storage::Streams::{Buffer, InputStreamOptions, DataReader};
+    use windows::Storage::Streams::{Buffer, DataReader, InputStreamOptions};
 
     let session = get_target_media_session()?;
     let properties = session.TryGetMediaPropertiesAsync().ok()?.get().ok()?;
     let thumbnail_ref = properties.Thumbnail().ok()?;
     let stream = thumbnail_ref.OpenReadAsync().ok()?.get().ok()?;
     let size = stream.Size().ok()? as u32;
-    if size == 0 { return None; }
+    if size == 0 {
+        return None;
+    }
 
     let buffer = Buffer::Create(size).ok()?;
     stream.ReadAsync(&buffer, size, InputStreamOptions::None).ok()?.get().ok()?;
@@ -157,14 +171,20 @@ fn get_smtc_thumbnail() -> Option<String> {
     let mut bytes = vec![0u8; size as usize];
     reader.ReadBytes(&mut bytes).ok()?;
 
-    Some(format!("data:image/jpeg;base64,{}", inline_base64_encode(&bytes)))
+    Some(format!(
+        "data:image/jpeg;base64,{}",
+        inline_base64_encode(&bytes)
+    ))
 }
 
 /// 获取歌曲封面
 ///
 /// 优先从本地 SMTC 获取，失败则从网络获取。
 #[tauri::command]
-pub async fn get_random_cover_url(song_name: String, artist_name: String) -> Result<String, String> {
+pub async fn get_random_cover_url(
+    song_name: String,
+    artist_name: String,
+) -> Result<String, String> {
     // 优先从本地获取
     if let Some(base64_cover) = get_smtc_thumbnail() {
         return Ok(base64_cover);
@@ -184,10 +204,15 @@ pub async fn get_random_cover_url(song_name: String, artist_name: String) -> Res
     let query_itunes = format!("{} {}", song_name, artist_name);
     tokio::spawn(async move {
         let encoded_query = urlencoding::encode(&query_itunes).into_owned();
-        let itunes_url = format!("https://itunes.apple.com/search?term={}&media=music&limit=1", encoded_query);
+        let itunes_url = format!(
+            "https://itunes.apple.com/search?term={}&media=music&limit=1",
+            encoded_query
+        );
         if let Ok(resp) = client_itunes.get(&itunes_url).send().await {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
-                if let Some(artwork) = json.pointer("/results/0/artworkUrl100").and_then(|v| v.as_str()) {
+                if let Some(artwork) =
+                    json.pointer("/results/0/artworkUrl100").and_then(|v| v.as_str())
+                {
                     let _ = tx_itunes.send(artwork.replace("100x100bb", "300x300bb")).await;
                 }
             }
@@ -202,14 +227,23 @@ pub async fn get_random_cover_url(song_name: String, artist_name: String) -> Res
     tokio::spawn(async move {
         let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
         let query = format!("{} {}", song_netease, artist_netease);
-        if let Ok(resp) = client_netease.post("https://music.163.com/api/search/get/web")
+        if let Ok(resp) = client_netease
+            .post("https://music.163.com/api/search/get/web")
             .header("Referer", "https://music.163.com")
             .header("User-Agent", ua)
-            .form(&[("s", query.as_str()), ("type", "1"), ("limit", "1"), ("offset", "0")])
-            .send().await
+            .form(&[
+                ("s", query.as_str()),
+                ("type", "1"),
+                ("limit", "1"),
+                ("offset", "0"),
+            ])
+            .send()
+            .await
         {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
-                if let Some(pic) = json.pointer("/result/songs/0/al/picUrl").and_then(|v| v.as_str()) {
+                if let Some(pic) =
+                    json.pointer("/result/songs/0/al/picUrl").and_then(|v| v.as_str())
+                {
                     if !pic.is_empty() && pic != "http://p4.music.126.net/UeTuwE7pvjBpypWLudqukQ==/3135032972947607.jpg" {
                         let _ = tx_netease.send(pic.replace("http://", "https://") + "?param=300y300").await;
                     }
@@ -232,10 +266,18 @@ pub async fn get_random_cover_url(song_name: String, artist_name: String) -> Res
         );
         if let Ok(resp) = client_deezer.get(&deezer_url).header("User-Agent", ua).send().await {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
-                if let Some(cover) = json.pointer("/data/0/album/cover_medium").and_then(|v| v.as_str()) {
-                    if !cover.is_empty() { let _ = tx_deezer.send(cover.to_string()).await; }
-                } else if let Some(cover) = json.pointer("/data/0/album/cover_big").and_then(|v| v.as_str()) {
-                    if !cover.is_empty() { let _ = tx_deezer.send(cover.to_string()).await; }
+                if let Some(cover) =
+                    json.pointer("/data/0/album/cover_medium").and_then(|v| v.as_str())
+                {
+                    if !cover.is_empty() {
+                        let _ = tx_deezer.send(cover.to_string()).await;
+                    }
+                } else if let Some(cover) =
+                    json.pointer("/data/0/album/cover_big").and_then(|v| v.as_str())
+                {
+                    if !cover.is_empty() {
+                        let _ = tx_deezer.send(cover.to_string()).await;
+                    }
                 }
             }
         }

@@ -1,13 +1,12 @@
+use crate::app::AppState;
 /**
  * 系统监控命令
  *
  * 包含网速监控、硬件监控、网络延迟等相关命令。
  */
-
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 use tauri::State;
-use crate::app::AppState;
 
 /// 获取网络流量统计
 ///
@@ -46,7 +45,11 @@ pub fn get_hardware_stats(state: State<'_, AppState>) -> (f32, u64, u64) {
         Ok(mut sys) => {
             sys.refresh_cpu_usage();
             sys.refresh_memory();
-            (sys.global_cpu_info().cpu_usage(), sys.used_memory(), sys.total_memory())
+            (
+                sys.global_cpu_info().cpu_usage(),
+                sys.used_memory(),
+                sys.total_memory(),
+            )
         }
         Err(e) => {
             eprintln!("[NSD] 获取硬件数据失败: {}", e);
@@ -60,7 +63,8 @@ pub fn get_hardware_stats(state: State<'_, AppState>) -> (f32, u64, u64) {
 /// 通过 TCP 连接测试网络延迟，返回毫秒数。
 #[tauri::command]
 pub fn get_network_latency() -> Result<u128, String> {
-    let addr: SocketAddr = "223.5.5.5:53".parse().unwrap();
+    let addr: SocketAddr =
+        "223.5.5.5:53".parse().map_err(|err| format!("解析延迟测试地址失败: {}", err))?;
     let timeout = Duration::from_millis(1500);
 
     let start = Instant::now();

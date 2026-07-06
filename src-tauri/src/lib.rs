@@ -8,13 +8,13 @@
  * 4. 系统托盘设置
  * 5. 窗口事件处理
  */
-
 mod app;
 mod commands;
 mod error;
 
-use tauri::{Manager, Menu, MenuItem};
-use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
+use tauri::Manager;
 use tauri_plugin_autostart::MacosLauncher;
 
 use app::AppState;
@@ -110,6 +110,7 @@ pub fn run() {
                     // 设置窗口样式
                     use winapi::um::winuser::{SetWindowLongW, GetWindowLongW, GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT};
                     if let Ok(hwnd) = widget_window.hwnd() {
+                        // 安全性：句柄来自 Tauri 当前窗口，只修改该窗口扩展样式，不保存裸指针。
                         unsafe {
                             let ex_style = GetWindowLongW(hwnd.0 as _, GWL_EXSTYLE);
                             SetWindowLongW(hwnd.0 as _, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW as i32 | WS_EX_TRANSPARENT as i32);

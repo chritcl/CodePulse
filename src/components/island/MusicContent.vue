@@ -9,11 +9,7 @@
       <div class="album-cover" :class="{ 'is-playing': isPlaying }">
         <div
           class="cover-inner"
-          :style="
-            coverUrl
-              ? { backgroundImage: `url(${coverUrl})`, backgroundSize: 'cover' }
-              : {}
-          "
+          :style="coverUrl ? { backgroundImage: `url(${coverUrl})`, backgroundSize: 'cover' } : {}"
         />
       </div>
       <div class="music-info-mask-box">

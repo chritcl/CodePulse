@@ -56,13 +56,20 @@ export function useUpdateChecker() {
           break;
         }
       }
-    } catch (error) {
+    } catch {
       // 静默模式失败就当无事发生
     }
   };
 
   /** 检查更新 (带对话框) */
-  const checkUpdate = async (showDialog: (title: string, message: string, isConfirm?: boolean, onConfirm?: (() => void) | null) => void) => {
+  const checkUpdate = async (
+    showDialog: (
+      title: string,
+      message: string,
+      isConfirm?: boolean,
+      onConfirm?: (() => void) | null
+    ) => void
+  ) => {
     if (isChecking.value) return;
     isChecking.value = true;
 
@@ -129,9 +136,9 @@ export function useUpdateChecker() {
         hasNewVersion.value = false;
         showDialog('提示', '当前已是最新版本！');
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('检查更新时出错:', error);
-      if (error.name === 'AbortError') {
+      if (error instanceof Error && error.name === 'AbortError') {
         showDialog('网络超时', '连接 GitHub 超时，请检查网络或稍后再试');
       } else {
         showDialog('网络错误', '请求失败，请检查您的网络连接');

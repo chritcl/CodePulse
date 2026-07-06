@@ -187,7 +187,7 @@ export interface NotificationData {
 export interface IslandSettings {
   enabled: boolean;
   theme: 'black' | 'white';
-  opacity: number;        // 0-100
+  opacity: number; // 0-100
   pinToTaskbar: boolean;
   positionLocked: boolean;
   glowBorder: boolean;
@@ -213,5 +213,5 @@ export interface AppSettings {
 /** 应用快照 */
 export interface AppSnapshot {
   settings: AppSettings;
-  updatedAt: number;      // 时间戳 (秒)
+  updatedAt: number; // 时间戳 (秒)
 }

@@ -16,8 +16,12 @@
       </div>
       <div class="stat-box">
         <span class="stat-label">总下载</span>
-        <span class="stat-val">{{ networkStore.formatBytesValue(networkStore.totalDownload) }}</span>
-        <span class="stat-unit">{{ networkStore.formatBytesUnit(networkStore.totalDownload) }}</span>
+        <span class="stat-val">{{
+          networkStore.formatBytesValue(networkStore.totalDownload)
+        }}</span>
+        <span class="stat-unit">{{
+          networkStore.formatBytesUnit(networkStore.totalDownload)
+        }}</span>
       </div>
       <div class="stat-box">
         <span class="stat-label">本月流量</span>
@@ -115,9 +119,12 @@ const handleResize = () => {
 };
 
 // 监听主题变化
-watch(() => settingsStore.themeMode, () => {
-  updateChart();
-});
+watch(
+  () => settingsStore.themeMode,
+  () => {
+    updateChart();
+  }
+);
 
 onMounted(() => {
   initChart();

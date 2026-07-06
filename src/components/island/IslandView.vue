@@ -1,84 +1,59 @@
 <template>
-  <transition @enter="animation.onEnter" @leave="animation.onLeave" :css="false">
-    <div
-      v-show="isIslandVisible"
-      :class="['island-container', { 'has-music-border': isGlowBorderEnabled }]"
-      :style="islandWindow.islandStyle.value"
-      @mousedown="drag.handleMouseDown"
-      @mousemove="handleMouseMove"
-      @mouseup="drag.handleMouseUp"
-      @mouseleave="handleMouseLeave"
-      @mouseenter="handleMouseEnter"
-      @contextmenu="handleRightClick"
-    >
-      <!-- 流光边框 -->
-      <div
-        v-if="isGlowBorderEnabled"
-        class="rainbow-border-glow"
-        :style="{ opacity: islandWindow.glowOpacity.value }"
-      />
-
-      <!-- 核心内容 -->
-      <div class="island-core-content" :style="islandWindow.coreContentStyle.value">
-        <div class="inner-wrapper">
-          <transition mode="out-in" @enter="animation.onInnerEnter" :css="false" @leave="animation.onInnerLeave">
-            <!-- 消息通知 -->
-            <NotificationContent
-              v-if="isMsgActive"
-              key="msg"
-              :msg-icon="currentMsgIcon"
-              :msg-title="msgTitle"
-              :msg-body="msgBody"
-              @msg-click="handleMsgClick"
-            />
-
-            <!-- 硬件监控 -->
-            <HardwareContent
-              v-else-if="displayHardware"
-              key="hardware"
-              :cpu-usage="cpuUsage"
-              :gpu-usage="gpuUsage"
-              :mem-usage="memUsage"
-            />
-
-            <!-- 音乐控制 -->
-            <MusicContent
-              v-else-if="displayMusic"
-              :key="'music_' + musicBoxKey"
-              :is-playing="isPlaying"
-              :cover-url="coverUrl"
-              :current-track-info="currentTrackInfo"
-              :current-song-name="currentSongName"
-              :current-artist-name="currentArtistName"
-              :is-music-expanded="isMusicExpanded"
-              @expand-music="expandMusic"
-              @toggle-play="togglePlay"
-              @prev-track="prevTrack"
-              @next-track="nextTrack"
-            />
-
-            <!-- 网速显示 -->
-            <SpeedContent
-              v-else-if="displaySpeed"
-              key="speed"
-              :upload-speed="uploadSpeed"
-              :download-speed="downloadSpeed"
-              :is-high-upload="isHighUpload"
-              :is-high-download="isHighDownload"
-            />
-          </transition>
-        </div>
-
-        <!-- 状态指示器 -->
-        <IslandStatusIndicator
-          :show-music-spectrum="displayMusic"
-          :is-playing="isPlaying"
-          :is-music-expanded="isMusicExpanded"
-          :network-status="networkStatus"
-        />
-      </div>
-    </div>
-  </transition>
+  <IslandShell
+    :visible="isIslandVisible"
+    :container-style="islandWindow.islandStyle.value"
+    :core-style="islandWindow.coreContentStyle.value"
+    :show-glow="isGlowBorderEnabled"
+    :glow-opacity="islandWindow.glowOpacity.value"
+    :show-music-spectrum="displayMusic"
+    :is-playing="isPlaying"
+    :is-music-expanded="isMusicExpanded"
+    :network-status="networkStatus"
+    :enter-transition="animation.onEnter"
+    :leave-transition="animation.onLeave"
+    @shell-mousedown="drag.handleMouseDown"
+    @shell-mousemove="handleMouseMove"
+    @shell-mouseup="drag.handleMouseUp"
+    @shell-mouseleave="handleMouseLeave"
+    @shell-mouseenter="handleMouseEnter"
+    @shell-contextmenu="handleRightClick"
+  >
+    <IslandDisplayController
+      :display="activeDisplay"
+      :network="{
+        uploadSpeed,
+        downloadSpeed,
+        isHighUpload,
+        isHighDownload,
+      }"
+      :hardware="{
+        cpuUsage,
+        gpuUsage,
+        memUsage,
+      }"
+      :music="{
+        boxKey: musicBoxKey,
+        isPlaying,
+        coverUrl,
+        currentTrackInfo,
+        currentSongName,
+        currentArtistName,
+        isExpanded: isMusicExpanded,
+      }"
+      :notification="{
+        icon: currentMsgIcon,
+        title: msgTitle,
+        body: msgBody,
+      }"
+      :inner-enter-transition="animation.onInnerEnter"
+      :inner-leave-transition="animation.onInnerLeave"
+      @msg-click="handleMsgClick"
+      @expand-music="expandMusic"
+      @toggle-play="togglePlay"
+      @prev-track="prevTrack"
+      @next-track="nextTrack"
+    />
+  </IslandShell>
 </template>
 
 <script setup lang="ts">
@@ -88,15 +63,23 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, emit } from '@tauri-apps/api/event';
 
 import { useIslandWindow, useIslandAnimation, useIslandDrag } from '@/composables';
+import { resolveIslandDisplay, type IslandDisplayKind } from '@/modules/island/display';
+import { hasStorageValue, readBoolean, readEnum, writeBoolean } from '@/shared/utils/storage';
 import { useIslandContextMenu } from './IslandContextMenu';
 
-import SpeedContent from './SpeedContent.vue';
-import MusicContent from './MusicContent.vue';
-import HardwareContent from './HardwareContent.vue';
-import NotificationContent from './NotificationContent.vue';
-import IslandStatusIndicator from './IslandStatusIndicator.vue';
+import IslandShell from './IslandShell.vue';
+import IslandDisplayController from './IslandDisplayController.vue';
 
 import defaultLogo from '@/assets/logo.png';
+
+const MUSIC_PLATFORMS = ['netease', 'spotify', 'apple', 'qqmusic', 'kugou', 'echo'] as const;
+
+interface LatestNotificationPayload {
+  app_name: string;
+  title: string;
+  body: string;
+  aumid: string;
+}
 
 // ============================================================
 // Composables
@@ -118,7 +101,7 @@ const isIslandVisible = ref(false);
 const isMenuOpen = ref(false);
 
 /** 流光边框是否启用 */
-const isGlowBorderEnabled = ref(localStorage.getItem('nsd_glow_border') === 'true');
+const isGlowBorderEnabled = ref(readBoolean('nsd_glow_border'));
 
 /** 网速监控相关 */
 const uploadSpeed = ref('0 KB/s');
@@ -128,13 +111,13 @@ const isHighUpload = ref(false);
 const networkStatus = ref<'good' | 'warning' | 'error'>('good');
 
 /** 硬件监控相关 */
-const isHardwareMonEnabled = ref(localStorage.getItem('nsd_hardware_mon') === 'true');
+const isHardwareMonEnabled = ref(readBoolean('nsd_hardware_mon'));
 const cpuUsage = ref('0%');
 const gpuUsage = ref('0%');
 const memUsage = ref('0%');
 
 /** 音乐控制相关 */
-const isMusicCtlEnabled = ref(localStorage.getItem('nsd_music_ctrl') === 'true');
+const isMusicCtlEnabled = ref(readBoolean('nsd_music_ctrl'));
 const isPlaying = ref(false);
 const coverUrl = ref('');
 const coverCache = new Map<string, string>();
@@ -147,7 +130,7 @@ let musicExpandTimer: number | null = null;
 
 /** 获取播放器名称 */
 const getPlayerName = () => {
-  const key = localStorage.getItem('nsd_target_player') || 'netease';
+  const key = readEnum('nsd_target_player', 'netease', MUSIC_PLATFORMS);
   const map: Record<string, string> = {
     netease: '网易云音乐',
     spotify: 'Spotify',
@@ -164,15 +147,16 @@ currentArtistName.value = getPlayerName();
 currentTrackInfo.value = `未在播放歌曲 - ${getPlayerName()}`;
 
 /** 消息模式相关 */
-const isMsgModeEnabled = ref(localStorage.getItem('nsd_msg_mode') === 'true');
+const isMsgModeEnabled = ref(readBoolean('nsd_msg_mode'));
 const isMsgActive = ref(false);
 const msgTitle = ref('');
 const msgBody = ref('');
 const msgAumid = ref('');
 const currentMsgIcon = ref(defaultLogo);
+let msgTimer: number | null = null;
 
 /** 轮换模式相关 */
-const isRotationEnabled = ref(localStorage.getItem('nsd_rotation_mode') === 'true');
+const isRotationEnabled = ref(readBoolean('nsd_rotation_mode'));
 const currentRotIndex = ref(0);
 let rotationTimer: number | null = null;
 
@@ -192,28 +176,21 @@ const RED_DELAY_MS = 5000;
 // 计算属性
 // ============================================================
 
-/** 显示网速 */
-const displaySpeed = computed(
-  () =>
-    !isMsgActive.value &&
-    (isRotationEnabled.value
-      ? currentRotIndex.value === 0
-      : !isMusicCtlEnabled.value && !isHardwareMonEnabled.value)
+/** 当前展示内容 */
+const activeDisplay = computed<IslandDisplayKind>(() =>
+  resolveIslandDisplay({
+    agentActive: false,
+    wechatActive: false,
+    notificationActive: isMsgActive.value,
+    rotationEnabled: isRotationEnabled.value,
+    rotationIndex: currentRotIndex.value,
+    musicEnabled: isMusicCtlEnabled.value,
+    hardwareEnabled: isHardwareMonEnabled.value,
+  })
 );
 
-/** 显示音乐 */
-const displayMusic = computed(
-  () =>
-    !isMsgActive.value &&
-    (isRotationEnabled.value ? currentRotIndex.value === 1 : isMusicCtlEnabled.value)
-);
-
-/** 显示硬件 */
-const displayHardware = computed(
-  () =>
-    !isMsgActive.value &&
-    (isRotationEnabled.value ? currentRotIndex.value === 2 : isHardwareMonEnabled.value)
-);
+/** 是否展示音乐内容 */
+const displayMusic = computed(() => activeDisplay.value === 'music');
 
 // ============================================================
 // 工具函数
@@ -286,7 +263,7 @@ const fetchGpuUsage = async () => {
     const randomOffset = Math.floor(Math.random() * 5);
     const estimatedGpu = Math.min(Math.max(Math.round(cpuNum * 0.4) + randomOffset, 1), 99);
     gpuUsage.value = estimatedGpu + '%';
-  } catch (e) {
+  } catch {
     gpuUsage.value = '0%';
   }
 };
@@ -301,7 +278,7 @@ const checkNetworkLatency = async () => {
     } else {
       networkStatus.value = 'warning';
     }
-  } catch (error) {
+  } catch {
     if (isHighDownload.value || isHighUpload.value) {
       networkStatus.value = 'warning';
       return;
@@ -424,7 +401,11 @@ const handleMouseEnter = () => {
 
 /** 处理鼠标移动 */
 const handleMouseMove = (event: MouseEvent) => {
-  drag.handleMouseMove(event, islandWindow.isPinnedToTaskbar.value, islandWindow.isPositionLocked.value);
+  drag.handleMouseMove(
+    event,
+    islandWindow.isPinnedToTaskbar.value,
+    islandWindow.isPositionLocked.value
+  );
 };
 
 /** 处理消息点击 */
@@ -438,7 +419,7 @@ const handleMsgClick = async () => {
 
       isMsgActive.value = false;
       islandWindow.animateIslandSize(260, 42);
-      if ((window as any).msgTimer) clearTimeout((window as any).msgTimer);
+      if (msgTimer) clearTimeout(msgTimer);
     } catch (err) {
       console.error('打开程序失败:', err);
     }
@@ -453,7 +434,7 @@ const handleRightClick = async (event: MouseEvent) => {
     isPositionLocked: islandWindow.isPositionLocked.value,
     onToggleGlowBorder: () => {
       isGlowBorderEnabled.value = !isGlowBorderEnabled.value;
-      localStorage.setItem('nsd_glow_border', String(isGlowBorderEnabled.value));
+      writeBoolean('nsd_glow_border', isGlowBorderEnabled.value);
     },
     onResetPosition: () => {
       islandWindow.adjustWindowPosition().catch(console.error);
@@ -514,9 +495,9 @@ onMounted(async () => {
     isMusicCtlEnabled.value = isEnabled;
 
     if (isEnabled) {
-      if (localStorage.getItem('nsd_glow_border') === null) {
+      if (!hasStorageValue('nsd_glow_border')) {
         isGlowBorderEnabled.value = true;
-        localStorage.setItem('nsd_glow_border', 'true');
+        writeBoolean('nsd_glow_border', true);
       }
       musicBoxKey.value++;
     }
@@ -609,7 +590,8 @@ onMounted(async () => {
 
     if (isHardwareMonEnabled.value || isRotationEnabled.value) {
       try {
-        const [cpu, usedMem, totalMem] = await invoke<[number, number, number]>('get_hardware_stats');
+        const [cpu, usedMem, totalMem] =
+          await invoke<[number, number, number]>('get_hardware_stats');
         cpuUsage.value = Math.round(cpu) + '%';
         if (totalMem > 0) {
           memUsage.value = Math.round((usedMem / totalMem) * 100) + '%';
@@ -630,11 +612,11 @@ onMounted(async () => {
 
   // 低频定时器：系统通知轮询
   notifyTimer = setInterval(async () => {
-    const enabled = localStorage.getItem('nsd_msg_notify') === 'true';
+    const enabled = readBoolean('nsd_msg_notify');
     if (!enabled) return;
 
     try {
-      const res = await invoke<any>('fetch_latest_notification');
+      const res = await invoke<LatestNotificationPayload | null>('fetch_latest_notification');
       if (res) {
         msgTitle.value = res.app_name;
         msgAumid.value = res.aumid;
@@ -652,8 +634,8 @@ onMounted(async () => {
           }
         }
 
-        if ((window as any).msgTimer) clearTimeout((window as any).msgTimer);
-        (window as any).msgTimer = setTimeout(() => {
+        if (msgTimer) clearTimeout(msgTimer);
+        msgTimer = window.setTimeout(() => {
           isMsgActive.value = false;
           islandWindow.animateIslandSize(260, 42);
           if (isMsgModeEnabled.value) {
@@ -701,95 +683,3 @@ onUnmounted(() => {
   clearInterval(notifyTimer);
 });
 </script>
-
-<style scoped>
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-  border: none !important;
-  outline: none !important;
-}
-
-:root {
-  -webkit-app-region: drag;
-}
-
-:global(html),
-:global(body) {
-  background-color: transparent !important;
-  background: transparent !important;
-  overflow: hidden;
-  margin: 0;
-  padding: 0;
-  border: none !important;
-}
-
-.island-container {
-  margin: 0 auto;
-  border-radius: 100px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  user-select: none;
-  -webkit-user-select: none;
-  overflow: hidden;
-  background: transparent;
-  transition: background 0.4s ease;
-  box-sizing: border-box;
-  transform: translateZ(0);
-  will-change: width, height, border-radius;
-  contain: strict;
-}
-
-.rainbow-border-glow {
-  position: absolute;
-  width: 500px;
-  height: 500px;
-  top: calc(50% - 250px);
-  left: calc(50% - 250px);
-  z-index: 1;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='500'%3E%3Cdefs%3E%3Cfilter id='b' x='-50%25' y='-50%25' width='200%25' height='200%25'%3E%3CfeGaussianBlur in='SourceGraphic' stdDeviation='60'/%3E%3C/filter%3E%3Cg filter='url(%23b)'%3E%3Ccircle cx='250' cy='90' r='150' fill='%23ff3b30'/%3E%3Ccircle cx='390' cy='170' r='150' fill='%23ff9500'/%3E%3Ccircle cx='390' cy='330' r='150' fill='%234cd964'/%3E%3Ccircle cx='250' cy='410' r='150' fill='%23007aff'/%3E%3Ccircle cx='110' cy='330' r='150' fill='%235856d6'/%3E%3Ccircle cx='110' cy='170' r='150' fill='%23ff2d55'/%3E%3C/g%3E%3C/svg%3E");
-  background-size: cover;
-  animation: rainbow-rotate 10s linear infinite;
-  will-change: transform;
-}
-
-.island-core-content {
-  position: relative;
-  z-index: 2;
-  width: 100%;
-  height: 100%;
-  border-radius: 98px;
-  transform: translateZ(0);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 14px;
-  overflow: hidden;
-}
-
-.inner-wrapper {
-  flex: 1;
-  overflow: hidden;
-}
-
-@keyframes rainbow-rotate {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-[data-tauri-drag-region] {
-  -webkit-app-region: drag;
-  cursor: grab;
-}
-
-[data-tauri-drag-region]:active {
-  cursor: grabbing;
-}
-</style>

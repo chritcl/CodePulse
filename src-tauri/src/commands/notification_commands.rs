@@ -3,8 +3,7 @@
  *
  * 包含 Windows 通知读取、应用打开等相关命令。
  */
-
-use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// 最后处理的通知 ID
 static LAST_NOTIFICATION_ID: AtomicU32 = AtomicU32::new(0);
@@ -56,7 +55,9 @@ pub async fn fetch_latest_notification() -> Result<Option<ToastData>, String> {
         }
     }
 
-    if max_id == 0 { return Ok(None); }
+    if max_id == 0 {
+        return Ok(None);
+    }
 
     let last_processed_id = LAST_NOTIFICATION_ID.load(Ordering::SeqCst);
 
@@ -72,13 +73,15 @@ pub async fn fetch_latest_notification() -> Result<Option<ToastData>, String> {
         LAST_NOTIFICATION_ID.store(max_id, Ordering::SeqCst);
 
         if let Some(notif) = latest_notif {
-            let app_name = notif.AppInfo()
+            let app_name = notif
+                .AppInfo()
                 .and_then(|info| info.DisplayInfo())
                 .and_then(|dinfo| dinfo.DisplayName())
                 .map(|name| name.to_string())
                 .unwrap_or_else(|_| "系统通知".to_string());
 
-            let aumid = notif.AppInfo()
+            let aumid = notif
+                .AppInfo()
                 .and_then(|info| info.AppUserModelId())
                 .map(|id| id.to_string())
                 .unwrap_or_default();
@@ -105,12 +108,20 @@ pub async fn fetch_latest_notification() -> Result<Option<ToastData>, String> {
                         };
 
                         // 过滤微信通知
-                        if title.contains("微信") || title.contains("WeChat")
-                            || body.contains("微信") || body.contains("WeChat") {
+                        if title.contains("微信")
+                            || title.contains("WeChat")
+                            || body.contains("微信")
+                            || body.contains("WeChat")
+                        {
                             return Ok(None);
                         }
 
-                        return Ok(Some(ToastData { app_name, title, body, aumid }));
+                        return Ok(Some(ToastData {
+                            app_name,
+                            title,
+                            body,
+                            aumid,
+                        }));
                     }
                 }
             }
@@ -123,22 +134,27 @@ pub async fn fetch_latest_notification() -> Result<Option<ToastData>, String> {
 /// 通过 AUMID 打开应用
 #[tauri::command]
 pub fn open_app_by_aumid(aumid: String, app_name: String) {
-    use winapi::um::winuser::{keybd_event, VK_MENU, KEYEVENTF_KEYUP, SW_SHOWNORMAL};
-    use winapi::um::shellapi::ShellExecuteW;
     use std::os::windows::ffi::OsStrExt;
+    use winapi::um::shellapi::ShellExecuteW;
+    use winapi::um::winuser::{keybd_event, KEYEVENTF_KEYUP, SW_SHOWNORMAL, VK_MENU};
 
     let app_lower = app_name.to_lowercase();
 
-    // 模拟按键激活
+    // 安全性：keybd_event 只发送一次 Alt 按下/抬起，用于让 ShellExecute 唤起窗口。
     unsafe {
         keybd_event(VK_MENU as u8, 0, 0, 0);
         keybd_event(VK_MENU as u8, 0, KEYEVENTF_KEYUP, 0);
     }
 
     let execute_protocol = |protocol: &str| {
+        // 安全性：宽字符串在调用期间保持存活，ShellExecuteW 不保存传入指针。
         unsafe {
-            let op = std::ffi::OsStr::new("open").encode_wide().chain(Some(0)).collect::<Vec<u16>>();
-            let file = std::ffi::OsStr::new(protocol).encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+            let op =
+                std::ffi::OsStr::new("open").encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+            let file = std::ffi::OsStr::new(protocol)
+                .encode_wide()
+                .chain(Some(0))
+                .collect::<Vec<u16>>();
             ShellExecuteW(
                 std::ptr::null_mut(),
                 op.as_ptr(),
@@ -159,10 +175,18 @@ pub fn open_app_by_aumid(aumid: String, app_name: String) {
         execute_protocol("dingtalk://");
     } else if !aumid.is_empty() {
         // 其他应用使用 AUMID 打开
+        // 安全性：所有宽字符串缓冲区在 ShellExecuteW 调用结束前有效。
         unsafe {
-            let op = std::ffi::OsStr::new("open").encode_wide().chain(Some(0)).collect::<Vec<u16>>();
-            let file = std::ffi::OsStr::new("explorer.exe").encode_wide().chain(Some(0)).collect::<Vec<u16>>();
-            let params = std::ffi::OsStr::new(&format!("shell:AppsFolder\\{}", aumid)).encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+            let op =
+                std::ffi::OsStr::new("open").encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+            let file = std::ffi::OsStr::new("explorer.exe")
+                .encode_wide()
+                .chain(Some(0))
+                .collect::<Vec<u16>>();
+            let params = std::ffi::OsStr::new(&format!("shell:AppsFolder\\{}", aumid))
+                .encode_wide()
+                .chain(Some(0))
+                .collect::<Vec<u16>>();
             ShellExecuteW(
                 std::ptr::null_mut(),
                 op.as_ptr(),

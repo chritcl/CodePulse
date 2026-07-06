@@ -8,6 +8,18 @@
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 import type { ThemeMode, IslandTheme, MusicPlatform } from '@/types';
+import {
+  readBoolean,
+  readEnum,
+  readNumber,
+  writeBoolean,
+  writeNumber,
+  writeString,
+} from '@/shared/utils/storage';
+
+const THEME_MODES = ['light', 'dark', 'system'] as const;
+const ISLAND_THEMES = ['black', 'white'] as const;
+const MUSIC_PLATFORMS = ['netease', 'spotify', 'apple', 'qqmusic', 'kugou', 'echo'] as const;
 
 export const useSettingsStore = defineStore('settings', () => {
   // ============================================================
@@ -15,43 +27,39 @@ export const useSettingsStore = defineStore('settings', () => {
   // ============================================================
 
   /** 主题模式 */
-  const themeMode = ref<ThemeMode>(
-    (localStorage.getItem('nsd_theme_mode') as ThemeMode) || 'light'
-  );
+  const themeMode = ref<ThemeMode>(readEnum('nsd_theme_mode', 'light', THEME_MODES));
 
   /** 灵动岛主题 */
-  const islandTheme = ref<IslandTheme>(
-    (localStorage.getItem('nsd_island_theme') as IslandTheme) || 'black'
-  );
+  const islandTheme = ref<IslandTheme>(readEnum('nsd_island_theme', 'black', ISLAND_THEMES));
 
   /** 灵动岛透明度 */
-  const opacity = ref(Number(localStorage.getItem('nsd_island_opacity') || '100'));
+  const opacity = ref(readNumber('nsd_island_opacity', 100));
 
   /** 置于任务栏 */
-  const pinToTaskbar = ref(localStorage.getItem('nsd_pin_taskbar') === 'true');
+  const pinToTaskbar = ref(readBoolean('nsd_pin_taskbar'));
 
   /** 开机自启动 */
   const autoStart = ref(false);
 
   /** 音乐控制平台 */
   const targetPlayer = ref<MusicPlatform>(
-    (localStorage.getItem('nsd_target_player') as MusicPlatform) || 'netease'
+    readEnum('nsd_target_player', 'netease', MUSIC_PLATFORMS)
   );
 
   /** 音乐控制器开关 */
-  const enableMusicCtrl = ref(localStorage.getItem('nsd_music_ctrl') === 'true');
+  const enableMusicCtrl = ref(readBoolean('nsd_music_ctrl'));
 
   /** 消息通知开关 */
-  const enableMsgNotify = ref(localStorage.getItem('nsd_msg_notify') === 'true');
+  const enableMsgNotify = ref(readBoolean('nsd_msg_notify'));
 
   /** 硬件监控开关 */
-  const enableHardwareMon = ref(localStorage.getItem('nsd_hardware_mon') === 'true');
+  const enableHardwareMon = ref(readBoolean('nsd_hardware_mon'));
 
   /** 消息模式开关 */
-  const msgModeEnabled = ref(localStorage.getItem('nsd_msg_mode') === 'true');
+  const msgModeEnabled = ref(readBoolean('nsd_msg_mode'));
 
   /** 轮换模式开关 */
-  const enableRotation = ref(localStorage.getItem('nsd_rotation_mode') === 'true');
+  const enableRotation = ref(readBoolean('nsd_rotation_mode'));
 
   // ============================================================
   // 持久化监听
@@ -59,52 +67,52 @@ export const useSettingsStore = defineStore('settings', () => {
 
   /** 主题变更时持久化 */
   watch(themeMode, (val) => {
-    localStorage.setItem('nsd_theme_mode', val);
+    writeString('nsd_theme_mode', val);
   });
 
   /** 灵动岛主题变更时持久化 */
   watch(islandTheme, (val) => {
-    localStorage.setItem('nsd_island_theme', val);
+    writeString('nsd_island_theme', val);
   });
 
   /** 透明度变更时持久化 */
   watch(opacity, (val) => {
-    localStorage.setItem('nsd_island_opacity', val.toString());
+    writeNumber('nsd_island_opacity', val);
   });
 
   /** 任务栏停靠变更时持久化 */
   watch(pinToTaskbar, (val) => {
-    localStorage.setItem('nsd_pin_taskbar', String(val));
+    writeBoolean('nsd_pin_taskbar', val);
   });
 
   /** 音乐平台变更时持久化 */
   watch(targetPlayer, (val) => {
-    localStorage.setItem('nsd_target_player', val);
+    writeString('nsd_target_player', val);
   });
 
   /** 音乐控制器变更时持久化 */
   watch(enableMusicCtrl, (val) => {
-    localStorage.setItem('nsd_music_ctrl', String(val));
+    writeBoolean('nsd_music_ctrl', val);
   });
 
   /** 消息通知变更时持久化 */
   watch(enableMsgNotify, (val) => {
-    localStorage.setItem('nsd_msg_notify', String(val));
+    writeBoolean('nsd_msg_notify', val);
   });
 
   /** 硬件监控变更时持久化 */
   watch(enableHardwareMon, (val) => {
-    localStorage.setItem('nsd_hardware_mon', String(val));
+    writeBoolean('nsd_hardware_mon', val);
   });
 
   /** 消息模式变更时持久化 */
   watch(msgModeEnabled, (val) => {
-    localStorage.setItem('nsd_msg_mode', String(val));
+    writeBoolean('nsd_msg_mode', val);
   });
 
   /** 轮换模式变更时持久化 */
   watch(enableRotation, (val) => {
-    localStorage.setItem('nsd_rotation_mode', String(val));
+    writeBoolean('nsd_rotation_mode', val);
   });
 
   // ============================================================

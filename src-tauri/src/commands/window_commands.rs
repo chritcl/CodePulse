@@ -3,10 +3,9 @@
  *
  * 包含窗口置顶、位置调整、动画等相关命令。
  */
-
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
-use tauri::{Manager, Emitter};
+use tauri::{Emitter, Manager};
 
 /// 动画 ID 计数器
 static ANIMATION_ID: AtomicU32 = AtomicU32::new(0);
@@ -31,9 +30,13 @@ pub fn is_widget_visible(app: tauri::AppHandle) -> bool {
 pub fn force_window_topmost(app: tauri::AppHandle) {
     #[cfg(target_os = "windows")]
     {
-        use winapi::um::winuser::{GetForegroundWindow, GetClassNameW, GetWindowRect, MonitorFromWindow, GetMonitorInfoW, SetWindowPos};
         use winapi::shared::windef::RECT;
+        use winapi::um::winuser::{
+            GetClassNameW, GetForegroundWindow, GetMonitorInfoW, GetWindowRect, MonitorFromWindow,
+            SetWindowPos,
+        };
 
+        // 安全性：前台窗口句柄由系统返回，灵动岛句柄由 Tauri 返回；本块只进行同步查询和置顶调用。
         unsafe {
             let fg_hwnd = GetForegroundWindow();
             if !fg_hwnd.is_null() {
@@ -42,22 +45,28 @@ pub fn force_window_topmost(app: tauri::AppHandle) {
                 let class_str = String::from_utf16_lossy(&class_name[..len as usize]);
 
                 // 如果是系统菜单，不处理
-                if class_str == "#32768" { return; }
+                if class_str == "#32768" {
+                    return;
+                }
 
                 let mut rect: RECT = std::mem::zeroed();
                 GetWindowRect(fg_hwnd, &mut rect);
 
-                let monitor = MonitorFromWindow(fg_hwnd, winapi::um::winuser::MONITOR_DEFAULTTONEAREST);
+                let monitor =
+                    MonitorFromWindow(fg_hwnd, winapi::um::winuser::MONITOR_DEFAULTTONEAREST);
                 let mut mi: winapi::um::winuser::MONITORINFO = std::mem::zeroed();
                 mi.cbSize = std::mem::size_of::<winapi::um::winuser::MONITORINFO>() as u32;
                 GetMonitorInfoW(monitor, &mut mi);
 
                 // 如果是全屏应用，不处理（除非是桌面）
-                if rect.left == mi.rcMonitor.left && rect.top == mi.rcMonitor.top
-                    && rect.right == mi.rcMonitor.right && rect.bottom == mi.rcMonitor.bottom {
-                    if class_str != "Progman" && class_str != "WorkerW" {
-                        return;
-                    }
+                if rect.left == mi.rcMonitor.left
+                    && rect.top == mi.rcMonitor.top
+                    && rect.right == mi.rcMonitor.right
+                    && rect.bottom == mi.rcMonitor.bottom
+                    && class_str != "Progman"
+                    && class_str != "WorkerW"
+                {
+                    return;
                 }
             }
 
@@ -80,12 +89,16 @@ pub fn set_window_bounds(app: tauri::AppHandle, x: i32, y: i32, width: i32, heig
     {
         if let Some(win) = app.get_webview_window("widget") {
             if let Ok(hwnd) = win.hwnd() {
+                // 安全性：句柄来自当前灵动岛窗口，SetWindowPos 只调整位置和尺寸，不持有指针。
                 unsafe {
                     // SWP_NOACTIVATE | SWP_NOZORDER
                     winapi::um::winuser::SetWindowPos(
                         hwnd.0 as _,
                         std::ptr::null_mut(),
-                        x, y, width, height,
+                        x,
+                        y,
+                        width,
+                        height,
                         0x0014,
                     );
                 }
@@ -112,11 +125,15 @@ pub async fn start_island_animation(
     #[cfg(target_os = "windows")]
     {
         if let Ok(hwnd) = window.hwnd() {
-            use winapi::um::winuser::{GetWindowRect, SetWindowPos};
             use winapi::shared::windef::RECT;
+            use winapi::um::winuser::{GetWindowRect, SetWindowPos};
 
+            // 安全性：RECT 是 Win32 POD 结构，零初始化后立即传给 GetWindowRect 填充。
             let mut rect: RECT = unsafe { std::mem::zeroed() };
-            unsafe { GetWindowRect(hwnd.0 as _, &mut rect); }
+            // 安全性：句柄来自 Tauri 窗口，只读取当前窗口矩形。
+            unsafe {
+                GetWindowRect(hwnd.0 as _, &mut rect);
+            }
 
             // 首次启动时锁死锚点
             if let Ok(guard) = ANIMATION_CENTER_X.lock() {
@@ -156,10 +173,14 @@ pub async fn start_island_animation(
 
                     let elapsed = start_time.elapsed().as_secs_f64();
                     let progress = elapsed / 0.4;
-                    if progress >= 1.0 { break; }
+                    if progress >= 1.0 {
+                        break;
+                    }
 
                     // 弹簧衰减方程
-                    let spring = 1.0 - (freq * elapsed * 2.0 * std::f64::consts::PI).cos() * (-decay * elapsed).exp();
+                    let spring = 1.0
+                        - (freq * elapsed * 2.0 * std::f64::consts::PI).cos()
+                            * (-decay * elapsed).exp();
                     let current_w = start_width + (target_width - start_width) * spring;
                     let current_h = start_height + (target_height - start_height) * spring;
 
@@ -176,8 +197,17 @@ pub async fn start_island_animation(
                         (center_x - phys_window_w / 2, origin_y)
                     };
 
+                    // 安全性：线程内仅复用已取得的窗口句柄数值执行 SetWindowPos，动画中断由原子 ID 控制。
                     unsafe {
-                        SetWindowPos(hwnd_raw as _, std::ptr::null_mut(), final_x, final_y, phys_window_w, phys_window_h, 0x0014);
+                        SetWindowPos(
+                            hwnd_raw as _,
+                            std::ptr::null_mut(),
+                            final_x,
+                            final_y,
+                            phys_window_w,
+                            phys_window_h,
+                            0x0014,
+                        );
                     }
                 }
 
@@ -196,16 +226,33 @@ pub async fn start_island_animation(
                         (center_x - phys_target_w / 2, origin_y)
                     };
 
+                    // 安全性：终点收尾只对同一个窗口句柄设置最终位置和尺寸。
                     unsafe {
-                        SetWindowPos(hwnd_raw as _, std::ptr::null_mut(), final_x, final_y, phys_target_w, phys_target_h, 0x0014);
+                        SetWindowPos(
+                            hwnd_raw as _,
+                            std::ptr::null_mut(),
+                            final_x,
+                            final_y,
+                            phys_target_w,
+                            phys_target_h,
+                            0x0014,
+                        );
                     }
                     let _ = window_clone.emit("island-resize", vec![target_width, target_height]);
 
                     // 清理锚点
-                    if let Ok(mut guard) = ANIMATION_CENTER_X.lock() { *guard = None; }
-                    if let Ok(mut guard) = ANIMATION_ORIGIN_Y.lock() { *guard = None; }
-                    if let Ok(mut guard) = ANIMATION_LEFT_X.lock() { *guard = None; }
-                    if let Ok(mut guard) = ANIMATION_BOTTOM_Y.lock() { *guard = None; }
+                    if let Ok(mut guard) = ANIMATION_CENTER_X.lock() {
+                        *guard = None;
+                    }
+                    if let Ok(mut guard) = ANIMATION_ORIGIN_Y.lock() {
+                        *guard = None;
+                    }
+                    if let Ok(mut guard) = ANIMATION_LEFT_X.lock() {
+                        *guard = None;
+                    }
+                    if let Ok(mut guard) = ANIMATION_BOTTOM_Y.lock() {
+                        *guard = None;
+                    }
                 }
             });
         }

@@ -7,11 +7,7 @@
         <span class="item-title">主题颜色</span>
         <span class="item-desc">切换控制台主题色</span>
       </div>
-      <select
-        :value="settingsStore.themeMode"
-        class="theme-select"
-        @change="handleThemeChange"
-      >
+      <select :value="settingsStore.themeMode" class="theme-select" @change="handleThemeChange">
         <option value="light">浅色模式</option>
         <option value="dark">深色模式</option>
         <option value="system">跟随系统</option>
@@ -42,10 +38,7 @@
 
           <span class="item-title-sec">
             置于任务栏
-            <span
-              class="tooltip-wrapper"
-              data-tooltip="若要在全屏游戏中使用灵动岛建议关闭此项"
-            >
+            <span class="tooltip-wrapper" data-tooltip="若要在全屏游戏中使用灵动岛建议关闭此项">
               <p class="set-item-tips-tag">🙋</p>
             </span>
           </span>

@@ -10,8 +10,8 @@ too-many-arguments-threshold = 8
 # 单行最大字符数
 too-many-lines-threshold = 100
 
-# 结构体最大字段数
-struct-field-names-threshold = 5
+# 结构体字段名相似度阈值
+struct-field-name-threshold = 5
 
 # 循环最大嵌套深度
 cognitive-complexity-threshold = 25
