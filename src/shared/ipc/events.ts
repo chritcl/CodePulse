@@ -33,6 +33,9 @@ export const HARDWARE_MON = 'control-hardware-mon';
 /** 音乐控制开关 */
 export const MUSIC_CTL = 'control-music-ctl';
 
+/** 目标音乐平台 */
+export const TARGET_PLAYER = 'control-target-player';
+
 // ============================================================
 // 灵动岛状态事件 (widget → main)
 // ============================================================
@@ -96,6 +99,7 @@ export const ALL_EVENTS = {
   ROTATION_MODE,
   HARDWARE_MON,
   MUSIC_CTL,
+  TARGET_PLAYER,
 
   // 灵动岛状态
   ISLAND_STATUS_SYNC,

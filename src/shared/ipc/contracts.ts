@@ -1,3 +1,5 @@
+import type { MusicPlatform } from '@/types';
+
 /**
  * IPC 事件 Payload 类型定义
  *
@@ -88,6 +90,11 @@ export interface MediaControlPayload {
 /** 设置目标播放器 */
 export interface SetTargetPlayerPayload {
   player: string;
+}
+
+/** 目标音乐平台同步 */
+export interface TargetPlayerPayload {
+  player: MusicPlatform;
 }
 
 // ============================================================

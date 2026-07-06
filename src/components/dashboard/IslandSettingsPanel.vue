@@ -192,6 +192,7 @@ const handleSetPlayer = async (player: MusicPlatform) => {
   } catch (e) {
     console.error('切换平台失败', e);
   }
+  await emit('control-target-player', { player });
 };
 
 /** 设置灵动岛主题 */

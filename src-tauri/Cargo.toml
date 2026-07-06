@@ -33,6 +33,7 @@ windows = { version = "0.58.0", features = [
     "implement",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
+    "Win32_Media_Multimedia",
     "Win32_System_Com",
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
@@ -43,5 +44,4 @@ windows = { version = "0.58.0", features = [
     "Storage_Streams",
     "Win32_System_Power",
 ] }
-cpal = "0.15"
 rustfft = "6.2"

@@ -67,18 +67,26 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, emit, type UnlistenFn } from '@tauri-apps/api/event';
 
-import { useIslandWindow, useIslandAnimation, useIslandDrag } from '@/composables';
+import {
+  useIslandWindow,
+  useIslandAnimation,
+  useIslandDrag,
+  useMusicSpectrum,
+} from '@/composables';
 import { resolveIslandDisplay, type IslandDisplayKind } from '@/modules/island/display';
-import { hasStorageValue, readBoolean, readEnum, writeBoolean } from '@/shared/utils/storage';
-import type { SystemToastType } from '@/shared/ipc/contracts';
+import {
+  getPlayerName,
+  normalizeTargetPlayer,
+  readTargetPlayer,
+} from '@/modules/island/musicPlatform';
+import { hasStorageValue, readBoolean, writeBoolean } from '@/shared/utils/storage';
+import type { SystemToastType, TargetPlayerPayload } from '@/shared/ipc/contracts';
 import { useIslandContextMenu } from './IslandContextMenu';
 
 import IslandShell from './IslandShell.vue';
 import IslandDisplayController from './IslandDisplayController.vue';
 
 import defaultLogo from '@/assets/logo.png';
-
-const MUSIC_PLATFORMS = ['netease', 'spotify', 'apple', 'qqmusic', 'kugou', 'echo'] as const;
 
 interface LatestNotificationPayload {
   app_name: string;
@@ -134,6 +142,7 @@ const memUsage = ref('0%');
 
 /** 音乐控制相关 */
 const isMusicCtlEnabled = ref(readBoolean('nsd_music_ctrl'));
+const activeTargetPlayer = ref(readTargetPlayer());
 const isPlaying = ref(false);
 const coverUrl = ref('');
 const coverCache = new Map<string, string>();
@@ -144,26 +153,16 @@ const musicBoxKey = ref(0);
 const isMusicExpanded = ref(false);
 let musicExpandTimer: number | null = null;
 
-/** 音乐频谱 */
-const spectrumData = ref([0.35, 0.35, 0.35, 0.35, 0.35]);
-
-/** 获取播放器名称 */
-const getPlayerName = () => {
-  const key = readEnum('nsd_target_player', 'netease', MUSIC_PLATFORMS);
-  const map: Record<string, string> = {
-    netease: '网易云音乐',
-    spotify: 'Spotify',
-    apple: 'Apple Music',
-    qqmusic: 'QQ音乐',
-    kugou: '酷狗音乐',
-    echo: 'Echo Music',
-  };
-  return map[key] || '未知平台';
+/** 重置音乐占位信息 */
+const resetMusicPlaceholder = () => {
+  const playerName = getPlayerName(activeTargetPlayer.value);
+  currentSongName.value = '未在播放歌曲';
+  currentArtistName.value = playerName;
+  currentTrackInfo.value = `未在播放歌曲 - ${playerName}`;
+  coverUrl.value = '';
 };
 
-// 初始化音乐状态
-currentArtistName.value = getPlayerName();
-currentTrackInfo.value = `未在播放歌曲 - ${getPlayerName()}`;
+resetMusicPlaceholder();
 
 /** 消息模式相关 */
 const isMsgModeEnabled = ref(readBoolean('nsd_msg_mode'));
@@ -191,7 +190,6 @@ let speedTimer: number;
 let pingTimer: number;
 let musicTimer: number;
 let notifyTimer: number;
-let spectrumTimer: number;
 let systemEventUnlisten: UnlistenFn | null = null;
 let batteryEventUnlisten: UnlistenFn | null = null;
 
@@ -221,6 +219,10 @@ const activeDisplay = computed<IslandDisplayKind>(() =>
 
 /** 是否展示音乐内容 */
 const displayMusic = computed(() => activeDisplay.value === 'music');
+
+/** 音乐频谱 */
+const musicSpectrum = useMusicSpectrum(isPlaying, displayMusic);
+const spectrumData = musicSpectrum.spectrumData;
 
 // ============================================================
 // 工具函数
@@ -383,6 +385,20 @@ const checkNetworkLatency = async () => {
   }
 };
 
+/** 同步目标播放器到 Rust */
+const syncTargetPlayer = async (player: string | null | undefined = readTargetPlayer()) => {
+  const targetPlayer = normalizeTargetPlayer(player);
+  activeTargetPlayer.value = targetPlayer;
+
+  try {
+    await invoke('set_target_player', { player: targetPlayer });
+  } catch (err) {
+    console.error('同步音乐平台失败:', err);
+  }
+
+  return targetPlayer;
+};
+
 /** 同步音乐状态 */
 const syncMusicStatus = async () => {
   try {
@@ -419,9 +435,8 @@ const syncMusicStatus = async () => {
 
       isPlaying.value = playing;
     } else {
-      currentTrackInfo.value = `未在播放歌曲 - ${getPlayerName()}`;
+      resetMusicPlaceholder();
       isPlaying.value = false;
-      coverUrl.value = '';
     }
   } catch (err) {
     console.error('音乐信息获取失败:', err);
@@ -595,7 +610,7 @@ onMounted(async () => {
   );
 
   // 监听音乐控制器状态
-  await listen<{ enabled: boolean }>('control-music-ctl', (event) => {
+  await listen<{ enabled: boolean }>('control-music-ctl', async (event) => {
     const isEnabled = event.payload.enabled;
     isMusicCtlEnabled.value = isEnabled;
 
@@ -604,8 +619,21 @@ onMounted(async () => {
         isGlowBorderEnabled.value = true;
         writeBoolean('nsd_glow_border', true);
       }
+      await syncTargetPlayer();
+      resetMusicPlaceholder();
+      await syncMusicStatus();
       musicBoxKey.value++;
     }
+  });
+
+  // 监听目标播放器同步
+  await listen<TargetPlayerPayload>('control-target-player', async (event) => {
+    await syncTargetPlayer(event.payload.player);
+    resetMusicPlaceholder();
+    if (isMusicCtlEnabled.value || isRotationEnabled.value) {
+      await syncMusicStatus();
+    }
+    musicBoxKey.value++;
   });
 
   // 监听透明度同步
@@ -667,6 +695,12 @@ onMounted(async () => {
   // 启动时如果开了轮换，就跑起来
   if (isRotationEnabled.value) {
     startRotation();
+  }
+
+  await syncTargetPlayer();
+  resetMusicPlaceholder();
+  if (isMusicCtlEnabled.value || isRotationEnabled.value) {
+    await syncMusicStatus();
   }
 
   // 根据持久化设置决定是否显示灵动岛
@@ -771,18 +805,7 @@ onMounted(async () => {
     }
   }, 2500);
 
-  // 高频定时器：音乐频谱同步
-  spectrumTimer = setInterval(async () => {
-    if (isPlaying.value && displayMusic.value) {
-      try {
-        spectrumData.value = await invoke<number[]>('get_audio_spectrum');
-      } catch {
-        spectrumData.value = [0.35, 0.35, 0.35, 0.35, 0.35];
-      }
-    } else {
-      spectrumData.value = [0.35, 0.35, 0.35, 0.35, 0.35];
-    }
-  }, 50) as unknown as number;
+  musicSpectrum.start();
 
   // 低频定时器：网络延迟检查
   pingTimer = setInterval(checkNetworkLatency, 5500) as unknown as number;
@@ -815,7 +838,7 @@ onUnmounted(() => {
   stopRotation();
   clearInterval(musicTimer);
   clearInterval(notifyTimer);
-  clearInterval(spectrumTimer);
+  musicSpectrum.stop();
   systemEventUnlisten?.();
   batteryEventUnlisten?.();
 });
