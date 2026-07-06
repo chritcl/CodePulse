@@ -62,23 +62,18 @@
     </div>
 
     <!-- 音乐控制器 -->
-    <div class="set-item" :class="{ 'disabled-set-item': settingsStore.enableRotation }">
+    <div class="set-item">
       <div class="set-item-meta">
         <span class="set-item-title">
           音乐控制器
           <p class="set-item-pro-tag">PRO</p>
         </span>
-        <span class="set-item-desc">
-          {{
-            settingsStore.enableRotation ? '轮换开启中，已禁用' : '支持网易云音乐控制及歌曲信息显示'
-          }}
-        </span>
+        <span class="set-item-desc">支持网易云音乐控制及歌曲信息显示</span>
       </div>
       <label class="switch">
         <input
           v-model="settingsStore.enableMusicCtrl"
           type="checkbox"
-          :disabled="settingsStore.enableRotation"
           @change="handleToggleMusicCtrl"
         />
         <span class="slider" />
@@ -102,23 +97,18 @@
     </div>
 
     <!-- 硬件监控 -->
-    <div class="set-item" :class="{ 'disabled-set-item': settingsStore.enableMusicCtrl }">
+    <div class="set-item">
       <div class="set-item-meta">
         <span class="set-item-title">
           硬件监控
           <p class="set-item-pro-tag">PRO</p>
         </span>
-        <span class="set-item-desc">
-          {{
-            settingsStore.enableMusicCtrl ? '音乐控制器开启中，已禁用' : 'CPU / 内存占用实时监控'
-          }}
-        </span>
+        <span class="set-item-desc">CPU / 内存占用实时监控</span>
       </div>
       <label class="switch">
         <input
           v-model="settingsStore.enableHardwareMon"
           type="checkbox"
-          :disabled="settingsStore.enableMusicCtrl"
           @change="handleToggleHardwareMon"
         />
         <span class="slider" />
@@ -204,12 +194,6 @@ const handleSetIslandTheme = async (theme: IslandTheme) => {
 /** 切换音乐控制器 */
 const handleToggleMusicCtrl = async () => {
   await emit('control-music-ctl', { enabled: settingsStore.enableMusicCtrl });
-
-  // 互斥逻辑：开启音乐时关闭硬件监控
-  if (settingsStore.enableMusicCtrl && settingsStore.enableHardwareMon) {
-    settingsStore.toggleHardwareMon();
-    await emit('control-hardware-mon', { enabled: false });
-  }
 };
 
 /** 切换消息通知 */
@@ -220,12 +204,6 @@ const handleToggleMsgNotify = async () => {
 /** 切换硬件监控 */
 const handleToggleHardwareMon = async () => {
   await emit('control-hardware-mon', { enabled: settingsStore.enableHardwareMon });
-
-  // 互斥逻辑：开启硬件时关闭音乐
-  if (settingsStore.enableHardwareMon && settingsStore.enableMusicCtrl) {
-    settingsStore.toggleMusicCtrl();
-    await emit('control-music-ctl', { enabled: false });
-  }
 };
 
 /** 切换消息模式 */

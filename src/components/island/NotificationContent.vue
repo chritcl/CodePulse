@@ -1,5 +1,5 @@
 <template>
-  <div class="msg-box" style="cursor: pointer" @click="$emit('msg-click')">
+  <div class="msg-box">
     <div class="msg-avatar">
       <img :src="msgIcon" alt="消息图标" class="msg-avatar-img" />
     </div>
@@ -23,9 +23,6 @@ interface Props {
 
 defineProps<Props>();
 
-defineEmits<{
-  'msg-click': [];
-}>();
 </script>
 
 <style scoped>

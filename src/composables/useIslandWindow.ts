@@ -45,25 +45,13 @@ export function useIslandWindow() {
 
   /** 灵动岛样式 */
   const islandStyle = computed<CSSProperties>(() => {
-    const linear = islandOpacity.value / 100;
-    const alpha = Math.pow(linear, 1 / 2.2);
-    const baseStyle =
-      islandTheme.value === 'white'
-        ? {
-            backgroundColor: `rgba(255, 255, 255, ${alpha})`,
-            color: '#000000',
-          }
-        : {
-            backgroundColor: `rgba(0, 0, 0, ${alpha})`,
-            color: '#ffffff',
-          };
-
     return {
-      ...baseStyle,
+      color: islandTheme.value === 'white' ? '#000000' : '#ffffff',
       width: '100vw',
       height: '100vh',
-      borderRadius: '100px',
+      borderRadius: '0',
       position: 'relative',
+      backgroundColor: 'transparent',
     };
   });
 
@@ -82,6 +70,24 @@ export function useIslandWindow() {
     return {
       backgroundColor: `rgba(0, 0, 0, ${alpha})`,
       borderRadius: innerRadius,
+    };
+  });
+
+  /** 展开态表面样式 */
+  const focusSurfaceStyle = computed<CSSProperties>(() => {
+    const linear = islandOpacity.value / 100;
+    const alpha = Math.pow(linear, 1 / 2.2);
+
+    if (islandTheme.value === 'white') {
+      return {
+        backgroundColor: `rgba(255, 255, 255, ${alpha})`,
+        color: '#000000',
+      };
+    }
+
+    return {
+      backgroundColor: `rgba(0, 0, 0, ${alpha})`,
+      color: '#ffffff',
     };
   });
 
@@ -225,6 +231,7 @@ export function useIslandWindow() {
     // 计算属性
     islandStyle,
     coreContentStyle,
+    focusSurfaceStyle,
     glowOpacity,
 
     // 方法

@@ -1,8 +1,12 @@
 <template>
   <IslandShell
+    ref="islandShellRef"
     :visible="isIslandVisible"
     :container-style="islandWindow.islandStyle.value"
-    :core-style="islandWindow.coreContentStyle.value"
+    :core-style="activeCoreStyle"
+    :detail-style="activeDetailStyle"
+    :expanded="Boolean(islandLayout.expandedKind)"
+    :is-pinned="islandWindow.isPinnedToTaskbar.value"
     :show-glow="isGlowBorderEnabled"
     :glow-opacity="islandWindow.glowOpacity.value"
     :show-music-spectrum="displayMusic"
@@ -12,15 +16,27 @@
     :spectrum-data="spectrumData"
     :enter-transition="animation.onEnter"
     :leave-transition="animation.onLeave"
+    :detail-enter-transition="animation.onDetailEnter"
+    :detail-leave-transition="animation.onDetailLeave"
     @shell-mousedown="drag.handleMouseDown"
     @shell-mousemove="handleMouseMove"
     @shell-mouseup="drag.handleMouseUp"
     @shell-mouseleave="handleMouseLeave"
     @shell-mouseenter="handleMouseEnter"
     @shell-contextmenu="handleRightClick"
+    @main-click="handleMainClick"
   >
+    <template v-if="islandLayout.satellites.length || islandLayout.overflowCount > 0" #satellites>
+      <IslandSatelliteStrip
+        :items="islandLayout.satellites"
+        :overflow-count="islandLayout.overflowCount"
+        @select="handleSatelliteSelect"
+      />
+    </template>
+
     <IslandDisplayController
       :display="activeDisplay"
+      mode="compact"
       :network="{
         uploadSpeed,
         downloadSpeed,
@@ -39,7 +55,6 @@
         currentTrackInfo,
         currentSongName,
         currentArtistName,
-        isExpanded: isMusicExpanded,
       }"
       :notification="{
         icon: currentMsgIcon,
@@ -53,16 +68,56 @@
       :inner-enter-transition="animation.onInnerEnter"
       :inner-leave-transition="animation.onInnerLeave"
       @msg-click="handleMsgClick"
-      @expand-music="expandMusic"
       @toggle-play="togglePlay"
       @prev-track="prevTrack"
       @next-track="nextTrack"
     />
+
+    <template v-if="islandLayout.expandedKind === activeDisplay" #detail>
+      <IslandDisplayController
+        :display="activeDisplay"
+        mode="detail"
+        :network="{
+          uploadSpeed,
+          downloadSpeed,
+          isHighUpload,
+          isHighDownload,
+        }"
+        :hardware="{
+          cpuUsage,
+          gpuUsage,
+          memUsage,
+        }"
+        :music="{
+          boxKey: musicBoxKey,
+          isPlaying,
+          coverUrl,
+          currentTrackInfo,
+          currentSongName,
+          currentArtistName,
+        }"
+        :notification="{
+          icon: currentMsgIcon,
+          title: msgTitle,
+          body: msgBody,
+        }"
+        :system-toast="{
+          text: sysToastText,
+          type: sysToastType,
+        }"
+        :inner-enter-transition="animation.onInnerEnter"
+        :inner-leave-transition="animation.onInnerLeave"
+        @msg-click="handleMsgClick"
+        @toggle-play="togglePlay"
+        @prev-track="prevTrack"
+        @next-track="nextTrack"
+      />
+    </template>
   </IslandShell>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch, nextTick, type CSSProperties } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, emit, type UnlistenFn } from '@tauri-apps/api/event';
@@ -73,7 +128,12 @@ import {
   useIslandDrag,
   useMusicSpectrum,
 } from '@/composables';
-import { resolveIslandDisplay, type IslandDisplayKind } from '@/modules/island/display';
+import {
+  resolveIslandLayout,
+  type IslandDisplayKind,
+  type IslandModuleSnapshot,
+  type IslandModuleVisualStatus,
+} from '@/modules/island/display';
 import {
   getPlayerName,
   normalizeTargetPlayer,
@@ -85,6 +145,7 @@ import { useIslandContextMenu } from './IslandContextMenu';
 
 import IslandShell from './IslandShell.vue';
 import IslandDisplayController from './IslandDisplayController.vue';
+import IslandSatelliteStrip from './IslandSatelliteStrip.vue';
 
 import defaultLogo from '@/assets/logo.png';
 
@@ -105,6 +166,15 @@ interface SystemToastItem {
   type: SystemToastType;
 }
 
+type ElementRect = ReturnType<HTMLElement['getBoundingClientRect']>;
+
+interface IslandShellExpose {
+  getMainElement: () => HTMLElement | null;
+  getMainRect: () => ElementRect | null;
+  getSatelliteElement: (kind: string) => HTMLElement | null;
+  getSatelliteRect: (kind: string) => ElementRect | null;
+}
+
 // ============================================================
 // Composables
 // ============================================================
@@ -113,6 +183,7 @@ const islandWindow = useIslandWindow();
 const animation = useIslandAnimation();
 const drag = useIslandDrag();
 const contextMenu = useIslandContextMenu();
+const islandShellRef = ref<IslandShellExpose | null>(null);
 
 // ============================================================
 // 状态
@@ -126,6 +197,9 @@ const isMenuOpen = ref(false);
 
 /** 流光边框是否启用 */
 const isGlowBorderEnabled = ref(readBoolean('nsd_glow_border'));
+
+/** 交互动效序号 */
+let interactionAnimationId = 0;
 
 /** 网速监控相关 */
 const uploadSpeed = ref('0 KB/s');
@@ -150,8 +224,9 @@ const currentSongName = ref('未在播放歌曲');
 const currentArtistName = ref('');
 const currentTrackInfo = ref('');
 const musicBoxKey = ref(0);
-const isMusicExpanded = ref(false);
-let musicExpandTimer: number | null = null;
+const expandedKind = ref<IslandDisplayKind | null>(null);
+const isMusicExpanded = computed(() => expandedKind.value === 'music');
+let expandCollapseTimer: number | null = null;
 
 /** 重置音乐占位信息 */
 const resetMusicPlaceholder = () => {
@@ -171,12 +246,15 @@ const msgTitle = ref('');
 const msgBody = ref('');
 const msgAumid = ref('');
 const currentMsgIcon = ref(defaultLogo);
+const notificationUnreadCount = ref(0);
+const notificationSoftUntil = ref(0);
 let msgTimer: number | null = null;
 
 /** 系统操作通知 */
 const displaySysToast = ref(false);
 const sysToastText = ref('');
 const sysToastType = ref<SystemToastType>('app');
+const sysToastSoftUntil = ref(0);
 const toastQueue = ref<SystemToastItem[]>([]);
 let isProcessingToast = false;
 
@@ -184,6 +262,15 @@ let isProcessingToast = false;
 const isRotationEnabled = ref(readBoolean('nsd_rotation_mode'));
 const currentRotIndex = ref(0);
 let rotationTimer: number | null = null;
+
+/** 多岛布局调度 */
+const layoutNow = ref(Date.now());
+const manualFocusKind = ref<IslandDisplayKind | null>(null);
+const manualFocusUntil = ref(0);
+const stableMainKind = ref<IslandDisplayKind | null>(null);
+const hardwareStrongActive = ref(false);
+let hardwareHighSampleCount = 0;
+let layoutClockTimer: number;
 
 /** 定时器 */
 let speedTimer: number;
@@ -198,27 +285,110 @@ let lastRx = 0;
 let lastTx = 0;
 let lowTrafficStartTime = Date.now();
 const RED_DELAY_MS = 5000;
+const USER_FOCUS_PROTECT_MS = 10_000;
+const NOTIFICATION_SOFT_MS = 5_000;
+const SYSTEM_TOAST_MS = 2_000;
+const HARDWARE_STRONG_THRESHOLD = 90;
+const HARDWARE_RECOVER_THRESHOLD = 85;
 
 // ============================================================
 // 计算属性
 // ============================================================
 
-/** 当前展示内容 */
-const activeDisplay = computed<IslandDisplayKind>(() =>
-  resolveIslandDisplay({
-    agentActive: false,
-    wechatActive: false,
-    notificationActive: isMsgActive.value,
-    systemToastActive: displaySysToast.value,
+/** 音乐模块是否活跃 */
+const isMusicModuleActive = computed(() => isMusicCtlEnabled.value || isRotationEnabled.value);
+
+/** 硬件模块是否活跃 */
+const isHardwareModuleActive = computed(
+  () => isHardwareMonEnabled.value || isRotationEnabled.value || hardwareStrongActive.value
+);
+
+/** 硬件卫星岛状态 */
+const hardwareVisualStatus = computed<IslandModuleVisualStatus>(() => {
+  const maxUsage = Math.max(
+    parseInt(cpuUsage.value) || 0,
+    parseInt(gpuUsage.value) || 0,
+    parseInt(memUsage.value) || 0
+  );
+
+  if (hardwareStrongActive.value) return 'error';
+  if (maxUsage >= 80) return 'warning';
+  return 'normal';
+});
+
+/** 当前活跃模块快照 */
+const islandModules = computed<IslandModuleSnapshot[]>(() => [
+  { kind: 'agent', active: false },
+  { kind: 'wechat', active: false },
+  {
+    kind: 'notification',
+    active: isMsgActive.value || notificationUnreadCount.value > 0,
+    interrupt: isMsgActive.value ? 'soft' : 'none',
+    interruptUntil: notificationSoftUntil.value,
+    status: notificationUnreadCount.value > 0 ? 'unread' : 'info',
+    unreadCount: notificationUnreadCount.value,
+    label: msgTitle.value || '通知',
+    iconUrl: currentMsgIcon.value,
+  },
+  {
+    kind: 'system-toast',
+    active: displaySysToast.value,
+    interrupt: displaySysToast.value ? 'soft' : 'none',
+    interruptUntil: sysToastSoftUntil.value,
+    status: sysToastType.value === 'battery-low' ? 'error' : 'info',
+  },
+  {
+    kind: 'hardware',
+    active: isHardwareModuleActive.value,
+    interrupt: hardwareStrongActive.value ? 'strong' : 'none',
+    status: hardwareVisualStatus.value,
+  },
+  {
+    kind: 'music',
+    active: isMusicModuleActive.value,
+    status: isPlaying.value ? 'running' : 'paused',
+    iconUrl: coverUrl.value || undefined,
+  },
+  { kind: 'update', active: false },
+  { kind: 'network', active: true, status: networkStatus.value === 'error' ? 'error' : 'normal' },
+]);
+
+/** 当前多岛布局 */
+const islandLayout = computed(() =>
+  resolveIslandLayout({
+    modules: islandModules.value,
+    now: layoutNow.value,
+    manualFocusKind: manualFocusKind.value,
+    manualFocusUntil: manualFocusUntil.value,
+    stableMainKind: stableMainKind.value,
+    expandedKind: expandedKind.value,
     rotationEnabled: isRotationEnabled.value,
     rotationIndex: currentRotIndex.value,
-    musicEnabled: isMusicCtlEnabled.value,
-    hardwareEnabled: isHardwareMonEnabled.value,
   })
 );
 
+/** 当前展示内容 */
+const activeDisplay = computed<IslandDisplayKind>(() => islandLayout.value.main);
+
 /** 是否展示音乐内容 */
 const displayMusic = computed(() => activeDisplay.value === 'music');
+
+/** 主岛当前表面样式 */
+const activeCoreStyle = computed<CSSProperties>(() => {
+  if (!islandLayout.value.expandedKind) return islandWindow.coreContentStyle.value;
+
+  return {
+    ...islandWindow.coreContentStyle.value,
+    ...islandWindow.focusSurfaceStyle.value,
+    borderRadius: '98px',
+  };
+});
+
+/** 展开面板当前表面样式 */
+const activeDetailStyle = computed<CSSProperties>(() => ({
+  ...islandWindow.focusSurfaceStyle.value,
+  borderRadius: '14px',
+}));
 
 /** 音乐频谱 */
 const musicSpectrum = useMusicSpectrum(isPlaying, displayMusic);
@@ -255,6 +425,48 @@ const getAppIcon = (appName: string) => {
   return defaultLogo;
 };
 
+/** 刷新布局时钟，用于驱动保护期和软打断过期 */
+const refreshLayoutNow = () => {
+  layoutNow.value = Date.now();
+};
+
+/** 收起当前模块详情 */
+const collapseExpanded = () => {
+  expandedKind.value = null;
+  if (expandCollapseTimer) {
+    clearTimeout(expandCollapseTimer);
+    expandCollapseTimer = null;
+  }
+};
+
+/** 更新硬件强打断状态 */
+const updateHardwareSeverity = () => {
+  const cpu = parseInt(cpuUsage.value) || 0;
+  const gpu = parseInt(gpuUsage.value) || 0;
+  const memory = parseInt(memUsage.value) || 0;
+  const maxUsage = Math.max(cpu, gpu, memory);
+
+  if (maxUsage >= HARDWARE_STRONG_THRESHOLD) {
+    hardwareHighSampleCount += 1;
+    if (hardwareHighSampleCount >= 2) {
+      hardwareStrongActive.value = true;
+      refreshLayoutNow();
+    }
+    return;
+  }
+
+  hardwareHighSampleCount = 0;
+  if (
+    hardwareStrongActive.value &&
+    cpu < HARDWARE_RECOVER_THRESHOLD &&
+    gpu < HARDWARE_RECOVER_THRESHOLD &&
+    memory < HARDWARE_RECOVER_THRESHOLD
+  ) {
+    hardwareStrongActive.value = false;
+    refreshLayoutNow();
+  }
+};
+
 /** 推入系统操作通知 */
 const showToast = (text: string, type: SystemToastType = 'app') => {
   if (!text.trim()) return;
@@ -273,19 +485,22 @@ const processToastQueue = async () => {
   const nextToast = toastQueue.value.shift();
 
   if (nextToast) {
-    collapseMusic();
+    collapseExpanded();
     sysToastText.value = nextToast.text;
     sysToastType.value = nextToast.type;
+    sysToastSoftUntil.value = Date.now() + SYSTEM_TOAST_MS;
     displaySysToast.value = true;
+    refreshLayoutNow();
 
     if (isMsgModeEnabled.value && !isIslandVisible.value) {
       await getCurrentWindow().show();
       isIslandVisible.value = true;
     }
 
-    islandWindow.animateIslandSize(260, 42);
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, SYSTEM_TOAST_MS));
     displaySysToast.value = false;
+    sysToastSoftUntil.value = 0;
+    refreshLayoutNow();
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
 
@@ -464,43 +679,73 @@ const nextTrack = async () => {
   await invoke('control_system_media', { action: 'next' });
 };
 
-/** 展开音乐 */
-const expandMusic = (e: MouseEvent) => {
-  if (!drag.isClick(e)) return;
-
-  if ((e.target as HTMLElement).closest('.ctl-btn')) return;
-
-  if (isMusicExpanded.value) return;
-
-  islandWindow.animateIslandSize(245, 38);
-
-  setTimeout(() => {
-    isMusicExpanded.value = true;
-    islandWindow.animateIslandSize(320, 115);
-  }, 120);
+/** 获取卫星按钮元素 */
+const getSatelliteButtonFromEvent = (kind: IslandDisplayKind, event: MouseEvent) => {
+  if (event.currentTarget instanceof HTMLElement) return event.currentTarget;
+  return islandShellRef.value?.getSatelliteElement(kind) ?? null;
 };
 
-/** 收缩音乐 */
-const collapseMusic = () => {
-  if (!isMusicExpanded.value) return;
-  isMusicExpanded.value = false;
-  if (musicExpandTimer) clearTimeout(musicExpandTimer);
-  islandWindow.animateIslandSize(260, 42);
+/** 处理卫星岛切换 */
+const handleSatelliteSelect = async (kind: IslandDisplayKind, event: MouseEvent) => {
+  const animationId = ++interactionAnimationId;
+  const previousMain = activeDisplay.value;
+  const shell = islandShellRef.value;
+  const selectedButton = getSatelliteButtonFromEvent(kind, event);
+  const selectedRect = selectedButton?.getBoundingClientRect() ?? shell?.getSatelliteRect(kind) ?? null;
+  const previousMainRect = shell?.getMainRect() ?? null;
+
+  await animation.playPressSpring(selectedButton, { scale: 0.88 });
+  if (animationId !== interactionAnimationId) return;
+
+  collapseExpanded();
+  manualFocusKind.value = kind;
+  manualFocusUntil.value = Date.now() + USER_FOCUS_PROTECT_MS;
+  stableMainKind.value = kind;
+  refreshLayoutNow();
+  await nextTick();
+
+  if (animationId !== interactionAnimationId) return;
+
+  const nextShell = islandShellRef.value;
+  const mainElement = nextShell?.getMainElement() ?? null;
+  const oldMainSatellite = previousMain !== kind
+    ? nextShell?.getSatelliteElement(previousMain) ?? null
+    : null;
+
+  await Promise.all([
+    animation.playFlipSpring(mainElement, selectedRect),
+    animation.playFlipSpring(oldMainSatellite, previousMainRect),
+  ]);
+};
+
+/** 处理主岛点击 */
+const handleMainClick = async (event: MouseEvent) => {
+  if (!drag.isClick(event)) return;
+  if ((event.target as HTMLElement).closest('.ctl-btn, .detail-action')) return;
+  if (activeDisplay.value === 'system-toast') return;
+  if (expandedKind.value === activeDisplay.value) return;
+
+  const animationId = ++interactionAnimationId;
+  await animation.playPressSpring(islandShellRef.value?.getMainElement() ?? null);
+  if (animationId !== interactionAnimationId) return;
+
+  expandedKind.value = activeDisplay.value;
+  refreshLayoutNow();
 };
 
 /** 处理鼠标离开 */
 const handleMouseLeave = () => {
-  if (!isMusicExpanded.value) return;
+  if (!expandedKind.value) return;
 
-  if (musicExpandTimer) clearTimeout(musicExpandTimer);
-  musicExpandTimer = window.setTimeout(collapseMusic, 1000);
+  if (expandCollapseTimer) clearTimeout(expandCollapseTimer);
+  expandCollapseTimer = window.setTimeout(collapseExpanded, 1000);
 };
 
 /** 处理鼠标进入 */
 const handleMouseEnter = () => {
-  if (musicExpandTimer) {
-    clearTimeout(musicExpandTimer);
-    musicExpandTimer = null;
+  if (expandCollapseTimer) {
+    clearTimeout(expandCollapseTimer);
+    expandCollapseTimer = null;
   }
 };
 
@@ -523,7 +768,10 @@ const handleMsgClick = async () => {
       });
 
       isMsgActive.value = false;
-      islandWindow.animateIslandSize(260, 42);
+      notificationUnreadCount.value = 0;
+      notificationSoftUntil.value = 0;
+      collapseExpanded();
+      refreshLayoutNow();
       if (msgTimer) clearTimeout(msgTimer);
     } catch (err) {
       console.error('打开程序失败:', err);
@@ -582,10 +830,32 @@ const stopRotation = () => {
 // 监听器
 // ============================================================
 
-watch(displayMusic, (newVal: boolean) => {
-  if (!newVal) {
-    collapseMusic();
+watch(activeDisplay, (newVal) => {
+  if (expandedKind.value && expandedKind.value !== newVal) {
+    collapseExpanded();
   }
+
+  if (!['system-toast'].includes(newVal) && !['soft-interrupt', 'strong-interrupt'].includes(islandLayout.value.reason)) {
+    stableMainKind.value = newVal;
+  }
+});
+
+watch(
+  () => [islandLayout.value.size.width, islandLayout.value.size.height] as const,
+  ([width, height], previousSize) => {
+    if (!isIslandVisible.value) return;
+    if (previousSize && width === previousSize[0] && height === previousSize[1]) return;
+    islandWindow.animateIslandSize(width, height);
+  },
+  { flush: 'post' }
+);
+
+watch(isIslandVisible, (visible) => {
+  if (!visible) {
+    collapseExpanded();
+    return;
+  }
+  islandWindow.animateIslandSize(islandLayout.value.size.width, islandLayout.value.size.height);
 });
 
 watch(isMsgActive, (newVal) => {
@@ -599,7 +869,8 @@ watch(isMsgActive, (newVal) => {
 // ============================================================
 
 onMounted(async () => {
-  window.addEventListener('blur', collapseMusic);
+  window.addEventListener('blur', collapseExpanded);
+  layoutClockTimer = window.setInterval(refreshLayoutNow, 500);
 
   document.addEventListener(
     'contextmenu',
@@ -752,6 +1023,7 @@ onMounted(async () => {
           memUsage.value = Math.round((usedMem / totalMem) * 100) + '%';
         }
         await fetchGpuUsage();
+        updateHardwareSeverity();
       } catch (err) {
         console.error('获取硬件信息失败:', err);
       }
@@ -777,6 +1049,9 @@ onMounted(async () => {
         msgAumid.value = res.aumid;
         msgBody.value = res.body ? `${res.title}: ${res.body}` : res.title;
         currentMsgIcon.value = getAppIcon(res.app_name);
+        notificationUnreadCount.value += 1;
+        notificationSoftUntil.value = Date.now() + NOTIFICATION_SOFT_MS;
+        refreshLayoutNow();
 
         if (!isMsgActive.value) {
           isMsgActive.value = true;
@@ -784,15 +1059,13 @@ onMounted(async () => {
             getCurrentWindow().show();
             isIslandVisible.value = true;
           }
-          if (!islandWindow.isPinnedToTaskbar.value) {
-            islandWindow.animateIslandSize(360, 65);
-          }
         }
 
         if (msgTimer) clearTimeout(msgTimer);
         msgTimer = window.setTimeout(() => {
           isMsgActive.value = false;
-          islandWindow.animateIslandSize(260, 42);
+          notificationSoftUntil.value = 0;
+          refreshLayoutNow();
           if (isMsgModeEnabled.value) {
             setTimeout(() => {
               if (!isMsgActive.value) isIslandVisible.value = false;
@@ -832,7 +1105,8 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  window.removeEventListener('blur', collapseMusic);
+  window.removeEventListener('blur', collapseExpanded);
+  clearInterval(layoutClockTimer);
   clearInterval(speedTimer);
   clearInterval(pingTimer);
   stopRotation();
