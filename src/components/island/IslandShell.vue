@@ -1,16 +1,9 @@
 <template>
   <transition :css="false" @enter="enterTransition" @leave="leaveTransition">
-    <div
-      v-show="visible"
-      :class="['island-container', { 'has-music-border': showGlow }]"
-      :style="containerStyle"
-      @mousedown="$emit('shell-mousedown', $event)"
-      @mousemove="$emit('shell-mousemove', $event)"
-      @mouseup="$emit('shell-mouseup')"
-      @mouseleave="$emit('shell-mouseleave')"
-      @mouseenter="$emit('shell-mouseenter')"
-      @contextmenu="$emit('shell-contextmenu', $event)"
-    >
+    <div v-show="visible" :class="['island-container', { 'has-music-border': showGlow }]" :style="containerStyle"
+      @mousedown="$emit('shell-mousedown', $event)" @mousemove="$emit('shell-mousemove', $event)"
+      @mouseup="$emit('shell-mouseup')" @mouseleave="$emit('shell-mouseleave')" @mouseenter="$emit('shell-mouseenter')"
+      @contextmenu="$emit('shell-contextmenu', $event)">
       <div v-if="showGlow" class="rainbow-border-glow" :style="{ opacity: glowOpacity }" />
 
       <div class="island-core-content" :style="coreStyle">
@@ -18,13 +11,8 @@
           <slot />
         </div>
 
-        <IslandStatusIndicator
-          :show-music-spectrum="showMusicSpectrum"
-          :is-playing="isPlaying"
-          :is-music-expanded="isMusicExpanded"
-          :network-status="networkStatus"
-          :spectrum-data="spectrumData"
-        />
+        <IslandStatusIndicator :show-music-spectrum="showMusicSpectrum" :is-playing="isPlaying"
+          :is-music-expanded="isMusicExpanded" :network-status="networkStatus" :spectrum-data="spectrumData" />
       </div>
     </div>
   </transition>
@@ -109,7 +97,7 @@ defineEmits<{
   top: calc(50% - 250px);
   left: calc(50% - 250px);
   z-index: 1;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='500'%3E%3Cdefs%3E%3Cfilter id='b' x='-50%25' y='-50%25' width='200%25' height='200%25'%3E%3CfeGaussianBlur in='SourceGraphic' stdDeviation='60'/%3E%3C/filter%3E%3Cg filter='url(%23b)'%3E%3Ccircle cx='250' cy='90' r='150' fill='%23ff3b30'/%3E%3Ccircle cx='390' cy='170' r='150' fill='%23ff9500'/%3E%3Ccircle cx='390' cy='330' r='150' fill='%234cd964'/%3E%3Ccircle cx='250' cy='410' r='150' fill='%23007aff'/%3E%3Ccircle cx='110' cy='330' r='150' fill='%235856d6'/%3E%3Ccircle cx='110' cy='170' r='150' fill='%23ff2d55'/%3E%3C/g%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='500'%3E%3Cdefs%3E%3Cfilter id='b' x='-50%25' y='-50%25' width='200%25' height='200%25'%3E%3CfeGaussianBlur in='SourceGraphic' stdDeviation='60'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23b)'%3E%3Ccircle cx='250' cy='90' r='150' fill='%23ff3b30'/%3E%3Ccircle cx='390' cy='170' r='150' fill='%23ff9500'/%3E%3Ccircle cx='390' cy='330' r='150' fill='%234cd964'/%3E%3Ccircle cx='250' cy='410' r='150' fill='%23007aff'/%3E%3Ccircle cx='110' cy='330' r='150' fill='%235856d6'/%3E%3Ccircle cx='110' cy='170' r='150' fill='%23ff2d55'/%3E%3C/g%3E%3C/svg%3E");
   background-size: cover;
   animation: rainbow-rotate 10s linear infinite;
   will-change: transform;

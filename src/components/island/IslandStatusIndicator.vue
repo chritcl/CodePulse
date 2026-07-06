@@ -1,17 +1,9 @@
 <template>
   <div class="status-indicator">
     <!-- 音乐频谱 -->
-    <div
-      v-if="showMusicSpectrum"
-      class="audio-spectrum"
-      :class="{ 'is-playing': isPlaying, expanded: isMusicExpanded }"
-    >
-      <span
-        v-for="(scale, index) in barScales"
-        :key="index"
-        class="bar"
-        :style="{ transform: `scaleY(${scale})` }"
-      />
+    <div v-if="showMusicSpectrum" class="audio-spectrum"
+      :class="{ 'is-playing': isPlaying, expanded: isMusicExpanded }">
+      <span v-for="(scale, index) in barScales" :key="index" class="bar" :style="{ transform: `scaleY(${scale})` }" />
     </div>
 
     <!-- 网络状态灯 -->

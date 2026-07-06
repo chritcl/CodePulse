@@ -36,18 +36,21 @@ pub fn is_widget_visible(app: tauri::AppHandle) -> bool {
 pub fn force_window_topmost(app: tauri::AppHandle) {
     #[cfg(target_os = "windows")]
     {
-        use winapi::shared::windef::RECT;
-        use winapi::um::winuser::{
-            GetClassNameW, GetForegroundWindow, GetMonitorInfoW, GetWindowRect, MonitorFromWindow,
-            SetWindowPos,
+        use windows::Win32::Foundation::{HWND, RECT};
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetClassNameW, GetForegroundWindow, GetWindowRect, SetWindowPos, HWND_TOPMOST,
+            SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
         };
 
         // 安全性：前台窗口句柄由系统返回，灵动岛句柄由 Tauri 返回；本块只进行同步查询和置顶调用。
         unsafe {
             let fg_hwnd = GetForegroundWindow();
-            if !fg_hwnd.is_null() {
+            if !fg_hwnd.is_invalid() {
                 let mut class_name = [0u16; 256];
-                let len = GetClassNameW(fg_hwnd, class_name.as_mut_ptr(), class_name.len() as i32);
+                let len = GetClassNameW(fg_hwnd, &mut class_name);
                 let class_str = String::from_utf16_lossy(&class_name[..len as usize]);
 
                 // 如果是系统菜单，不处理
@@ -56,13 +59,12 @@ pub fn force_window_topmost(app: tauri::AppHandle) {
                 }
 
                 let mut rect: RECT = std::mem::zeroed();
-                GetWindowRect(fg_hwnd, &mut rect);
+                let _ = GetWindowRect(fg_hwnd, &mut rect);
 
-                let monitor =
-                    MonitorFromWindow(fg_hwnd, winapi::um::winuser::MONITOR_DEFAULTTONEAREST);
-                let mut mi: winapi::um::winuser::MONITORINFO = std::mem::zeroed();
-                mi.cbSize = std::mem::size_of::<winapi::um::winuser::MONITORINFO>() as u32;
-                GetMonitorInfoW(monitor, &mut mi);
+                let monitor = MonitorFromWindow(fg_hwnd, MONITOR_DEFAULTTONEAREST);
+                let mut mi: MONITORINFO = std::mem::zeroed();
+                mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                let _ = GetMonitorInfoW(monitor, &mut mi);
 
                 // 如果是全屏应用，不处理（除非是桌面）
                 if rect.left == mi.rcMonitor.left
@@ -79,7 +81,9 @@ pub fn force_window_topmost(app: tauri::AppHandle) {
             // 设置灵动岛窗口置顶
             if let Some(win) = app.get_webview_window("widget") {
                 if let Ok(hwnd) = win.hwnd() {
-                    SetWindowPos(hwnd.0 as _, -1isize as _, 0, 0, 0, 0, 19);
+                    let flags =
+                        SET_WINDOW_POS_FLAGS(SWP_NOMOVE.0 | SWP_NOSIZE.0 | SWP_NOACTIVATE.0);
+                    let _ = SetWindowPos(HWND(hwnd.0 as _), HWND_TOPMOST, 0, 0, 0, 0, flags);
                 }
             }
         }
@@ -93,19 +97,24 @@ pub fn force_window_topmost(app: tauri::AppHandle) {
 pub fn set_window_bounds(app: tauri::AppHandle, x: i32, y: i32, width: i32, height: i32) {
     #[cfg(target_os = "windows")]
     {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_NOZORDER,
+        };
+
         if let Some(win) = app.get_webview_window("widget") {
             if let Ok(hwnd) = win.hwnd() {
                 // 安全性：句柄来自当前灵动岛窗口，SetWindowPos 只调整位置和尺寸，不持有指针。
                 unsafe {
-                    // SWP_NOACTIVATE | SWP_NOZORDER
-                    winapi::um::winuser::SetWindowPos(
-                        hwnd.0 as _,
-                        std::ptr::null_mut(),
+                    let flags = SET_WINDOW_POS_FLAGS(SWP_NOACTIVATE.0 | SWP_NOZORDER.0);
+                    let _ = SetWindowPos(
+                        HWND(hwnd.0 as _),
+                        HWND(std::ptr::null_mut()),
                         x,
                         y,
                         width,
                         height,
-                        0x0014,
+                        flags,
                     );
                 }
             }
@@ -131,14 +140,16 @@ pub async fn start_island_animation(
     #[cfg(target_os = "windows")]
     {
         if let Ok(hwnd) = window.hwnd() {
-            use winapi::shared::windef::RECT;
-            use winapi::um::winuser::{GetWindowRect, SetWindowPos};
+            use windows::Win32::Foundation::{HWND, RECT};
+            use windows::Win32::UI::WindowsAndMessaging::{
+                GetWindowRect, SetWindowPos, SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_NOZORDER,
+            };
 
             // 安全性：RECT 是 Win32 POD 结构，零初始化后立即传给 GetWindowRect 填充。
             let mut rect: RECT = unsafe { std::mem::zeroed() };
             // 安全性：句柄来自 Tauri 窗口，只读取当前窗口矩形。
             unsafe {
-                GetWindowRect(hwnd.0 as _, &mut rect);
+                let _ = GetWindowRect(HWND(hwnd.0 as _), &mut rect);
             }
 
             let (anchor_center_x, anchor_origin_y, anchor_left_x, anchor_bottom_y) = {
@@ -213,14 +224,15 @@ pub async fn start_island_animation(
 
                     // 安全性：线程内仅复用已取得的窗口句柄数值执行 SetWindowPos，动画中断由原子 ID 控制。
                     unsafe {
-                        SetWindowPos(
-                            hwnd_raw as _,
-                            std::ptr::null_mut(),
+                        let flags = SET_WINDOW_POS_FLAGS(SWP_NOACTIVATE.0 | SWP_NOZORDER.0);
+                        let _ = SetWindowPos(
+                            HWND(hwnd_raw as _),
+                            HWND(std::ptr::null_mut()),
                             final_x,
                             final_y,
                             phys_window_w,
                             phys_window_h,
-                            0x0014,
+                            flags,
                         );
                     }
                 }
@@ -238,14 +250,15 @@ pub async fn start_island_animation(
 
                     // 安全性：终点收尾只对同一个窗口句柄设置最终位置和尺寸。
                     unsafe {
-                        SetWindowPos(
-                            hwnd_raw as _,
-                            std::ptr::null_mut(),
+                        let flags = SET_WINDOW_POS_FLAGS(SWP_NOACTIVATE.0 | SWP_NOZORDER.0);
+                        let _ = SetWindowPos(
+                            HWND(hwnd_raw as _),
+                            HWND(std::ptr::null_mut()),
                             final_x,
                             final_y,
                             phys_target_w,
                             phys_target_h,
-                            0x0014,
+                            flags,
                         );
                     }
                     let _ = window_clone.emit("island-resize", vec![target_width, target_height]);

@@ -9,6 +9,9 @@ import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { readBoolean, writeBoolean } from '@/shared/utils/storage';
+
+const ISLAND_ENABLED_STORAGE_KEY = 'nsd_island_enabled';
 
 export const useIslandStore = defineStore('island', () => {
   // ============================================================
@@ -16,7 +19,7 @@ export const useIslandStore = defineStore('island', () => {
   // ============================================================
 
   /** 灵动岛是否可见 */
-  const isVisible = ref(false);
+  const isVisible = ref(readBoolean(ISLAND_ENABLED_STORAGE_KEY, true));
 
   /** 是否显示灵动岛设置面板 */
   const showSettings = ref(false);
@@ -30,11 +33,14 @@ export const useIslandStore = defineStore('island', () => {
     const nextState = !isVisible.value;
     await emit('control-island-visibility', { show: nextState });
     isVisible.value = nextState;
+    // 持久化开关状态
+    writeBoolean(ISLAND_ENABLED_STORAGE_KEY, nextState);
   };
 
   /** 设置灵动岛可见性 */
   const setVisibility = (visible: boolean) => {
     isVisible.value = visible;
+    writeBoolean(ISLAND_ENABLED_STORAGE_KEY, visible);
   };
 
   /** 切换设置面板显示状态 */
@@ -66,6 +72,14 @@ export const useIslandStore = defineStore('island', () => {
 
   /** 检查灵动岛初始状态 */
   const checkInitialState = async () => {
+    // 如果用户上次关闭了灵动岛，直接保持关闭状态
+    const enabled = readBoolean(ISLAND_ENABLED_STORAGE_KEY, true);
+    if (!enabled) {
+      isVisible.value = false;
+      return;
+    }
+
+    // 等待 Widget 窗口就绪
     for (let i = 0; i < 6; i++) {
       try {
         const visible = await invoke<boolean>('is_widget_visible');
@@ -78,7 +92,15 @@ export const useIslandStore = defineStore('island', () => {
       }
       await new Promise((r) => setTimeout(r, 200));
     }
-    isVisible.value = false;
+
+    // 持久化开关已开启但窗口未显示时，主动补发一次显示命令
+    await emit('control-island-visibility', { show: true });
+    try {
+      await invoke('set_island_visible', { visible: true });
+    } catch {
+      /* 忽略 */
+    }
+    isVisible.value = true;
   };
 
   // ============================================================

@@ -4,7 +4,7 @@
  * 管理主题切换逻辑，包括系统主题监听。
  */
 
-import { onMounted, onUnmounted } from 'vue';
+import { onMounted, onUnmounted, watch } from 'vue';
 import { useSettingsStore } from '@/stores';
 
 export function useTheme() {
@@ -37,12 +37,6 @@ export function useTheme() {
     }
   };
 
-  /** 处理主题模式变更 */
-  const handleThemeChange = (mode: string) => {
-    settingsStore.setThemeMode(mode as 'light' | 'dark' | 'system');
-    applyTheme();
-  };
-
   /** 初始化主题 */
   const initialize = () => {
     applyTheme();
@@ -54,6 +48,14 @@ export function useTheme() {
   const cleanup = () => {
     systemThemeMedia?.removeEventListener('change', handleSystemThemeUpdate);
   };
+
+  // 监听 themeMode 变化，自动应用主题
+  watch(
+    () => settingsStore.themeMode,
+    () => {
+      applyTheme();
+    }
+  );
 
   // 生命周期
   onMounted(() => {
@@ -67,7 +69,6 @@ export function useTheme() {
   return {
     themeMode: settingsStore.themeMode,
     applyTheme,
-    handleThemeChange,
     initialize,
     cleanup,
   };

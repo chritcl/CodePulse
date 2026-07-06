@@ -266,6 +266,8 @@ const processToastQueue = async () => {
   if (isMsgActive.value) return;
 
   isProcessingToast = true;
+  // 记录 toast 开始前灵动岛是否已可见，用于判断是否为消息模式临时显示
+  const islandWasVisible = isIslandVisible.value;
   const nextToast = toastQueue.value.shift();
 
   if (nextToast) {
@@ -288,7 +290,8 @@ const processToastQueue = async () => {
   isProcessingToast = false;
   if (toastQueue.value.length > 0) {
     void processToastQueue();
-  } else if (isMsgModeEnabled.value && !isMsgActive.value) {
+  } else if (isMsgModeEnabled.value && !isMsgActive.value && !islandWasVisible) {
+    // 仅当灵动岛之前不可见（消息模式临时显示）时，才在 toast 结束后隐藏
     window.setTimeout(() => {
       if (!isMsgActive.value && !displaySysToast.value) {
         isIslandVisible.value = false;
@@ -666,24 +669,27 @@ onMounted(async () => {
     startRotation();
   }
 
-  // 初始化位置
-  try {
-    await getCurrentWindow().innerPosition();
-  } catch {
-    /* 忽略 */
-  }
-
-  // 根据本地记录决定启动时出现在哪
-  if (islandWindow.isPinnedToTaskbar.value) {
-    await islandWindow.snapToBottomLeft();
-  } else {
-    await islandWindow.adjustWindowPosition();
-  }
-
-  // 显示灵动岛
-  if (!isMsgModeEnabled.value) {
-    await getCurrentWindow().show();
+  // 根据持久化设置决定是否显示灵动岛
+  const islandEnabled = readBoolean('nsd_island_enabled', true);
+  if (islandEnabled && !isMsgModeEnabled.value) {
+    // 先设置内容可见，再显示窗口，避免窗口出现但内容不可见
     isIslandVisible.value = true;
+
+    // 初始化位置（内部会调用 show）
+    try {
+      await getCurrentWindow().innerPosition();
+    } catch {
+      /* 忽略 */
+    }
+
+    if (islandWindow.isPinnedToTaskbar.value) {
+      await islandWindow.snapToBottomLeft();
+    } else {
+      await islandWindow.adjustWindowPosition();
+    }
+
+    // 同步状态到主窗口
+    await emit('island-status-sync', { visible: true });
   }
 
   // 监听硬件监控开关

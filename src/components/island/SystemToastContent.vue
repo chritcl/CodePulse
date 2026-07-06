@@ -9,43 +9,22 @@
         <rect x="4" y="12" width="16" height="8" rx="2" ry="2" stroke-width="2" />
         <path d="M8 12V9a4 4 0 0 1 8 0" stroke-width="2" />
       </svg>
-      <svg
-        v-else-if="type === 'battery-charge'"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-      >
+      <svg v-else-if="type === 'battery-charge'" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <rect x="2" y="7" width="16" height="10" rx="2" ry="2" stroke-width="2" />
         <line x1="22" y1="11" x2="22" y2="13" stroke-width="2" />
         <polygon points="11 7 8 12 12 12 11 17 14 12 10 12 11 7" stroke-width="1.5" />
       </svg>
-      <svg
-        v-else-if="type === 'battery-low'"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-      >
+      <svg v-else-if="type === 'battery-low'" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <rect x="2" y="7" width="16" height="10" rx="2" ry="2" stroke-width="2" />
         <line x1="22" y1="11" x2="22" y2="13" stroke-width="2" />
         <line x1="6" y1="12" x2="9" y2="12" stroke-width="4" stroke-linecap="round" />
       </svg>
       <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <circle cx="12" cy="12" r="10" stroke-width="2" opacity="0.3" />
-        <path
-          v-if="type === 'app'"
-          d="M8 12.5l3 3 5-6"
-          stroke-width="2.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        />
-        <path
-          v-else
-          d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"
-          stroke-width="1.8"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          transform="translate(3 2) scale(.75)"
-        />
+        <path v-if="type === 'app'" d="M8 12.5l3 3 5-6" stroke-width="2.5" stroke-linecap="round"
+          stroke-linejoin="round" />
+        <path v-else d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" stroke-width="1.8" stroke-linecap="round"
+          stroke-linejoin="round" transform="translate(3 2) scale(.75)" />
       </svg>
     </div>
     <div class="toast-text">

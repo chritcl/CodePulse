@@ -134,33 +134,35 @@ pub async fn fetch_latest_notification() -> Result<Option<ToastData>, String> {
 /// 通过 AUMID 打开应用
 #[tauri::command]
 pub fn open_app_by_aumid(aumid: String, app_name: String) {
-    use std::os::windows::ffi::OsStrExt;
-    use winapi::um::shellapi::ShellExecuteW;
-    use winapi::um::winuser::{keybd_event, KEYEVENTF_KEYUP, SW_SHOWNORMAL, VK_MENU};
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_MENU,
+    };
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
     let app_lower = app_name.to_lowercase();
 
     // 安全性：keybd_event 只发送一次 Alt 按下/抬起，用于让 ShellExecute 唤起窗口。
     unsafe {
-        keybd_event(VK_MENU as u8, 0, 0, 0);
-        keybd_event(VK_MENU as u8, 0, KEYEVENTF_KEYUP, 0);
+        keybd_event(VK_MENU.0 as u8, 0, KEYBD_EVENT_FLAGS(0), 0);
+        keybd_event(VK_MENU.0 as u8, 0, KEYEVENTF_KEYUP, 0);
     }
+
+    let wide_null = |value: &str| value.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
 
     let execute_protocol = |protocol: &str| {
         // 安全性：宽字符串在调用期间保持存活，ShellExecuteW 不保存传入指针。
         unsafe {
-            let op =
-                std::ffi::OsStr::new("open").encode_wide().chain(Some(0)).collect::<Vec<u16>>();
-            let file = std::ffi::OsStr::new(protocol)
-                .encode_wide()
-                .chain(Some(0))
-                .collect::<Vec<u16>>();
+            let op = wide_null("open");
+            let file = wide_null(protocol);
             ShellExecuteW(
-                std::ptr::null_mut(),
-                op.as_ptr(),
-                file.as_ptr(),
-                std::ptr::null(),
-                std::ptr::null(),
+                HWND(std::ptr::null_mut()),
+                PCWSTR(op.as_ptr()),
+                PCWSTR(file.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
                 SW_SHOWNORMAL,
             );
         }
@@ -177,22 +179,15 @@ pub fn open_app_by_aumid(aumid: String, app_name: String) {
         // 其他应用使用 AUMID 打开
         // 安全性：所有宽字符串缓冲区在 ShellExecuteW 调用结束前有效。
         unsafe {
-            let op =
-                std::ffi::OsStr::new("open").encode_wide().chain(Some(0)).collect::<Vec<u16>>();
-            let file = std::ffi::OsStr::new("explorer.exe")
-                .encode_wide()
-                .chain(Some(0))
-                .collect::<Vec<u16>>();
-            let params = std::ffi::OsStr::new(&format!("shell:AppsFolder\\{}", aumid))
-                .encode_wide()
-                .chain(Some(0))
-                .collect::<Vec<u16>>();
+            let op = wide_null("open");
+            let file = wide_null("explorer.exe");
+            let params = wide_null(&format!("shell:AppsFolder\\{}", aumid));
             ShellExecuteW(
-                std::ptr::null_mut(),
-                op.as_ptr(),
-                file.as_ptr(),
-                params.as_ptr(),
-                std::ptr::null(),
+                HWND(std::ptr::null_mut()),
+                PCWSTR(op.as_ptr()),
+                PCWSTR(file.as_ptr()),
+                PCWSTR(params.as_ptr()),
+                PCWSTR::null(),
                 SW_SHOWNORMAL,
             );
         }

@@ -1,29 +1,18 @@
 <template>
-  <div
-    class="music-ctl-box"
-    :class="{ expanded: isMusicExpanded }"
-    style="cursor: pointer"
-    @click="$emit('expand-music', $event)"
-  >
+  <div class="music-ctl-box" :class="{ expanded: isMusicExpanded }" style="cursor: pointer"
+    @click="$emit('expand-music', $event)">
     <div class="music-top-row">
       <div class="album-cover" :class="{ 'is-playing': isPlaying }">
-        <div
-          class="cover-inner"
-          :style="coverUrl ? { backgroundImage: `url(${coverUrl})`, backgroundSize: 'cover' } : {}"
-        />
+        <div class="cover-inner"
+          :style="coverUrl ? { backgroundImage: `url(${coverUrl})`, backgroundSize: 'cover' } : {}" />
       </div>
       <div ref="maskBoxRef" class="music-info-mask-box">
         <div class="music-info-text single-line" :class="{ 'fade-out': isMusicExpanded }">
-          <span
-            ref="textInnerRef"
-            class="scroll-inner"
-            :class="{ 'is-scrolling': scrollDist > 0 && !isMusicExpanded }"
-            :style="
-              scrollDist > 0
-                ? { '--scroll-dist': `${scrollDist}px`, '--scroll-duration': scrollDuration }
-                : {}
-            "
-          >
+          <span ref="textInnerRef" class="scroll-inner" :class="{ 'is-scrolling': scrollDist > 0 && !isMusicExpanded }"
+            :style="scrollDist > 0
+              ? { '--scroll-dist': `${scrollDist}px`, '--scroll-duration': scrollDuration }
+              : {}
+              ">
             {{ currentTrackInfo }}
           </span>
         </div>
@@ -270,12 +259,14 @@ onMounted(() => {
   from {
     transform: rotate(0deg);
   }
+
   to {
     transform: rotate(360deg);
   }
 }
 
 @keyframes scroll-ping-pong {
+
   0%,
   20% {
     transform: translateX(0);

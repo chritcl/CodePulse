@@ -1,0 +1,146 @@
+/**
+ * 全局主题变量
+ *
+ * 定义亮色/暗色模式的 CSS 变量，供所有组件使用。
+ */
+
+/* 亮色模式默认变量 */
+:root {
+  --bg-body: #f8fafc;
+  --text-body: #1e293b;
+  --h1-color: #0f172a;
+  --subtitle-color: #798089;
+  --control-bg: #ffffff;
+  --control-border: #e2e8f0;
+  --status-badge-inactive: #94a3b8;
+  --status-badge-active: #2b2b2b;
+  --divider-border: #e2e8f0;
+  --card-bg: #ffffff;
+  --card-border: #e2e8f0;
+  --card-shadow: rgba(0, 0, 0, 0.03);
+  --card-shadow-hover: rgba(0, 0, 0, 0.06);
+  --card-h3-color: #334155;
+  --arrow-up-bg: #eff6ff;
+  --arrow-up-color: #3b82f6;
+  --arrow-down-bg: #ecfdf5;
+  --arrow-down-color: #10b981;
+  --speed-label: #64748b;
+  --speed-value: #0f172a;
+  --chart-border: #f1f5f9;
+  --item-title-color: #1e293b;
+  --tag-dev-bg: #f1f5f9;
+  --tag-dev-color: #64748b;
+  --item-desc-color: #898f99df;
+  --slider-bg: #d7dce2;
+  --slider-checked-bg: #b9b9b9;
+  --slider-disabled-bg: #e2e8f0;
+  --range-bg: #e2e8f0;
+  --range-thumb-bg: #ffffff;
+  --range-thumb-border: #2b2b2b;
+  --range-thumb-shadow: rgba(0, 0, 0, 0.3);
+  --footer-text: #2b2b2b89;
+  --overlay-bg: rgba(15, 23, 42, 0.3);
+  --modal-bg: #ffffff;
+  --modal-border: #e2e8f0;
+  --modal-h4: #0f172a;
+  --modal-p: #64748b;
+  --btn-sec-bg: #ebebeb;
+  --btn-sec-color: #64748b;
+  --btn-sec-border: #e2e8f0;
+  --btn-sec-hover-bg: #e2e8f0;
+  --btn-sec-hover-color: #334155;
+  --btn-pri-bg: #2b2b2b;
+  --btn-pri-color: #ffffff;
+  --btn-pri-border: #2b2b2b;
+  --btn-pri-hover-bg: #1a1a1a;
+  --btn-pri-shadow-hover: rgba(0, 0, 0, 0.15);
+  --select-bg: #ffffff;
+  --select-border: #e2e8f0;
+  --select-text: #1e293b;
+  --data-tag-bg: #ececec;
+  --data-tag-color: #2b2b2b;
+}
+
+/* 暗色模式变量覆盖 */
+html.dark-theme {
+  --bg-body: #1e2021;
+  --text-body: #cbd5e1;
+  --h1-color: #f8fafc;
+  --subtitle-color: #a5aeba;
+  --control-bg: #292b2e;
+  --control-border: #383c41;
+  --status-badge-inactive: #64748b;
+  --status-badge-active: #f8fafc;
+  --divider-border: #334155;
+  --card-bg: #292b2e;
+  --card-border: #383c41;
+  --card-shadow: rgba(0, 0, 0, 0.2);
+  --card-shadow-hover: rgba(0, 0, 0, 0.3);
+  --card-h3-color: #e2e8f0;
+  --arrow-up-bg: rgba(59, 130, 246, 0.15);
+  --arrow-up-color: #60a5fa;
+  --arrow-down-bg: rgba(16, 185, 129, 0.15);
+  --arrow-down-color: #34d399;
+  --speed-label: #94a3b8;
+  --speed-value: #f8fafc;
+  --chart-border: #474c53;
+  --item-title-color: #f8fafc;
+  --tag-dev-bg: #334155;
+  --tag-dev-color: #94a3b8;
+  --item-desc-color: #898f99df;
+  --slider-bg: #3e4247;
+  --slider-checked-bg: #5d646d;
+  --slider-disabled-bg: #334155;
+  --range-bg: #42474e;
+  --range-thumb-bg: #1e293b;
+  --range-thumb-border: #60a5fa;
+  --range-thumb-shadow: rgba(0, 0, 0, 0.5);
+  --footer-text: #8b8f96aa;
+  --overlay-bg: rgba(0, 0, 0, 0.6);
+  --modal-bg: #292b2e;
+  --modal-border: #383c41;
+  --modal-h4: #f8fafc;
+  --modal-p: #94a3b8;
+  --btn-sec-bg: #1a1a1a;
+  --btn-sec-color: #cbd5e1;
+  --btn-sec-border: #475569;
+  --btn-sec-hover-bg: #475569;
+  --btn-sec-hover-color: #f8fafc;
+  --btn-pri-bg: #1a1a1a;
+  --btn-pri-color: #ffffff;
+  --btn-pri-border: #2b2b2b;
+  --btn-pri-hover-bg: #161616;
+  --btn-pri-shadow-hover: rgba(0, 0, 0, 0.15);
+  --select-bg: #292b2e;
+  --select-border: #383c41;
+  --select-text: #f8fafc;
+  --data-tag-bg: #202020;
+  --data-tag-color: #f8fafc;
+}
+
+/* 全局基础样式 */
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+html {
+  color: var(--text-body);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+body {
+  background-color: transparent !important;
+  color: inherit;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+}
