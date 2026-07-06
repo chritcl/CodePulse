@@ -8,6 +8,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   MediaAction,
+  AudioSpectrumData,
   OpenAppPayload,
   IslandAnimationPayload,
   WindowBoundsPayload,
@@ -33,6 +34,9 @@ export const mediaCommands = {
    * @param player - 播放器名称
    */
   setTargetPlayer: (player: string): Promise<void> => invoke('set_target_player', { player }),
+
+  /** 获取音乐频谱 */
+  getAudioSpectrum: (): Promise<AudioSpectrumData> => invoke('get_audio_spectrum'),
 };
 
 // ============================================================

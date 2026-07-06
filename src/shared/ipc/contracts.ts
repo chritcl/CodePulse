@@ -121,8 +121,27 @@ export interface WindowBoundsPayload {
 /** 打开应用 */
 export interface OpenAppPayload {
   aumid: string;
+  appName: string;
   launchId?: string;
 }
+
+/** 系统操作提示类型 */
+export type SystemToastType = 'app' | 'sys' | 'battery-charge' | 'battery-low' | 'lock' | 'unlock';
+
+/** 系统操作提示 */
+export interface SystemToastPayload {
+  text: string;
+  type: SystemToastType;
+}
+
+/** 电池事件 */
+export interface BatteryEventPayload {
+  state: 'charging' | 'discharging';
+  percent: number;
+}
+
+/** 音频频谱数据 */
+export type AudioSpectrumData = [number, number, number, number, number];
 
 // ============================================================
 // 动画相关

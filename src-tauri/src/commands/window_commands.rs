@@ -11,10 +11,16 @@ use tauri::{Emitter, Manager};
 static ANIMATION_ID: AtomicU32 = AtomicU32::new(0);
 
 /// 动画锚点状态
-static ANIMATION_CENTER_X: Mutex<Option<i32>> = Mutex::new(None);
-static ANIMATION_ORIGIN_Y: Mutex<Option<i32>> = Mutex::new(None);
-static ANIMATION_LEFT_X: Mutex<Option<i32>> = Mutex::new(None);
-static ANIMATION_BOTTOM_Y: Mutex<Option<i32>> = Mutex::new(None);
+struct AnchorState {
+    center_x: i32,
+    origin_y: i32,
+    left_x: i32,
+    bottom_y: i32,
+    active_id: u32,
+}
+
+/// 动画期间固定锚点，避免连续动画互相覆盖
+static ANIMATION_ANCHOR: Mutex<Option<AnchorState>> = Mutex::new(None);
 
 /// 检查灵动岛是否可见
 #[tauri::command]
@@ -135,24 +141,36 @@ pub async fn start_island_animation(
                 GetWindowRect(hwnd.0 as _, &mut rect);
             }
 
-            // 首次启动时锁死锚点
-            if let Ok(guard) = ANIMATION_CENTER_X.lock() {
-                if guard.is_none() {
-                    drop(guard);
-                    if let Ok(mut guard) = ANIMATION_CENTER_X.lock() {
-                        *guard = Some(rect.left + (rect.right - rect.left) / 2);
-                    }
-                    if let Ok(mut guard) = ANIMATION_ORIGIN_Y.lock() {
-                        *guard = Some(rect.top);
-                    }
-                    if let Ok(mut guard) = ANIMATION_LEFT_X.lock() {
-                        *guard = Some(rect.left);
-                    }
-                    if let Ok(mut guard) = ANIMATION_BOTTOM_Y.lock() {
-                        *guard = Some(rect.bottom);
-                    }
+            let (anchor_center_x, anchor_origin_y, anchor_left_x, anchor_bottom_y) = {
+                let mut anchor_guard =
+                    ANIMATION_ANCHOR.lock().unwrap_or_else(|err| err.into_inner());
+
+                if let Some(anchor) = anchor_guard.as_mut() {
+                    anchor.active_id = id;
+                    (
+                        anchor.center_x,
+                        anchor.origin_y,
+                        anchor.left_x,
+                        anchor.bottom_y,
+                    )
+                } else {
+                    let anchor = AnchorState {
+                        center_x: rect.left + (rect.right - rect.left) / 2,
+                        origin_y: rect.top,
+                        left_x: rect.left,
+                        bottom_y: rect.bottom,
+                        active_id: id,
+                    };
+                    let values = (
+                        anchor.center_x,
+                        anchor.origin_y,
+                        anchor.left_x,
+                        anchor.bottom_y,
+                    );
+                    *anchor_guard = Some(anchor);
+                    values
                 }
-            }
+            };
 
             let window_clone = window.clone();
             let hwnd_raw = hwnd.0 as isize;
@@ -188,13 +206,9 @@ pub async fn start_island_animation(
                     let phys_window_h = (current_h * scale_factor).round() as i32;
 
                     let (final_x, final_y) = if is_pinned {
-                        let left_x = ANIMATION_LEFT_X.lock().ok().and_then(|g| *g).unwrap_or(0);
-                        let bottom_y = ANIMATION_BOTTOM_Y.lock().ok().and_then(|g| *g).unwrap_or(0);
-                        (left_x, bottom_y - phys_window_h)
+                        (anchor_left_x, anchor_bottom_y - phys_window_h)
                     } else {
-                        let center_x = ANIMATION_CENTER_X.lock().ok().and_then(|g| *g).unwrap_or(0);
-                        let origin_y = ANIMATION_ORIGIN_Y.lock().ok().and_then(|g| *g).unwrap_or(0);
-                        (center_x - phys_window_w / 2, origin_y)
+                        (anchor_center_x - phys_window_w / 2, anchor_origin_y)
                     };
 
                     // 安全性：线程内仅复用已取得的窗口句柄数值执行 SetWindowPos，动画中断由原子 ID 控制。
@@ -217,13 +231,9 @@ pub async fn start_island_animation(
                     let phys_target_h = (target_height * scale_factor).round() as i32;
 
                     let (final_x, final_y) = if is_pinned {
-                        let left_x = ANIMATION_LEFT_X.lock().ok().and_then(|g| *g).unwrap_or(0);
-                        let bottom_y = ANIMATION_BOTTOM_Y.lock().ok().and_then(|g| *g).unwrap_or(0);
-                        (left_x, bottom_y - phys_target_h)
+                        (anchor_left_x, anchor_bottom_y - phys_target_h)
                     } else {
-                        let center_x = ANIMATION_CENTER_X.lock().ok().and_then(|g| *g).unwrap_or(0);
-                        let origin_y = ANIMATION_ORIGIN_Y.lock().ok().and_then(|g| *g).unwrap_or(0);
-                        (center_x - phys_target_w / 2, origin_y)
+                        (anchor_center_x - phys_target_w / 2, anchor_origin_y)
                     };
 
                     // 安全性：终点收尾只对同一个窗口句柄设置最终位置和尺寸。
@@ -240,18 +250,10 @@ pub async fn start_island_animation(
                     }
                     let _ = window_clone.emit("island-resize", vec![target_width, target_height]);
 
-                    // 清理锚点
-                    if let Ok(mut guard) = ANIMATION_CENTER_X.lock() {
-                        *guard = None;
-                    }
-                    if let Ok(mut guard) = ANIMATION_ORIGIN_Y.lock() {
-                        *guard = None;
-                    }
-                    if let Ok(mut guard) = ANIMATION_LEFT_X.lock() {
-                        *guard = None;
-                    }
-                    if let Ok(mut guard) = ANIMATION_BOTTOM_Y.lock() {
-                        *guard = None;
+                    if let Ok(mut guard) = ANIMATION_ANCHOR.lock() {
+                        if guard.as_ref().is_some_and(|anchor| anchor.active_id == id) {
+                            *guard = None;
+                        }
                     }
                 }
             });

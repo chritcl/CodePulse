@@ -6,11 +6,12 @@
       class="audio-spectrum"
       :class="{ 'is-playing': isPlaying, expanded: isMusicExpanded }"
     >
-      <span class="bar" />
-      <span class="bar" />
-      <span class="bar" />
-      <span class="bar" />
-      <span class="bar" />
+      <span
+        v-for="(scale, index) in barScales"
+        :key="index"
+        class="bar"
+        :style="{ transform: `scaleY(${scale})` }"
+      />
     </div>
 
     <!-- 网络状态灯 -->
@@ -19,14 +20,24 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
+
+const MIN_SPECTRUM = [0.35, 0.35, 0.35, 0.35, 0.35];
+
 interface Props {
   showMusicSpectrum: boolean;
   isPlaying: boolean;
   isMusicExpanded: boolean;
   networkStatus: 'good' | 'warning' | 'error';
+  spectrumData: number[];
 }
 
-defineProps<Props>();
+const props = defineProps<Props>();
+
+const barScales = computed(() => {
+  if (!props.showMusicSpectrum || !props.isPlaying) return MIN_SPECTRUM;
+  return props.spectrumData.length === 5 ? props.spectrumData : MIN_SPECTRUM;
+});
 </script>
 
 <style scoped>
@@ -57,55 +68,29 @@ defineProps<Props>();
 
 .audio-spectrum {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
+  justify-content: center;
   gap: 2px;
   height: 16px;
+  padding-right: 2px;
 }
 
 .audio-spectrum .bar {
-  width: 3px;
-  height: 4px;
-  background: currentColor;
-  border-radius: 1px;
-  transition: height 0.1s ease;
-  opacity: 0.5;
+  width: 2px;
+  height: 18px;
+  background: #b6e0ee;
+  border-radius: 3px;
+  transform-origin: center;
+  transition: transform 0.08s ease-out;
+  will-change: transform;
+  opacity: 0.75;
 }
 
 .audio-spectrum.is-playing .bar {
-  animation: spectrum 0.8s ease-in-out infinite alternate;
   opacity: 1;
 }
 
-.audio-spectrum.is-playing .bar:nth-child(1) {
-  animation-delay: 0s;
-}
-
-.audio-spectrum.is-playing .bar:nth-child(2) {
-  animation-delay: 0.1s;
-}
-
-.audio-spectrum.is-playing .bar:nth-child(3) {
-  animation-delay: 0.2s;
-}
-
-.audio-spectrum.is-playing .bar:nth-child(4) {
-  animation-delay: 0.3s;
-}
-
-.audio-spectrum.is-playing .bar:nth-child(5) {
-  animation-delay: 0.4s;
-}
-
 .audio-spectrum.expanded {
-  display: none;
-}
-
-@keyframes spectrum {
-  0% {
-    height: 4px;
-  }
-  100% {
-    height: 16px;
-  }
+  transform: scale(1.2);
 }
 </style>

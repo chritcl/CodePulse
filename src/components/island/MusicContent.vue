@@ -12,9 +12,20 @@
           :style="coverUrl ? { backgroundImage: `url(${coverUrl})`, backgroundSize: 'cover' } : {}"
         />
       </div>
-      <div class="music-info-mask-box">
+      <div ref="maskBoxRef" class="music-info-mask-box">
         <div class="music-info-text single-line" :class="{ 'fade-out': isMusicExpanded }">
-          {{ currentTrackInfo }}
+          <span
+            ref="textInnerRef"
+            class="scroll-inner"
+            :class="{ 'is-scrolling': scrollDist > 0 && !isMusicExpanded }"
+            :style="
+              scrollDist > 0
+                ? { '--scroll-dist': `${scrollDist}px`, '--scroll-duration': scrollDuration }
+                : {}
+            "
+          >
+            {{ currentTrackInfo }}
+          </span>
         </div>
         <div class="music-info-text double-line" :class="{ 'fade-in': isMusicExpanded }">
           <div class="song-title">
@@ -52,6 +63,8 @@
 </template>
 
 <script setup lang="ts">
+import { nextTick, onMounted, ref, watch } from 'vue';
+
 interface Props {
   isPlaying: boolean;
   coverUrl: string;
@@ -61,7 +74,7 @@ interface Props {
   isMusicExpanded: boolean;
 }
 
-defineProps<Props>();
+const props = defineProps<Props>();
 
 defineEmits<{
   'expand-music': [event: MouseEvent];
@@ -69,6 +82,44 @@ defineEmits<{
   'prev-track': [];
   'next-track': [];
 }>();
+
+const maskBoxRef = ref<HTMLElement | null>(null);
+const textInnerRef = ref<HTMLElement | null>(null);
+const scrollDist = ref(0);
+const scrollDuration = ref('8s');
+
+const calculateScroll = () => {
+  const maskBox = maskBoxRef.value;
+  const textInner = textInnerRef.value;
+  if (!maskBox || !textInner) return;
+
+  const overflowDistance = textInner.scrollWidth - maskBox.clientWidth;
+  if (overflowDistance > 8) {
+    scrollDist.value = Math.ceil(overflowDistance + 12);
+    scrollDuration.value = `${Math.max(6, scrollDist.value / 18).toFixed(1)}s`;
+  } else {
+    scrollDist.value = 0;
+    scrollDuration.value = '8s';
+  }
+};
+
+watch(
+  () => props.currentTrackInfo,
+  () => {
+    nextTick(calculateScroll);
+  }
+);
+
+watch(
+  () => props.isMusicExpanded,
+  () => {
+    nextTick(calculateScroll);
+  }
+);
+
+onMounted(() => {
+  nextTick(calculateScroll);
+});
 </script>
 
 <style scoped>
@@ -108,6 +159,8 @@ defineEmits<{
 .music-info-mask-box {
   flex: 1;
   overflow: hidden;
+  mask-image: linear-gradient(to right, #000000 78%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, #000000 78%, transparent 100%);
 }
 
 .music-info-text {
@@ -121,6 +174,20 @@ defineEmits<{
   font-size: 12px;
   font-weight: 500;
   color: currentColor;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.scroll-inner {
+  display: inline-block;
+  width: max-content;
+  white-space: nowrap;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+
+.scroll-inner.is-scrolling {
+  animation: scroll-ping-pong var(--scroll-duration) linear infinite alternate;
 }
 
 .music-info-text.double-line {
@@ -205,6 +272,18 @@ defineEmits<{
   }
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes scroll-ping-pong {
+  0%,
+  20% {
+    transform: translateX(0);
+  }
+
+  80%,
+  100% {
+    transform: translateX(calc(-1 * var(--scroll-dist)));
   }
 }
 </style>

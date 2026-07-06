@@ -27,6 +27,7 @@ export type {
   MediaAction,
   MediaControlPayload,
   SetTargetPlayerPayload,
+  AudioSpectrumData,
 
   // 窗口控制
   WindowPositionPayload,
@@ -35,6 +36,9 @@ export type {
 
   // 通知相关
   OpenAppPayload,
+  SystemToastType,
+  SystemToastPayload,
+  BatteryEventPayload,
 
   // 动画相关
   IslandAnimationPayload,
@@ -73,6 +77,8 @@ export {
   HARDWARE_UPDATE,
   MUSIC_UPDATE,
   NOTIFICATION_UPDATE,
+  SYSTEM_EVENT,
+  BATTERY_EVENT,
 
   // 应用生命周期 (R4 统一事件)
   SETTINGS_UPDATED,

@@ -1,10 +1,11 @@
 export type IslandDisplayKind =
-  'agent' | 'wechat' | 'notification' | 'hardware' | 'music' | 'network';
+  'agent' | 'wechat' | 'notification' | 'system-toast' | 'hardware' | 'music' | 'network';
 
 export interface IslandDisplayInput {
   agentActive?: boolean;
   wechatActive?: boolean;
   notificationActive?: boolean;
+  systemToastActive?: boolean;
   rotationEnabled: boolean;
   rotationIndex: number;
   musicEnabled: boolean;
@@ -18,6 +19,7 @@ export function resolveIslandDisplay(input: IslandDisplayInput): IslandDisplayKi
   if (input.agentActive) return 'agent';
   if (input.wechatActive) return 'wechat';
   if (input.notificationActive) return 'notification';
+  if (input.systemToastActive) return 'system-toast';
 
   if (input.rotationEnabled) {
     const safeIndex = Math.abs(input.rotationIndex) % ROTATION_DISPLAYS.length;

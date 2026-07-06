@@ -23,6 +23,7 @@
           :is-playing="isPlaying"
           :is-music-expanded="isMusicExpanded"
           :network-status="networkStatus"
+          :spectrum-data="spectrumData"
         />
       </div>
     </div>
@@ -43,6 +44,7 @@ interface Props {
   isPlaying: boolean;
   isMusicExpanded: boolean;
   networkStatus: 'good' | 'warning' | 'error';
+  spectrumData: number[];
   enterTransition: (el: Element, done: () => void) => void;
   leaveTransition: (el: Element, done: () => void) => void;
 }

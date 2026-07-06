@@ -12,6 +12,7 @@ export interface ContextMenuOptions {
   isGlowBorderEnabled: boolean;
   isPinnedToTaskbar: boolean;
   isPositionLocked: boolean;
+  onOpenSettings?: () => void;
   onToggleGlowBorder: () => void;
   onResetPosition: () => void;
   onToggleLock: () => void;
@@ -30,6 +31,7 @@ export function useIslandContextMenu() {
       id: 'open_settings',
       action: async () => {
         await emit('open-settings-panel');
+        options.onOpenSettings?.();
       },
     });
 

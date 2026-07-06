@@ -9,6 +9,7 @@
     :is-playing="isPlaying"
     :is-music-expanded="isMusicExpanded"
     :network-status="networkStatus"
+    :spectrum-data="spectrumData"
     :enter-transition="animation.onEnter"
     :leave-transition="animation.onLeave"
     @shell-mousedown="drag.handleMouseDown"
@@ -45,6 +46,10 @@
         title: msgTitle,
         body: msgBody,
       }"
+      :system-toast="{
+        text: sysToastText,
+        type: sysToastType,
+      }"
       :inner-enter-transition="animation.onInnerEnter"
       :inner-leave-transition="animation.onInnerLeave"
       @msg-click="handleMsgClick"
@@ -60,11 +65,12 @@
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { listen, emit } from '@tauri-apps/api/event';
+import { listen, emit, type UnlistenFn } from '@tauri-apps/api/event';
 
 import { useIslandWindow, useIslandAnimation, useIslandDrag } from '@/composables';
 import { resolveIslandDisplay, type IslandDisplayKind } from '@/modules/island/display';
 import { hasStorageValue, readBoolean, readEnum, writeBoolean } from '@/shared/utils/storage';
+import type { SystemToastType } from '@/shared/ipc/contracts';
 import { useIslandContextMenu } from './IslandContextMenu';
 
 import IslandShell from './IslandShell.vue';
@@ -79,6 +85,16 @@ interface LatestNotificationPayload {
   title: string;
   body: string;
   aumid: string;
+}
+
+interface BatteryEventPayload {
+  state: 'charging' | 'discharging';
+  percent: number;
+}
+
+interface SystemToastItem {
+  text: string;
+  type: SystemToastType;
 }
 
 // ============================================================
@@ -128,6 +144,9 @@ const musicBoxKey = ref(0);
 const isMusicExpanded = ref(false);
 let musicExpandTimer: number | null = null;
 
+/** 音乐频谱 */
+const spectrumData = ref([0.35, 0.35, 0.35, 0.35, 0.35]);
+
 /** 获取播放器名称 */
 const getPlayerName = () => {
   const key = readEnum('nsd_target_player', 'netease', MUSIC_PLATFORMS);
@@ -155,6 +174,13 @@ const msgAumid = ref('');
 const currentMsgIcon = ref(defaultLogo);
 let msgTimer: number | null = null;
 
+/** 系统操作通知 */
+const displaySysToast = ref(false);
+const sysToastText = ref('');
+const sysToastType = ref<SystemToastType>('app');
+const toastQueue = ref<SystemToastItem[]>([]);
+let isProcessingToast = false;
+
 /** 轮换模式相关 */
 const isRotationEnabled = ref(readBoolean('nsd_rotation_mode'));
 const currentRotIndex = ref(0);
@@ -165,6 +191,9 @@ let speedTimer: number;
 let pingTimer: number;
 let musicTimer: number;
 let notifyTimer: number;
+let spectrumTimer: number;
+let systemEventUnlisten: UnlistenFn | null = null;
+let batteryEventUnlisten: UnlistenFn | null = null;
 
 /** 流量监控相关 */
 let lastRx = 0;
@@ -182,6 +211,7 @@ const activeDisplay = computed<IslandDisplayKind>(() =>
     agentActive: false,
     wechatActive: false,
     notificationActive: isMsgActive.value,
+    systemToastActive: displaySysToast.value,
     rotationEnabled: isRotationEnabled.value,
     rotationIndex: currentRotIndex.value,
     musicEnabled: isMusicCtlEnabled.value,
@@ -221,6 +251,63 @@ const getAppIcon = (appName: string) => {
   }
 
   return defaultLogo;
+};
+
+/** 推入系统操作通知 */
+const showToast = (text: string, type: SystemToastType = 'app') => {
+  if (!text.trim()) return;
+  toastQueue.value.push({ text, type });
+  void processToastQueue();
+};
+
+/** 顺序展示系统操作通知 */
+const processToastQueue = async () => {
+  if (isProcessingToast || toastQueue.value.length === 0) return;
+  if (isMsgActive.value) return;
+
+  isProcessingToast = true;
+  const nextToast = toastQueue.value.shift();
+
+  if (nextToast) {
+    collapseMusic();
+    sysToastText.value = nextToast.text;
+    sysToastType.value = nextToast.type;
+    displaySysToast.value = true;
+
+    if (isMsgModeEnabled.value && !isIslandVisible.value) {
+      await getCurrentWindow().show();
+      isIslandVisible.value = true;
+    }
+
+    islandWindow.animateIslandSize(260, 42);
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    displaySysToast.value = false;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+
+  isProcessingToast = false;
+  if (toastQueue.value.length > 0) {
+    void processToastQueue();
+  } else if (isMsgModeEnabled.value && !isMsgActive.value) {
+    window.setTimeout(() => {
+      if (!isMsgActive.value && !displaySysToast.value) {
+        isIslandVisible.value = false;
+      }
+    }, 600);
+  }
+};
+
+/** 更新网络状态并触发必要提示 */
+const setNetworkStatus = (nextStatus: 'good' | 'warning' | 'error') => {
+  const previousStatus = networkStatus.value;
+  if (previousStatus === nextStatus) return;
+
+  networkStatus.value = nextStatus;
+  if (nextStatus === 'error') {
+    showToast('网络连接已断开', 'sys');
+  } else if (nextStatus === 'good' && previousStatus === 'error') {
+    showToast('网络已恢复连接', 'sys');
+  }
 };
 
 // ============================================================
@@ -274,21 +361,21 @@ const checkNetworkLatency = async () => {
     const latency = await invoke<number>('get_network_latency');
 
     if (latency < 150) {
-      networkStatus.value = 'good';
+      setNetworkStatus('good');
     } else {
-      networkStatus.value = 'warning';
+      setNetworkStatus('warning');
     }
   } catch {
     if (isHighDownload.value || isHighUpload.value) {
-      networkStatus.value = 'warning';
+      setNetworkStatus('warning');
       return;
     }
 
     const timeSinceLowTraffic = Date.now() - lowTrafficStartTime;
     if (timeSinceLowTraffic < RED_DELAY_MS) {
-      networkStatus.value = 'warning';
+      setNetworkStatus('warning');
     } else {
-      networkStatus.value = 'error';
+      setNetworkStatus('error');
     }
   }
 };
@@ -432,15 +519,24 @@ const handleRightClick = async (event: MouseEvent) => {
     isGlowBorderEnabled: isGlowBorderEnabled.value,
     isPinnedToTaskbar: islandWindow.isPinnedToTaskbar.value,
     isPositionLocked: islandWindow.isPositionLocked.value,
+    onOpenSettings: () => {
+      showToast('打开设置成功');
+    },
     onToggleGlowBorder: () => {
       isGlowBorderEnabled.value = !isGlowBorderEnabled.value;
       writeBoolean('nsd_glow_border', isGlowBorderEnabled.value);
+      showToast(isGlowBorderEnabled.value ? '开启流光边框成功' : '关闭流光边框成功');
     },
     onResetPosition: () => {
       islandWindow.adjustWindowPosition().catch(console.error);
+      showToast('重置位置成功');
     },
     onToggleLock: () => {
       islandWindow.setPositionLocked(!islandWindow.isPositionLocked.value);
+      showToast(
+        islandWindow.isPositionLocked.value ? '锁定位置成功' : '解锁位置成功',
+        islandWindow.isPositionLocked.value ? 'lock' : 'unlock'
+      );
     },
     onClose: () => {
       isIslandVisible.value = false;
@@ -471,6 +567,12 @@ const stopRotation = () => {
 watch(displayMusic, (newVal: boolean) => {
   if (!newVal) {
     collapseMusic();
+  }
+});
+
+watch(isMsgActive, (newVal) => {
+  if (!newVal) {
+    void processToastQueue();
   }
 });
 
@@ -543,6 +645,19 @@ onMounted(async () => {
     } else {
       stopRotation();
       currentRotIndex.value = 0;
+    }
+  });
+
+  systemEventUnlisten = await listen<string>('system-event', (event) => {
+    showToast(event.payload, 'sys');
+  });
+
+  batteryEventUnlisten = await listen<BatteryEventPayload>('battery-event', (event) => {
+    const { state, percent } = event.payload;
+    if (state === 'charging') {
+      showToast(`已接入电源，当前电量 ${percent}%`, 'battery-charge');
+    } else if (state === 'discharging' && percent <= 20) {
+      showToast(`电池电量低，剩余 ${percent}%`, 'battery-low');
     }
   });
 
@@ -650,6 +765,19 @@ onMounted(async () => {
     }
   }, 2500);
 
+  // 高频定时器：音乐频谱同步
+  spectrumTimer = setInterval(async () => {
+    if (isPlaying.value && displayMusic.value) {
+      try {
+        spectrumData.value = await invoke<number[]>('get_audio_spectrum');
+      } catch {
+        spectrumData.value = [0.35, 0.35, 0.35, 0.35, 0.35];
+      }
+    } else {
+      spectrumData.value = [0.35, 0.35, 0.35, 0.35, 0.35];
+    }
+  }, 50) as unknown as number;
+
   // 低频定时器：网络延迟检查
   pingTimer = setInterval(checkNetworkLatency, 5500) as unknown as number;
 
@@ -681,5 +809,8 @@ onUnmounted(() => {
   stopRotation();
   clearInterval(musicTimer);
   clearInterval(notifyTimer);
+  clearInterval(spectrumTimer);
+  systemEventUnlisten?.();
+  batteryEventUnlisten?.();
 });
 </script>

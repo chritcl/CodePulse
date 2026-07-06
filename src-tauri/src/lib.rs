@@ -37,6 +37,7 @@ pub fn run() {
             fetch_netease_music_info,
             control_system_media,
             get_random_cover_url,
+            get_audio_spectrum,
             // 系统监控命令
             get_network_stats,
             get_hardware_stats,
@@ -55,6 +56,10 @@ pub fn run() {
             set_island_visible,
         ])
         .setup(|app| {
+            // 启动后台系统监控
+            start_audio_spectrum_monitor();
+            start_system_event_monitor(app.handle().clone());
+
             // 检查是否为自启动
             let args: Vec<String> = std::env::args().collect();
             let is_autostart = args.iter().any(|arg| arg == "--autostart");

@@ -59,6 +59,12 @@ export const MUSIC_UPDATE = 'music-update';
 /** 通知更新 */
 export const NOTIFICATION_UPDATE = 'notification-update';
 
+/** 系统操作事件 */
+export const SYSTEM_EVENT = 'system-event';
+
+/** 电池状态事件 */
+export const BATTERY_EVENT = 'battery-event';
+
 // ============================================================
 // 应用生命周期事件 (R4 统一事件)
 // ============================================================
@@ -100,6 +106,8 @@ export const ALL_EVENTS = {
   HARDWARE_UPDATE,
   MUSIC_UPDATE,
   NOTIFICATION_UPDATE,
+  SYSTEM_EVENT,
+  BATTERY_EVENT,
 
   // 应用生命周期 (R4 统一事件)
   SETTINGS_UPDATED,

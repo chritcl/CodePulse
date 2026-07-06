@@ -27,6 +27,31 @@ describe('resolveIslandDisplay', () => {
     ).toBe('music');
   });
 
+  it('系统操作提示优先于普通轮换内容', () => {
+    expect(
+      resolveIslandDisplay({
+        systemToastActive: true,
+        rotationEnabled: true,
+        rotationIndex: 2,
+        musicEnabled: true,
+        hardwareEnabled: true,
+      })
+    ).toBe('system-toast');
+  });
+
+  it('通知优先于系统操作提示', () => {
+    expect(
+      resolveIslandDisplay({
+        notificationActive: true,
+        systemToastActive: true,
+        rotationEnabled: true,
+        rotationIndex: 2,
+        musicEnabled: true,
+        hardwareEnabled: true,
+      })
+    ).toBe('notification');
+  });
+
   it('未开启轮换时保持硬件优先于音乐的旧行为', () => {
     expect(
       resolveIslandDisplay({

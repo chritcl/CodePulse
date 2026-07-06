@@ -14,6 +14,13 @@
       @msg-click="$emit('msg-click')"
     />
 
+    <SystemToastContent
+      v-else-if="display === 'system-toast'"
+      key="system-toast"
+      :text="systemToast.text"
+      :type="systemToast.type"
+    />
+
     <HardwareContent
       v-else-if="display === 'hardware'"
       key="hardware"
@@ -54,6 +61,8 @@ import SpeedContent from './SpeedContent.vue';
 import MusicContent from './MusicContent.vue';
 import HardwareContent from './HardwareContent.vue';
 import NotificationContent from './NotificationContent.vue';
+import SystemToastContent from './SystemToastContent.vue';
+import type { SystemToastType } from '@/shared/ipc/contracts';
 
 interface NetworkDisplayState {
   uploadSpeed: string;
@@ -84,12 +93,18 @@ interface NotificationDisplayState {
   body: string;
 }
 
+interface SystemToastDisplayState {
+  text: string;
+  type: SystemToastType;
+}
+
 interface Props {
   display: IslandDisplayKind;
   network: NetworkDisplayState;
   hardware: HardwareDisplayState;
   music: MusicDisplayState;
   notification: NotificationDisplayState;
+  systemToast: SystemToastDisplayState;
   innerEnterTransition: (el: Element, done: () => void) => void;
   innerLeaveTransition: (el: Element, done: () => void) => void;
 }
