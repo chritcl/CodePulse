@@ -11,6 +11,7 @@
 mod app;
 mod commands;
 mod error;
+mod lyrics;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
@@ -35,8 +36,10 @@ pub fn run() {
             // 媒体控制命令
             set_target_player,
             fetch_netease_music_info,
+            get_music_playback_state,
             control_system_media,
             get_random_cover_url,
+            get_lyrics_for_track,
             get_audio_spectrum,
             // 系统监控命令
             get_network_stats,

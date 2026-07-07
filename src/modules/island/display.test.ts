@@ -207,10 +207,10 @@ describe('resolveIslandLayout', () => {
 
     expect(layout.main).toBe('music');
     expect(layout.expandedKind).toBe('music');
-    expect(layout.size).toEqual({ width: 260, height: 136 });
+    expect(layout.size).toEqual({ width: 420, height: 182 });
   });
 
-  it('展开态保留紧凑行宽并只增加面板高度', () => {
+  it('展开态宽度取详情宽度和紧凑行宽的较大值', () => {
     const layout = resolveIslandLayout({
       modules: [
         moduleOf({ kind: 'network', active: true }),
@@ -224,6 +224,31 @@ describe('resolveIslandLayout', () => {
 
     expect(layout.main).toBe('music');
     expect(layout.satellites.map((item) => item.kind)).toEqual(['hardware']);
-    expect(layout.size).toEqual({ width: 316, height: 136 });
+    expect(layout.size).toEqual({ width: 420, height: 182 });
+  });
+
+  it('网络展开态使用网络详情尺寸', () => {
+    const layout = resolveIslandLayout({
+      modules: [moduleOf({ kind: 'network', active: true })],
+      expandedKind: 'network',
+      now,
+    });
+
+    expect(layout.main).toBe('network');
+    expect(layout.size).toEqual({ width: 316, height: 142 });
+  });
+
+  it('通知展开态使用通知详情尺寸', () => {
+    const layout = resolveIslandLayout({
+      modules: [
+        moduleOf({ kind: 'network', active: true }),
+        moduleOf({ kind: 'notification', active: true, interrupt: 'soft', status: 'unread' }),
+      ],
+      expandedKind: 'notification',
+      now,
+    });
+
+    expect(layout.main).toBe('notification');
+    expect(layout.size).toEqual({ width: 380, height: 162 });
   });
 });

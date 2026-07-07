@@ -25,6 +25,9 @@ const baseProps = {
     currentTrackInfo: '未在播放歌曲',
     currentSongName: '未在播放歌曲',
     currentArtistName: '网易云音乐',
+    lyricsStatus: 'idle' as const,
+    currentLyricText: '',
+    nextLyricText: '',
   },
   notification: {
     icon: '/icon.png',
@@ -59,5 +62,22 @@ describe('IslandDisplayController', () => {
 
     expect(wrapper.find('.detail-panel').exists()).toBe(true);
     expect(wrapper.text()).toContain('实时网络状态');
+  });
+
+  it('音乐模块透传当前歌词', () => {
+    const wrapper = mount(IslandDisplayController, {
+      props: {
+        ...baseProps,
+        display: 'music',
+        music: {
+          ...baseProps.music,
+          lyricsStatus: 'ready',
+          currentLyricText: '故事的小黄花',
+          nextLyricText: '从出生那年就飘着',
+        },
+      },
+    });
+
+    expect(wrapper.text()).toContain('故事的小黄花');
   });
 });

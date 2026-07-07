@@ -13,7 +13,7 @@
               ? { '--scroll-dist': `${scrollDist}px`, '--scroll-duration': scrollDuration }
               : {}
               ">
-            {{ currentTrackInfo }}
+            {{ compactDisplayText }}
           </span>
         </div>
         <div class="music-info-text double-line" :class="{ 'fade-in': isMusicExpanded }">
@@ -26,6 +26,16 @@
         </div>
       </div>
     </div>
+    <transition name="fade">
+      <div v-show="isMusicExpanded" class="lyrics-panel">
+        <div class="current-lyric" :class="{ 'is-fallback': !hasCurrentLyric }">
+          {{ expandedLyricText }}
+        </div>
+        <div v-if="nextLyricText" class="next-lyric">
+          {{ nextLyricText }}
+        </div>
+      </div>
+    </transition>
     <transition name="fade">
       <div v-show="isMusicExpanded" class="music-controls">
         <button class="ctl-btn" @click.stop="$emit('prev-track')">
@@ -52,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 interface Props {
   isPlaying: boolean;
@@ -60,6 +70,9 @@ interface Props {
   currentTrackInfo: string;
   currentSongName: string;
   currentArtistName: string;
+  lyricsStatus: 'idle' | 'loading' | 'ready' | 'not_found' | 'error';
+  currentLyricText: string;
+  nextLyricText: string;
   isMusicExpanded: boolean;
 }
 
@@ -76,6 +89,13 @@ const maskBoxRef = ref<HTMLElement | null>(null);
 const textInnerRef = ref<HTMLElement | null>(null);
 const scrollDist = ref(0);
 const scrollDuration = ref('8s');
+const hasCurrentLyric = computed(() => props.currentLyricText.trim().length > 0);
+const compactDisplayText = computed(() =>
+  hasCurrentLyric.value ? props.currentLyricText : props.currentTrackInfo
+);
+const expandedLyricText = computed(() =>
+  hasCurrentLyric.value ? props.currentLyricText : props.currentTrackInfo
+);
 
 const calculateScroll = () => {
   const maskBox = maskBoxRef.value;
@@ -93,7 +113,7 @@ const calculateScroll = () => {
 };
 
 watch(
-  () => props.currentTrackInfo,
+  compactDisplayText,
   () => {
     nextTick(calculateScroll);
   }
@@ -117,12 +137,22 @@ onMounted(() => {
   flex-direction: column;
   gap: 8px;
   min-width: 180px;
+  width: 100%;
 }
 
 .music-top-row {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+}
+
+.music-ctl-box.expanded {
+  gap: 6px;
+}
+
+.music-ctl-box.expanded .music-top-row {
+  gap: 8px;
 }
 
 .album-cover {
@@ -138,6 +168,11 @@ onMounted(() => {
   animation: rotate 8s linear infinite;
 }
 
+.music-ctl-box.expanded .album-cover {
+  width: 30px;
+  height: 30px;
+}
+
 .cover-inner {
   width: 100%;
   height: 100%;
@@ -147,6 +182,7 @@ onMounted(() => {
 
 .music-info-mask-box {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   mask-image: linear-gradient(to right, #000000 78%, transparent 100%);
   -webkit-mask-image: linear-gradient(to right, #000000 78%, transparent 100%);
@@ -203,12 +239,50 @@ onMounted(() => {
   display: block;
 }
 
+.lyrics-panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 2px 0;
+}
+
+.current-lyric {
+  color: currentColor;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.current-lyric.is-fallback {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.82;
+}
+
+.next-lyric {
+  color: currentColor;
+  font-size: 10px;
+  line-height: 1.2;
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .music-controls {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 16px;
   padding: 4px 0;
+}
+
+.music-ctl-box.expanded .music-controls {
+  padding: 0;
 }
 
 .ctl-btn {

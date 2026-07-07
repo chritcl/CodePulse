@@ -100,8 +100,18 @@ const SATELLITE_ORDER: IslandDisplayKind[] = [
 
 const BASE_SIZE: IslandLayoutSize = { width: 260, height: 42 };
 const DETAIL_PANEL_GAP = 8;
-const DETAIL_PANEL_HEIGHT = 86;
-const EXPANDED_HEIGHT = BASE_SIZE.height + DETAIL_PANEL_GAP + DETAIL_PANEL_HEIGHT;
+
+const DETAIL_SIZES: Partial<Record<IslandDisplayKind, { width: number; detailHeight: number }>> = {
+  music: { width: 420, detailHeight: 132 },
+  notification: { width: 380, detailHeight: 112 },
+  hardware: { width: 316, detailHeight: 92 },
+  network: { width: 316, detailHeight: 92 },
+  agent: { width: 340, detailHeight: 92 },
+  wechat: { width: 340, detailHeight: 92 },
+  update: { width: 340, detailHeight: 92 },
+};
+
+const DEFAULT_DETAIL_SIZE = { width: BASE_SIZE.width, detailHeight: 86 };
 
 const DEFAULT_LABELS: Record<IslandDisplayKind, string> = {
   agent: 'Agent',
@@ -222,9 +232,20 @@ const resolveSize = (
   satellites: IslandSatelliteItem[],
   overflowCount: number
 ): IslandLayoutSize => {
+  const compactWidth = BASE_SIZE.width + getSatelliteWidth(satellites.length, overflowCount);
+
+  if (!expandedKind) {
+    return {
+      width: compactWidth,
+      height: BASE_SIZE.height,
+    };
+  }
+
+  const detailSize = DETAIL_SIZES[expandedKind] ?? DEFAULT_DETAIL_SIZE;
+
   return {
-    width: BASE_SIZE.width + getSatelliteWidth(satellites.length, overflowCount),
-    height: expandedKind ? EXPANDED_HEIGHT : BASE_SIZE.height,
+    width: Math.max(compactWidth, detailSize.width),
+    height: BASE_SIZE.height + DETAIL_PANEL_GAP + detailSize.detailHeight,
   };
 };
 

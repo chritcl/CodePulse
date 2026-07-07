@@ -59,6 +59,9 @@
         :current-track-info="music.currentTrackInfo"
         :current-song-name="music.currentSongName"
         :current-artist-name="music.currentArtistName"
+        :lyrics-status="music.lyricsStatus"
+        :current-lyric-text="music.currentLyricText"
+        :next-lyric-text="music.nextLyricText"
         :is-music-expanded="isDetail"
         @toggle-play="$emit('toggle-play')"
         @prev-track="$emit('prev-track')"
@@ -142,6 +145,9 @@ interface MusicDisplayState {
   currentTrackInfo: string;
   currentSongName: string;
   currentArtistName: string;
+  lyricsStatus: 'idle' | 'loading' | 'ready' | 'not_found' | 'error';
+  currentLyricText: string;
+  nextLyricText: string;
 }
 
 interface NotificationDisplayState {

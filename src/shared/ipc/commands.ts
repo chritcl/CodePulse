@@ -9,6 +9,9 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   MediaAction,
   AudioSpectrumData,
+  MusicPlaybackState,
+  LyricsRequest,
+  LyricsResponse,
   OpenAppPayload,
   IslandAnimationPayload,
   WindowBoundsPayload,
@@ -34,6 +37,17 @@ export const mediaCommands = {
    * @param player - 播放器名称
    */
   setTargetPlayer: (player: string): Promise<void> => invoke('set_target_player', { player }),
+
+  /** 获取完整音乐播放状态 */
+  getMusicPlaybackState: (): Promise<MusicPlaybackState | null> =>
+    invoke('get_music_playback_state'),
+
+  /**
+   * 获取当前歌曲歌词
+   * @param request - 歌曲元信息
+   */
+  getLyricsForTrack: (request: LyricsRequest): Promise<LyricsResponse> =>
+    invoke('get_lyrics_for_track', { ...request }),
 
   /** 获取音乐频谱 */
   getAudioSpectrum: (): Promise<AudioSpectrumData> => invoke('get_audio_spectrum'),

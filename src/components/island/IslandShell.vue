@@ -228,7 +228,6 @@ defineExpose({
 .expanded-detail-panel {
   order: 2;
   width: 100%;
-  height: 86px;
   border-radius: 14px;
   padding: 12px 14px;
   color: #ffffff;

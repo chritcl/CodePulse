@@ -97,6 +97,54 @@ export interface TargetPlayerPayload {
   player: MusicPlatform;
 }
 
+/** 完整音乐播放状态 */
+export interface MusicPlaybackState {
+  title: string;
+  artist: string;
+  album?: string;
+  sourceAppId: string;
+  player: string;
+  isPlaying: boolean;
+  durationMs?: number;
+  positionMs?: number;
+  timelineUpdatedAtMs: number;
+}
+
+/** 歌词查询请求 */
+export interface LyricsRequest {
+  title: string;
+  artist: string;
+  album?: string;
+  durationMs?: number;
+  player?: string;
+}
+
+/** 歌词行 */
+export interface LyricLine {
+  index: number;
+  startMs?: number;
+  endMs?: number;
+  text: string;
+  translation?: string;
+}
+
+/** 歌词查询响应状态 */
+export type LyricsStatus = 'ready' | 'not_found' | 'error';
+
+/** 歌词来源类型 */
+export type LyricsSource = 'cache' | 'online';
+
+/** 歌词查询响应 */
+export interface LyricsResponse {
+  status: LyricsStatus;
+  trackKey: string;
+  provider: string;
+  source: LyricsSource;
+  confidence: number;
+  rawLrc?: string;
+  lines: LyricLine[];
+}
+
 // ============================================================
 // 窗口控制
 // ============================================================

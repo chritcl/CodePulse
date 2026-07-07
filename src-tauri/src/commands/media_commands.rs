@@ -3,14 +3,34 @@
  *
  * 包含音乐播放控制、封面获取等相关命令。
  */
+use serde::Serialize;
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
+use windows::Foundation::{DateTime, TimeSpan};
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus,
 };
 
+const WINDOWS_UNIX_EPOCH_DIFF_100NS: i64 = 116_444_736_000_000_000;
+
 /// 全局记录当前选中的音乐平台
 static TARGET_PLAYER: Mutex<String> = Mutex::new(String::new());
+
+/// 完整音乐播放状态
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MusicPlaybackState {
+    pub title: String,
+    pub artist: String,
+    pub album: Option<String>,
+    pub source_app_id: String,
+    pub player: String,
+    pub is_playing: bool,
+    pub duration_ms: Option<u64>,
+    pub position_ms: Option<u64>,
+    pub timeline_updated_at_ms: u64,
+}
 
 /// 设置目标音乐平台
 #[tauri::command]
@@ -20,19 +40,9 @@ pub fn set_target_player(player: String) {
     }
 }
 
-/// 获取目标媒体会话
-///
-/// 根据前端设置的目标平台，查找对应的媒体控制会话。
-pub fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSession> {
-    let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
-        .ok()?
-        .get()
-        .ok()?;
-
-    let sessions = manager.GetSessions().ok()?;
-
-    // 获取当前的目标平台
-    let target = match TARGET_PLAYER.lock() {
+/// 获取当前目标音乐平台
+pub fn get_active_target_player() -> String {
+    match TARGET_PLAYER.lock() {
         Ok(guard) => {
             if guard.is_empty() {
                 "netease".to_string()
@@ -44,7 +54,28 @@ pub fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSe
             eprintln!("[NSD] 获取目标平台失败: {}", e);
             "netease".to_string()
         }
-    };
+    }
+}
+
+/// 获取目标媒体会话
+///
+/// 根据前端设置的目标平台，查找对应的媒体控制会话。
+pub fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSession> {
+    get_target_media_session_with_source().map(|(session, _)| session)
+}
+
+/// 获取目标媒体会话和来源应用标识
+pub fn get_target_media_session_with_source(
+) -> Option<(GlobalSystemMediaTransportControlsSession, String)> {
+    let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
+        .ok()?
+        .get()
+        .ok()?;
+
+    let sessions = manager.GetSessions().ok()?;
+
+    // 获取当前的目标平台
+    let target = get_active_target_player();
 
     for session in sessions {
         if let Ok(app_id) = session.SourceAppUserModelId() {
@@ -57,7 +88,7 @@ pub fn get_target_media_session() -> Option<GlobalSystemMediaTransportControlsSe
             };
 
             if matches_target {
-                return Some(session);
+                return Some((session, app_id.to_string()));
             }
         }
     }
@@ -102,6 +133,55 @@ pub async fn fetch_netease_music_info() -> Result<Option<(String, String, bool)>
     Ok(Some((title, artist, is_playing)))
 }
 
+/// 获取完整音乐播放状态
+#[tauri::command]
+pub async fn get_music_playback_state() -> Result<Option<MusicPlaybackState>, String> {
+    let (session, source_app_id) = match get_target_media_session_with_source() {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+
+    // 获取播放状态
+    let is_playing = if let Ok(playback_info) = session.GetPlaybackInfo() {
+        if let Ok(status) = playback_info.PlaybackStatus() {
+            status == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    // 获取歌曲属性
+    let properties = session
+        .TryGetMediaPropertiesAsync()
+        .map_err(|e| e.to_string())?
+        .get()
+        .map_err(|e| e.to_string())?;
+
+    let title = properties.Title().unwrap_or_default().to_string();
+    if title.is_empty() {
+        return Ok(None);
+    }
+
+    let artist = properties.Artist().unwrap_or_default().to_string();
+    let album = non_empty_string(properties.AlbumTitle().unwrap_or_default().to_string());
+    let (duration_ms, position_ms, timeline_updated_at_ms) =
+        read_timeline_state(&session).unwrap_or((None, None, now_ms()));
+
+    Ok(Some(MusicPlaybackState {
+        title,
+        artist,
+        album,
+        source_app_id,
+        player: get_active_target_player(),
+        is_playing,
+        duration_ms,
+        position_ms,
+        timeline_updated_at_ms,
+    }))
+}
+
 /// 控制系统媒体播放
 #[tauri::command]
 pub async fn control_system_media(action: String) -> Result<(), String> {
@@ -120,6 +200,56 @@ pub async fn control_system_media(action: String) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn read_timeline_state(
+    session: &GlobalSystemMediaTransportControlsSession,
+) -> Option<(Option<u64>, Option<u64>, u64)> {
+    let timeline = session.GetTimelineProperties().ok()?;
+    let start_ms = timespan_to_ms(timeline.StartTime().ok()?);
+    let end_ms = timespan_to_ms(timeline.EndTime().ok()?);
+    let position_ms = timespan_to_ms(timeline.Position().ok()?);
+    let updated_at_ms =
+        datetime_to_unix_ms(timeline.LastUpdatedTime().ok()?).unwrap_or_else(now_ms);
+    let duration_ms = match (start_ms, end_ms) {
+        (Some(start), Some(end)) if end > start => Some(end - start),
+        _ => None,
+    };
+
+    Some((duration_ms, position_ms, updated_at_ms))
+}
+
+fn timespan_to_ms(value: TimeSpan) -> Option<u64> {
+    if value.Duration < 0 {
+        return None;
+    }
+
+    Some((value.Duration / 10_000) as u64)
+}
+
+fn datetime_to_unix_ms(value: DateTime) -> Option<u64> {
+    let unix_100ns = value.UniversalTime.checked_sub(WINDOWS_UNIX_EPOCH_DIFF_100NS)?;
+    if unix_100ns < 0 {
+        return None;
+    }
+
+    Some((unix_100ns / 10_000) as u64)
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+fn non_empty_string(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 /// Base64 编码器

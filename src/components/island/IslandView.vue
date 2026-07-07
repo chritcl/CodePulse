@@ -55,6 +55,9 @@
         currentTrackInfo,
         currentSongName,
         currentArtistName,
+        lyricsStatus,
+        currentLyricText,
+        nextLyricText,
       }"
       :notification="{
         icon: currentMsgIcon,
@@ -95,6 +98,9 @@
           currentTrackInfo,
           currentSongName,
           currentArtistName,
+          lyricsStatus,
+          currentLyricText,
+          nextLyricText,
         }"
         :notification="{
           icon: currentMsgIcon,
@@ -139,8 +145,20 @@ import {
   normalizeTargetPlayer,
   readTargetPlayer,
 } from '@/modules/island/musicPlatform';
+import {
+  buildTrackIdentity,
+  estimatePlaybackPosition,
+  resolveCurrentLyricLine,
+} from '@/modules/island/lyrics';
 import { hasStorageValue, readBoolean, writeBoolean } from '@/shared/utils/storage';
-import type { SystemToastType, TargetPlayerPayload } from '@/shared/ipc/contracts';
+import type {
+  LyricLine,
+  LyricsResponse,
+  LyricsStatus,
+  MusicPlaybackState,
+  SystemToastType,
+  TargetPlayerPayload,
+} from '@/shared/ipc/contracts';
 import { useIslandContextMenu } from './IslandContextMenu';
 
 import IslandShell from './IslandShell.vue';
@@ -165,6 +183,8 @@ interface SystemToastItem {
   text: string;
   type: SystemToastType;
 }
+
+type MusicLyricsStatus = LyricsStatus | 'idle' | 'loading';
 
 type ElementRect = ReturnType<HTMLElement['getBoundingClientRect']>;
 
@@ -222,19 +242,38 @@ const coverUrl = ref('');
 const coverCache = new Map<string, string>();
 const currentSongName = ref('未在播放歌曲');
 const currentArtistName = ref('');
+const currentAlbumName = ref('');
 const currentTrackInfo = ref('');
+const currentMusicPlayback = ref<MusicPlaybackState | null>(null);
+const currentPlaybackPositionMs = ref<number | null>(null);
+const lyricLines = ref<LyricLine[]>([]);
+const lyricsStatus = ref<MusicLyricsStatus>('idle');
+const lyricsTrackIdentity = ref('');
 const musicBoxKey = ref(0);
 const expandedKind = ref<IslandDisplayKind | null>(null);
 const isMusicExpanded = computed(() => expandedKind.value === 'music');
 let expandCollapseTimer: number | null = null;
+let lyricsRequestId = 0;
 
 /** 重置音乐占位信息 */
 const resetMusicPlaceholder = () => {
   const playerName = getPlayerName(activeTargetPlayer.value);
   currentSongName.value = '未在播放歌曲';
   currentArtistName.value = playerName;
+  currentAlbumName.value = '';
   currentTrackInfo.value = `未在播放歌曲 - ${playerName}`;
+  currentMusicPlayback.value = null;
+  currentPlaybackPositionMs.value = null;
   coverUrl.value = '';
+};
+
+/** 重置歌词状态 */
+const resetLyricsState = () => {
+  lyricsRequestId += 1;
+  lyricLines.value = [];
+  lyricsStatus.value = 'idle';
+  lyricsTrackIdentity.value = '';
+  currentPlaybackPositionMs.value = null;
 };
 
 resetMusicPlaceholder();
@@ -276,6 +315,7 @@ let layoutClockTimer: number;
 let speedTimer: number;
 let pingTimer: number;
 let musicTimer: number;
+let lyricPositionTimer: number;
 let notifyTimer: number;
 let systemEventUnlisten: UnlistenFn | null = null;
 let batteryEventUnlisten: UnlistenFn | null = null;
@@ -290,6 +330,8 @@ const NOTIFICATION_SOFT_MS = 5_000;
 const SYSTEM_TOAST_MS = 2_000;
 const HARDWARE_STRONG_THRESHOLD = 90;
 const HARDWARE_RECOVER_THRESHOLD = 85;
+const MAIN_ISLAND_HEIGHT = 42;
+const DETAIL_PANEL_GAP = 8;
 
 // ============================================================
 // 计算属性
@@ -373,6 +415,17 @@ const activeDisplay = computed<IslandDisplayKind>(() => islandLayout.value.main)
 /** 是否展示音乐内容 */
 const displayMusic = computed(() => activeDisplay.value === 'music');
 
+/** 当前歌词匹配结果 */
+const currentLyricState = computed(() =>
+  resolveCurrentLyricLine(lyricLines.value, currentPlaybackPositionMs.value)
+);
+
+/** 当前歌词文本 */
+const currentLyricText = computed(() => currentLyricState.value.currentLine?.text ?? '');
+
+/** 下一句歌词文本 */
+const nextLyricText = computed(() => currentLyricState.value.nextLine?.text ?? '');
+
 /** 主岛当前表面样式 */
 const activeCoreStyle = computed<CSSProperties>(() => {
   if (!islandLayout.value.expandedKind) return islandWindow.coreContentStyle.value;
@@ -388,6 +441,10 @@ const activeCoreStyle = computed<CSSProperties>(() => {
 const activeDetailStyle = computed<CSSProperties>(() => ({
   ...islandWindow.focusSurfaceStyle.value,
   borderRadius: '14px',
+  height: `${Math.max(
+    0,
+    islandLayout.value.size.height - MAIN_ISLAND_HEIGHT - DETAIL_PANEL_GAP
+  )}px`,
 }));
 
 /** 音乐频谱 */
@@ -614,45 +671,92 @@ const syncTargetPlayer = async (player: string | null | undefined = readTargetPl
   return targetPlayer;
 };
 
+/** 更新本地推算的播放位置 */
+const updateLyricPlaybackPosition = () => {
+  currentPlaybackPositionMs.value = estimatePlaybackPosition(currentMusicPlayback.value);
+};
+
+/** 同步当前曲目封面 */
+const syncCoverForTrack = async (trackInfo: string, song: string, artist: string) => {
+  if (coverCache.has(trackInfo)) {
+    coverUrl.value = coverCache.get(trackInfo)!;
+    return;
+  }
+
+  try {
+    const realCoverUrl = await invoke<string>('get_random_cover_url', {
+      songName: song,
+      artistName: artist,
+    });
+    coverUrl.value = realCoverUrl;
+    if (coverCache.size > 50) coverCache.clear();
+    coverCache.set(trackInfo, realCoverUrl);
+  } catch (coverErr) {
+    console.error('所有封面源均获取失败:', coverErr);
+    coverUrl.value = '';
+  }
+};
+
+/** 为当前曲目加载歌词 */
+const loadLyricsForPlayback = async (playback: MusicPlaybackState) => {
+  const trackIdentity = buildTrackIdentity(playback);
+  if (!trackIdentity || lyricsTrackIdentity.value === trackIdentity) return;
+
+  lyricsTrackIdentity.value = trackIdentity;
+  lyricLines.value = [];
+  lyricsStatus.value = 'loading';
+  const requestId = ++lyricsRequestId;
+
+  try {
+    const response = await invoke<LyricsResponse>('get_lyrics_for_track', {
+      title: playback.title,
+      artist: playback.artist,
+      album: playback.album,
+      durationMs: playback.durationMs,
+      player: playback.player || activeTargetPlayer.value,
+    });
+
+    if (requestId !== lyricsRequestId || lyricsTrackIdentity.value !== trackIdentity) return;
+
+    lyricsStatus.value = response.status;
+    lyricLines.value = response.status === 'ready' ? response.lines : [];
+    updateLyricPlaybackPosition();
+  } catch (err) {
+    if (requestId !== lyricsRequestId || lyricsTrackIdentity.value !== trackIdentity) return;
+    console.error('歌词获取失败:', err);
+    lyricsStatus.value = 'error';
+    lyricLines.value = [];
+  }
+};
+
 /** 同步音乐状态 */
 const syncMusicStatus = async () => {
   try {
-    const res = await invoke<[string, string, boolean] | null>('fetch_netease_music_info');
+    const playback = await invoke<MusicPlaybackState | null>('get_music_playback_state');
 
-    if (res) {
-      const [song, artist, playing] = res;
-
-      currentSongName.value = song;
-      currentArtistName.value = artist || '未知歌手';
-
-      const newTrackInfo = artist ? `${song} - ${artist}` : song;
-
-      if (currentTrackInfo.value !== newTrackInfo) {
-        currentTrackInfo.value = newTrackInfo;
-
-        if (coverCache.has(newTrackInfo)) {
-          coverUrl.value = coverCache.get(newTrackInfo)!;
-        } else {
-          try {
-            const realCoverUrl = await invoke<string>('get_random_cover_url', {
-              songName: song,
-              artistName: artist,
-            });
-            coverUrl.value = realCoverUrl;
-            if (coverCache.size > 50) coverCache.clear();
-            coverCache.set(newTrackInfo, realCoverUrl);
-          } catch (coverErr) {
-            console.error('所有封面源均获取失败:', coverErr);
-            coverUrl.value = '';
-          }
-        }
-      }
-
-      isPlaying.value = playing;
-    } else {
+    if (!playback) {
       resetMusicPlaceholder();
+      resetLyricsState();
       isPlaying.value = false;
+      return;
     }
+
+    currentMusicPlayback.value = playback;
+    currentSongName.value = playback.title;
+    currentArtistName.value = playback.artist || '未知歌手';
+    currentAlbumName.value = playback.album ?? '';
+    isPlaying.value = playback.isPlaying;
+    updateLyricPlaybackPosition();
+
+    const newTrackInfo = playback.artist ? `${playback.title} - ${playback.artist}` : playback.title;
+
+    if (currentTrackInfo.value !== newTrackInfo) {
+      currentTrackInfo.value = newTrackInfo;
+      await syncCoverForTrack(newTrackInfo, playback.title, playback.artist);
+      musicBoxKey.value++;
+    }
+
+    await loadLyricsForPlayback(playback);
   } catch (err) {
     console.error('音乐信息获取失败:', err);
   }
@@ -892,6 +996,7 @@ onMounted(async () => {
       }
       await syncTargetPlayer();
       resetMusicPlaceholder();
+      resetLyricsState();
       await syncMusicStatus();
       musicBoxKey.value++;
     }
@@ -901,6 +1006,7 @@ onMounted(async () => {
   await listen<TargetPlayerPayload>('control-target-player', async (event) => {
     await syncTargetPlayer(event.payload.player);
     resetMusicPlaceholder();
+    resetLyricsState();
     if (isMusicCtlEnabled.value || isRotationEnabled.value) {
       await syncMusicStatus();
     }
@@ -970,6 +1076,7 @@ onMounted(async () => {
 
   await syncTargetPlayer();
   resetMusicPlaceholder();
+  resetLyricsState();
   if (isMusicCtlEnabled.value || isRotationEnabled.value) {
     await syncMusicStatus();
   }
@@ -1036,6 +1143,9 @@ onMounted(async () => {
       syncMusicStatus();
     }
   }, 2000);
+
+  // 高频本地计时器：歌词位置推算，不访问 Rust
+  lyricPositionTimer = setInterval(updateLyricPlaybackPosition, 250) as unknown as number;
 
   // 低频定时器：系统通知轮询
   notifyTimer = setInterval(async () => {
@@ -1111,6 +1221,7 @@ onUnmounted(() => {
   clearInterval(pingTimer);
   stopRotation();
   clearInterval(musicTimer);
+  clearInterval(lyricPositionTimer);
   clearInterval(notifyTimer);
   musicSpectrum.stop();
   systemEventUnlisten?.();
