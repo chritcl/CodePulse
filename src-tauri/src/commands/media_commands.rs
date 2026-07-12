@@ -6,13 +6,11 @@
 use serde::Serialize;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use windows::Foundation::{DateTime, TimeSpan};
+use windows::Foundation::TimeSpan;
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession, GlobalSystemMediaTransportControlsSessionManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus,
 };
-
-const WINDOWS_UNIX_EPOCH_DIFF_100NS: i64 = 116_444_736_000_000_000;
 
 /// 全局记录当前选中的音乐平台
 static TARGET_PLAYER: Mutex<String> = Mutex::new(String::new());
@@ -29,7 +27,7 @@ pub struct MusicPlaybackState {
     pub is_playing: bool,
     pub duration_ms: Option<u64>,
     pub position_ms: Option<u64>,
-    pub timeline_updated_at_ms: u64,
+    pub timeline_sampled_at_ms: u64,
 }
 
 /// 设置目标音乐平台
@@ -166,8 +164,8 @@ pub async fn get_music_playback_state() -> Result<Option<MusicPlaybackState>, St
 
     let artist = properties.Artist().unwrap_or_default().to_string();
     let album = non_empty_string(properties.AlbumTitle().unwrap_or_default().to_string());
-    let (duration_ms, position_ms, timeline_updated_at_ms) =
-        read_timeline_state(&session).unwrap_or((None, None, now_ms()));
+    let timeline = read_timeline_state(&session).unwrap_or_default();
+    let timeline_sampled_at_ms = now_ms();
 
     Ok(Some(MusicPlaybackState {
         title,
@@ -176,9 +174,9 @@ pub async fn get_music_playback_state() -> Result<Option<MusicPlaybackState>, St
         source_app_id,
         player: get_active_target_player(),
         is_playing,
-        duration_ms,
-        position_ms,
-        timeline_updated_at_ms,
+        duration_ms: timeline.duration_ms,
+        position_ms: timeline.position_ms,
+        timeline_sampled_at_ms,
     }))
 }
 
@@ -204,19 +202,36 @@ pub async fn control_system_media(action: String) -> Result<(), String> {
 
 fn read_timeline_state(
     session: &GlobalSystemMediaTransportControlsSession,
-) -> Option<(Option<u64>, Option<u64>, u64)> {
+) -> Option<TimelineSnapshot> {
     let timeline = session.GetTimelineProperties().ok()?;
-    let start_ms = timespan_to_ms(timeline.StartTime().ok()?);
-    let end_ms = timespan_to_ms(timeline.EndTime().ok()?);
-    let position_ms = timespan_to_ms(timeline.Position().ok()?);
-    let updated_at_ms =
-        datetime_to_unix_ms(timeline.LastUpdatedTime().ok()?).unwrap_or_else(now_ms);
+    let start_ms = timeline.StartTime().ok().and_then(timespan_to_ms);
+    let end_ms = timeline.EndTime().ok().and_then(timespan_to_ms);
+    let position_ms = timeline.Position().ok().and_then(timespan_to_ms);
+
+    Some(build_timeline_snapshot(start_ms, end_ms, position_ms))
+}
+
+#[derive(Default)]
+struct TimelineSnapshot {
+    duration_ms: Option<u64>,
+    position_ms: Option<u64>,
+}
+
+fn build_timeline_snapshot(
+    start_ms: Option<u64>,
+    end_ms: Option<u64>,
+    position_ms: Option<u64>,
+) -> TimelineSnapshot {
     let duration_ms = match (start_ms, end_ms) {
         (Some(start), Some(end)) if end > start => Some(end - start),
         _ => None,
     };
+    let position_ms = position_ms.map(|position| position.saturating_sub(start_ms.unwrap_or_default()));
 
-    Some((duration_ms, position_ms, updated_at_ms))
+    TimelineSnapshot {
+        duration_ms,
+        position_ms,
+    }
 }
 
 fn timespan_to_ms(value: TimeSpan) -> Option<u64> {
@@ -225,15 +240,6 @@ fn timespan_to_ms(value: TimeSpan) -> Option<u64> {
     }
 
     Some((value.Duration / 10_000) as u64)
-}
-
-fn datetime_to_unix_ms(value: DateTime) -> Option<u64> {
-    let unix_100ns = value.UniversalTime.checked_sub(WINDOWS_UNIX_EPOCH_DIFF_100NS)?;
-    if unix_100ns < 0 {
-        return None;
-    }
-
-    Some((unix_100ns / 10_000) as u64)
 }
 
 fn now_ms() -> u64 {
@@ -249,6 +255,19 @@ fn non_empty_string(value: String) -> Option<String> {
         None
     } else {
         Some(trimmed.to_string())
+    }
+}
+
+#[cfg(test)]
+mod timeline_tests {
+    use super::*;
+
+    #[test]
+    fn keeps_playback_position_when_duration_is_unavailable() {
+        let snapshot = build_timeline_snapshot(Some(500), None, Some(1_500));
+
+        assert_eq!(snapshot.position_ms, Some(1_000));
+        assert_eq!(snapshot.duration_ms, None);
     }
 }
 

@@ -31,7 +31,7 @@
         <div class="current-lyric" :class="{ 'is-fallback': !hasCurrentLyric }">
           {{ expandedLyricText }}
         </div>
-        <div v-if="nextLyricText" class="next-lyric">
+        <div v-if="lyricsStatus === 'ready' && nextLyricText" class="next-lyric">
           {{ nextLyricText }}
         </div>
       </div>
@@ -89,13 +89,28 @@ const maskBoxRef = ref<HTMLElement | null>(null);
 const textInnerRef = ref<HTMLElement | null>(null);
 const scrollDist = ref(0);
 const scrollDuration = ref('8s');
-const hasCurrentLyric = computed(() => props.currentLyricText.trim().length > 0);
+const hasCurrentLyric = computed(
+  () => props.lyricsStatus === 'ready' && props.currentLyricText.trim().length > 0
+);
 const compactDisplayText = computed(() =>
   hasCurrentLyric.value ? props.currentLyricText : props.currentTrackInfo
 );
-const expandedLyricText = computed(() =>
-  hasCurrentLyric.value ? props.currentLyricText : props.currentTrackInfo
-);
+const expandedLyricText = computed(() => {
+  if (hasCurrentLyric.value) return props.currentLyricText;
+
+  switch (props.lyricsStatus) {
+    case 'ready':
+      return '等待歌词开始…';
+    case 'loading':
+      return '正在加载歌词…';
+    case 'not_found':
+      return '未找到可同步歌词';
+    case 'error':
+      return '歌词服务暂不可用';
+    default:
+      return props.currentTrackInfo;
+  }
+});
 
 const calculateScroll = () => {
   const maskBox = maskBoxRef.value;

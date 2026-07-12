@@ -60,6 +60,7 @@ pub struct LyricsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CachedLyrics {
+    pub schema_version: u8,
     pub provider: String,
     pub confidence: f32,
     #[serde(skip_serializing_if = "Option::is_none")]

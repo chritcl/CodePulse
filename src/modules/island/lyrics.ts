@@ -24,13 +24,13 @@ export const buildTrackIdentity = (state: MusicPlaybackState | null): string => 
 export const estimatePlaybackPosition = (
   state: Pick<
     MusicPlaybackState,
-    'durationMs' | 'isPlaying' | 'positionMs' | 'timelineUpdatedAtMs'
+    'durationMs' | 'isPlaying' | 'positionMs' | 'timelineSampledAtMs'
   > | null,
   nowMs = Date.now()
 ): number | null => {
   if (!state || state.positionMs === undefined) return null;
 
-  const elapsedMs = state.isPlaying ? Math.max(0, nowMs - state.timelineUpdatedAtMs) : 0;
+  const elapsedMs = state.isPlaying ? Math.max(0, nowMs - state.timelineSampledAtMs) : 0;
   const estimatedPosition = state.positionMs + elapsedMs;
 
   if (state.durationMs === undefined) {
@@ -38,6 +38,74 @@ export const estimatePlaybackPosition = (
   }
 
   return Math.min(Math.max(0, estimatedPosition), state.durationMs);
+};
+
+export interface LyricTimelineClock {
+  sync: (
+    state: Pick<MusicPlaybackState, 'durationMs' | 'isPlaying' | 'positionMs'>,
+    nowMs?: number
+  ) => void;
+  getPosition: (nowMs?: number) => number | null;
+  reset: () => void;
+}
+
+/** 创建可容忍播放器静止快照的本地歌词时间线时钟 */
+export const createLyricTimelineClock = (): LyricTimelineClock => {
+  let anchorPositionMs: number | null = null;
+  let anchorAtMs = 0;
+  let lastReportedPositionMs: number | null = null;
+  let durationMs: number | undefined;
+  let isPlaying = false;
+
+  const getPosition = (nowMs = Date.now()): number | null => {
+    if (anchorPositionMs === null) return null;
+
+    const elapsedMs = isPlaying ? Math.max(0, nowMs - anchorAtMs) : 0;
+    const positionMs = anchorPositionMs + elapsedMs;
+    return durationMs === undefined
+      ? Math.max(0, positionMs)
+      : Math.min(Math.max(0, positionMs), durationMs);
+  };
+
+  const reset = () => {
+    anchorPositionMs = null;
+    anchorAtMs = 0;
+    lastReportedPositionMs = null;
+    durationMs = undefined;
+    isPlaying = false;
+  };
+
+  const sync: LyricTimelineClock['sync'] = (state, nowMs = Date.now()) => {
+    durationMs = state.durationMs;
+    const reportedPositionMs = state.positionMs;
+
+    if (reportedPositionMs === undefined) {
+      if (isPlaying && !state.isPlaying) {
+        const currentPositionMs = getPosition(nowMs);
+        if (currentPositionMs !== null) {
+          anchorPositionMs = currentPositionMs;
+          anchorAtMs = nowMs;
+        }
+      }
+      isPlaying = state.isPlaying;
+      return;
+    }
+
+    const positionChanged =
+      lastReportedPositionMs === null ||
+      Math.abs(reportedPositionMs - lastReportedPositionMs) >= 500;
+    const shouldReanchor = anchorPositionMs === null || !state.isPlaying || positionChanged;
+
+    if (shouldReanchor) {
+      anchorPositionMs = reportedPositionMs;
+      anchorAtMs = nowMs;
+    }
+
+    lastReportedPositionMs = reportedPositionMs;
+    isPlaying = state.isPlaying;
+  };
+
+  return { sync, getPosition, reset };
 };
 
 /** 根据播放位置解析当前歌词和下一句歌词 */

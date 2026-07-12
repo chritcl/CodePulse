@@ -48,6 +48,11 @@ pub fn parse_plain_lyrics(raw: &str) -> Vec<LyricLine> {
         .collect()
 }
 
+/// 判断歌词行是否包含可用于播放时间线的时间戳
+pub fn has_timed_lines(lines: &[LyricLine]) -> bool {
+    lines.iter().any(|line| line.start_ms.is_some())
+}
+
 fn parse_timed_lrc(raw: &str) -> Vec<LyricLine> {
     let mut lines = Vec::new();
 
@@ -196,5 +201,12 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].start_ms, Some(1_000));
         assert_eq!(lines[1].start_ms, Some(3_500));
+    }
+
+    #[test]
+    fn identifies_lyrics_without_timeline_as_unsynchronizable() {
+        let lines = parse_lrc("[ti:标题]\n第一句\n第二句", None);
+
+        assert!(!has_timed_lines(&lines));
     }
 }

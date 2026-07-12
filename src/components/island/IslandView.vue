@@ -147,7 +147,7 @@ import {
 } from '@/modules/island/musicPlatform';
 import {
   buildTrackIdentity,
-  estimatePlaybackPosition,
+  createLyricTimelineClock,
   resolveCurrentLyricLine,
 } from '@/modules/island/lyrics';
 import { hasStorageValue, readBoolean, writeBoolean } from '@/shared/utils/storage';
@@ -244,11 +244,12 @@ const currentSongName = ref('未在播放歌曲');
 const currentArtistName = ref('');
 const currentAlbumName = ref('');
 const currentTrackInfo = ref('');
-const currentMusicPlayback = ref<MusicPlaybackState | null>(null);
 const currentPlaybackPositionMs = ref<number | null>(null);
 const lyricLines = ref<LyricLine[]>([]);
 const lyricsStatus = ref<MusicLyricsStatus>('idle');
 const lyricsTrackIdentity = ref('');
+const lyricTimelineClock = createLyricTimelineClock();
+let timelineTrackIdentity = '';
 const musicBoxKey = ref(0);
 const expandedKind = ref<IslandDisplayKind | null>(null);
 const isMusicExpanded = computed(() => expandedKind.value === 'music');
@@ -262,8 +263,9 @@ const resetMusicPlaceholder = () => {
   currentArtistName.value = playerName;
   currentAlbumName.value = '';
   currentTrackInfo.value = `未在播放歌曲 - ${playerName}`;
-  currentMusicPlayback.value = null;
   currentPlaybackPositionMs.value = null;
+  timelineTrackIdentity = '';
+  lyricTimelineClock.reset();
   coverUrl.value = '';
 };
 
@@ -274,6 +276,8 @@ const resetLyricsState = () => {
   lyricsStatus.value = 'idle';
   lyricsTrackIdentity.value = '';
   currentPlaybackPositionMs.value = null;
+  timelineTrackIdentity = '';
+  lyricTimelineClock.reset();
 };
 
 resetMusicPlaceholder();
@@ -317,6 +321,7 @@ let pingTimer: number;
 let musicTimer: number;
 let lyricPositionTimer: number;
 let notifyTimer: number;
+let isMusicSyncing = false;
 let systemEventUnlisten: UnlistenFn | null = null;
 let batteryEventUnlisten: UnlistenFn | null = null;
 
@@ -673,7 +678,7 @@ const syncTargetPlayer = async (player: string | null | undefined = readTargetPl
 
 /** 更新本地推算的播放位置 */
 const updateLyricPlaybackPosition = () => {
-  currentPlaybackPositionMs.value = estimatePlaybackPosition(currentMusicPlayback.value);
+  currentPlaybackPositionMs.value = lyricTimelineClock.getPosition();
 };
 
 /** 同步当前曲目封面 */
@@ -731,6 +736,9 @@ const loadLyricsForPlayback = async (playback: MusicPlaybackState) => {
 
 /** 同步音乐状态 */
 const syncMusicStatus = async () => {
+  if (isMusicSyncing) return;
+  isMusicSyncing = true;
+
   try {
     const playback = await invoke<MusicPlaybackState | null>('get_music_playback_state');
 
@@ -741,24 +749,32 @@ const syncMusicStatus = async () => {
       return;
     }
 
-    currentMusicPlayback.value = playback;
+    const playbackIdentity = buildTrackIdentity(playback);
+    if (timelineTrackIdentity !== playbackIdentity) {
+      timelineTrackIdentity = playbackIdentity;
+      lyricTimelineClock.reset();
+    }
+
     currentSongName.value = playback.title;
     currentArtistName.value = playback.artist || '未知歌手';
     currentAlbumName.value = playback.album ?? '';
     isPlaying.value = playback.isPlaying;
+    lyricTimelineClock.sync(playback);
     updateLyricPlaybackPosition();
 
     const newTrackInfo = playback.artist ? `${playback.title} - ${playback.artist}` : playback.title;
 
     if (currentTrackInfo.value !== newTrackInfo) {
       currentTrackInfo.value = newTrackInfo;
-      await syncCoverForTrack(newTrackInfo, playback.title, playback.artist);
+      void syncCoverForTrack(newTrackInfo, playback.title, playback.artist);
       musicBoxKey.value++;
     }
 
-    await loadLyricsForPlayback(playback);
+    void loadLyricsForPlayback(playback);
   } catch (err) {
     console.error('音乐信息获取失败:', err);
+  } finally {
+    isMusicSyncing = false;
   }
 };
 
@@ -1142,7 +1158,7 @@ onMounted(async () => {
     if (isMusicCtlEnabled.value || isRotationEnabled.value) {
       syncMusicStatus();
     }
-  }, 2000);
+  }, 1000);
 
   // 高频本地计时器：歌词位置推算，不访问 Rust
   lyricPositionTimer = setInterval(updateLyricPlaybackPosition, 250) as unknown as number;

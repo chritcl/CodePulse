@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { LyricLine, MusicPlaybackState } from '@/shared/ipc/contracts';
-import { buildTrackIdentity, estimatePlaybackPosition, resolveCurrentLyricLine } from './lyrics';
+import {
+  buildTrackIdentity,
+  createLyricTimelineClock,
+  estimatePlaybackPosition,
+  resolveCurrentLyricLine,
+} from './lyrics';
 
 const playbackState = (patch: Partial<MusicPlaybackState> = {}): MusicPlaybackState => ({
   title: '晴天',
@@ -11,7 +16,7 @@ const playbackState = (patch: Partial<MusicPlaybackState> = {}): MusicPlaybackSt
   isPlaying: true,
   durationMs: 269_000,
   positionMs: 12_000,
-  timelineUpdatedAtMs: 1_000,
+  timelineSampledAtMs: 1_000,
   ...patch,
 });
 
@@ -62,5 +67,34 @@ describe('lyrics', () => {
     expect(buildTrackIdentity(playbackState())).not.toBe(
       buildTrackIdentity(playbackState({ title: '夜曲' }))
     );
+  });
+
+  it('播放中收到静止快照时持续推进本地时间线', () => {
+    const clock = createLyricTimelineClock();
+    const snapshot = playbackState({
+      positionMs: 10_000,
+      timelineSampledAtMs: 1_000,
+    });
+
+    clock.sync(snapshot, 1_000);
+    clock.sync(snapshot, 3_000);
+
+    expect(clock.getPosition(4_000)).toBe(13_000);
+  });
+
+  it('缺失位置的暂停快照会冻结在最近的本地位置', () => {
+    const clock = createLyricTimelineClock();
+    clock.sync(playbackState({ positionMs: 10_000 }), 1_000);
+    clock.sync(playbackState({ isPlaying: false, positionMs: undefined }), 3_000);
+
+    expect(clock.getPosition(4_000)).toBe(12_000);
+  });
+
+  it('播放位置发生明显变化时按跳播位置重新锚定', () => {
+    const clock = createLyricTimelineClock();
+    clock.sync(playbackState({ positionMs: 10_000 }), 1_000);
+    clock.sync(playbackState({ positionMs: 4_000 }), 3_000);
+
+    expect(clock.getPosition(4_000)).toBe(5_000);
   });
 });

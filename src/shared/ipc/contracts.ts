@@ -107,7 +107,7 @@ export interface MusicPlaybackState {
   isPlaying: boolean;
   durationMs?: number;
   positionMs?: number;
-  timelineUpdatedAtMs: number;
+  timelineSampledAtMs: number;
 }
 
 /** 歌词查询请求 */

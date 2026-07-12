@@ -37,11 +37,21 @@ pub fn score_candidate(request: &LyricsTrackRequest, candidate: &LyricsCandidate
 /// 判断候选是否可信
 pub fn is_confident_match(request: &LyricsTrackRequest, candidate: &LyricsCandidate) -> bool {
     let score = score_candidate(request, candidate);
-    if request.duration_ms.is_some() && candidate.duration_ms.is_some() {
-        score >= 0.82
-    } else {
-        score >= 0.90
+    let title_score = text_similarity(&request.title, &candidate.title);
+    let artist_score = artist_similarity(&request.artist, &candidate.artist);
+    let duration_score = duration_similarity(request.duration_ms, candidate.duration_ms);
+    let has_duration = request.duration_ms.is_some() && candidate.duration_ms.is_some();
+
+    if has_duration && duration_score == 0.0 {
+        return false;
     }
+
+    let is_strict_match = if has_duration { score >= 0.82 } else { score >= 0.90 };
+    if is_strict_match {
+        return true;
+    }
+
+    title_score >= 0.88 && (artist_score >= 0.72 || (has_duration && duration_score >= 0.65))
 }
 
 fn fnv1a(bytes: &[u8]) -> u64 {
@@ -217,5 +227,17 @@ mod tests {
         };
 
         assert!(!is_confident_match(&request(Some(269_000)), &candidate));
+    }
+
+    #[test]
+    fn accepts_relaxed_match_when_title_and_duration_are_exact() {
+        let candidate = LyricsCandidate {
+            title: "晴天".to_string(),
+            artist: "Jay Chou".to_string(),
+            duration_ms: Some(269_000),
+            id: "3".to_string(),
+        };
+
+        assert!(is_confident_match(&request(Some(269_000)), &candidate));
     }
 }

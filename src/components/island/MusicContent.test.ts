@@ -48,4 +48,24 @@ describe('MusicContent', () => {
     expect(wrapper.find('.next-lyric').text()).toContain('从出生那年就飘着');
     expect(wrapper.findAll('.ctl-btn')).toHaveLength(3);
   });
+
+  it.each([
+    ['ready', '等待歌词开始…'],
+    ['loading', '正在加载歌词…'],
+    ['not_found', '未找到可同步歌词'],
+    ['error', '歌词服务暂不可用'],
+  ] as const)('展开态显示 %s 的歌词状态', (lyricsStatus, expectedText) => {
+    const wrapper = mount(MusicContent, {
+      props: {
+        ...baseProps,
+        lyricsStatus,
+        currentLyricText: '',
+        nextLyricText: '',
+        isMusicExpanded: true,
+      },
+    });
+
+    expect(wrapper.find('.current-lyric').text()).toBe(expectedText);
+    expect(wrapper.find('.next-lyric').exists()).toBe(false);
+  });
 });
