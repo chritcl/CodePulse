@@ -47,12 +47,17 @@ CodePulse/
 │   │   ├── useIslandWindow.ts      # 灵动岛窗口尺寸/位置/透明度
 │   │   ├── useIslandAnimation.ts   # 入场/出场/内容切换动画
 │   │   ├── useIslandDrag.ts        # 拖拽与位置锁定
+│   │   ├── useMusicSpectrum.ts     # 音乐频谱轮询 + 保底脉冲
 │   │   └── index.ts                # 统一导出
 │   │
 │   ├── modules/                    # 纯业务逻辑
 │   │   └── island/
-│   │       ├── display.ts          # 灵动岛展示内容优先级调度
-│   │       └── display.test.ts     # 展示优先级测试
+│   │       ├── display.ts          # 灵动岛多岛布局调度引擎
+│   │       ├── display.test.ts     # 展示优先级测试
+│   │       ├── lyrics.ts           # 歌词解析 (播放位置推算、当前歌词匹配)
+│   │       ├── lyrics.test.ts      # 歌词解析测试
+│   │       ├── musicPlatform.ts    # 音乐平台归一化与显示名称
+│   │       └── musicPlatform.test.ts # 音乐平台测试
 │   │
 │   ├── components/
 │   │   ├── dashboard/              # 主控制台组件
@@ -66,17 +71,18 @@ CodePulse/
 │   │   │   └── AppDialog.vue              # 模态对话框
 │   │   │
 │   │   └── island/                 # 灵动岛组件
-│   │       ├── IslandView.vue             # 灵动岛主视图
-│   │       ├── IslandShell.vue            # 灵动岛外壳 (动画/拖拽/流光边框)
+│   │       ├── IslandView.vue             # 灵动岛主视图 (~1230 行, 核心调度)
+│   │       ├── IslandShell.vue            # 灵动岛外壳 (布局、流光边框、展开面板)
 │   │       ├── IslandDisplayController.vue # 内容分发控制器
+│   │       ├── IslandSatelliteStrip.vue   # 卫星岛条 (附属模块图标)
 │   │       ├── IslandStatusIndicator.vue  # 状态指示器 (频谱/网络灯)
-│   │       ├── IslandStatusIndicator.test.ts # 状态指示器测试
-│   │       ├── IslandContextMenu.ts       # 右键菜单
+│   │       ├── IslandContextMenu.ts       # 右键菜单 (Tauri native Menu)
 │   │       ├── SpeedContent.vue           # 网速展示
-│   │       ├── MusicContent.vue           # 音乐控制 (封面/歌名/播放控制)
+│   │       ├── MusicContent.vue           # 音乐控制 (封面/歌名/歌词/播放控制)
 │   │       ├── HardwareContent.vue        # 硬件监控 (CPU/GPU/RAM)
 │   │       ├── NotificationContent.vue    # 通知展示
-│   │       └── SystemToastContent.vue     # 系统提示 (音量/电量/锁屏)
+│   │       ├── SystemToastContent.vue     # 系统提示 (音量/电量/锁屏)
+│   │       └── *.test.ts (3 个测试文件)
 │   │
 │   └── assets/                     # 静态资源 (图标/SVG)
 │
@@ -94,15 +100,23 @@ CodePulse/
 │       ├── app/
 │       │   ├── state.rs            # 全局 AppState (Networks + System)
 │       │   └── mod.rs
-│       └── commands/
-│           ├── mod.rs              # 命令模块聚合导出
-│           ├── media_commands.rs   # 媒体控制 (SMTC/封面/播放)
-│           ├── system_commands.rs  # 系统监控 (网速/硬件/延迟)
-│           ├── window_commands.rs  # 窗口管理 (置顶/边界/动画)
-│           ├── notification_commands.rs # 通知读取/应用打开
-│           ├── settings_commands.rs     # 设置快照/更新/显隐
-│           ├── audio_spectrum_commands.rs # 音频频谱采集 (cpal+FFT)
-│           └── system_event_commands.rs  # 系统事件 (音量/电源/电量)
+│       ├── commands/
+│       │   ├── mod.rs              # 命令模块聚合导出
+│       │   ├── media_commands.rs   # 媒体控制 (SMTC/封面/播放)
+│       │   ├── system_commands.rs  # 系统监控 (网速/硬件/延迟)
+│       │   ├── window_commands.rs  # 窗口管理 (置顶/边界/动画)
+│       │   ├── notification_commands.rs # 通知读取/应用打开
+│       │   ├── settings_commands.rs     # 设置快照/更新/显隐
+│       │   ├── audio_spectrum_commands.rs # 音频频谱采集 (WASAPI loopback + FFT)
+│       │   ├── lyrics_commands.rs  # 歌词获取 (缓存 + 在线)
+│       │   └── system_event_commands.rs # 系统事件 (音量/电源/电量)
+│       └── lyrics/
+│           ├── mod.rs              # 歌词模块入口
+│           ├── types.rs            # 歌词类型定义
+│           ├── cache.rs            # 歌词文件缓存
+│           ├── matcher.rs          # 曲目身份构建
+│           ├── parser.rs           # LRC 歌词解析
+│           └── providers.rs        # 在线歌词源
 │
 ├── package.json                    # 前端依赖与脚本
 ├── vite.config.ts                  # Vite 配置
@@ -131,7 +145,7 @@ CodePulse/
 | 状态管理 | Pinia | 3.x |
 | 图表 | ECharts | 6.x |
 | 系统监控 | sysinfo (Rust) | 0.30 |
-| 音频采集 | cpal + rustfft (Rust) | 0.15 / 6.2 |
+| 音频采集 | WASAPI loopback + rustfft (Rust) | windows 0.58 / 6.2 |
 | 异步运行时 | Tokio (Rust) | 1.x |
 | HTTP 客户端 | reqwest (Rust) | 0.12 |
 | 媒体控制 | Windows SMTC API | windows 0.58 |
@@ -154,18 +168,29 @@ CodePulse/
 
 两个窗口通过 Tauri 事件系统双向通信，不共享 Vue 状态。
 
-### 灵动岛展示优先级
+### 灵动岛多岛布局引擎
 
-由 `src/modules/island/display.ts` 的 `resolveIslandDisplay()` 解析：
+由 `src/modules/island/display.ts` 的 `resolveIslandLayout()` 调度，支持多模块优先级决策：
 
-1. **agent** — Agent 状态 (最高优先级)
-2. **wechat** — 微信消息
-3. **notification** — 系统通知
-4. **system-toast** — 系统操作提示 (音量/电量/锁屏)
-5. **轮换模式** → network / music / hardware 循环
-6. **hardware** — 硬件监控 (未开轮换时优先于音乐)
-7. **music** — 音乐控制
-8. **network** — 网速显示 (默认)
+**支持的模块类型** (IslandDisplayKind):
+- `network` — 网速监控 (默认兜底)
+- `music` — 音乐控制 (含歌词显示)
+- `hardware` — 硬件监控
+- `notification` — 消息通知
+- `system-toast` — 系统提示 (音量/电量/锁屏)
+- `agent` — AI Agent (待接入)
+- `wechat` — 微信消息 (待接入)
+- `update` — 版本更新 (待接入)
+
+**布局决策优先级** (从高到低):
+1. **强打断** — 硬件超过 90% 阈值 (连续 2 次采样)
+2. **手动聚焦** — 用户点击卫星岛
+3. **软打断** — 新通知 / 系统提示
+4. **轮换模式** — 自动轮换 network / music / hardware
+5. **稳定主模块** — 上次展示的模块
+6. **优先级排序** — 按预定义优先级
+
+**卫星岛**: 最多显示 3 个附属模块图标，超出显示 "+N"。
 
 ### IPC 通信模式
 
@@ -209,6 +234,7 @@ CodePulse/
 | `useIslandWindow` | 灵动岛窗口尺寸/位置/透明度/主题/停靠/锁定 |
 | `useIslandAnimation` | 入场/出场/内容切换动画 (requestAnimationFrame) |
 | `useIslandDrag` | 拖拽判定与位置锁定 (5px 阈值) |
+| `useMusicSpectrum` | 音乐频谱轮询 + 保底脉冲动画 |
 
 ---
 
@@ -218,8 +244,10 @@ CodePulse/
 |---|---|---|
 | `set_target_player` | media_commands.rs | 设置目标音乐平台 |
 | `fetch_netease_music_info` | media_commands.rs | 获取当前播放歌曲信息 |
+| `get_music_playback_state` | media_commands.rs | 获取完整音乐播放状态 (SMTC) |
 | `control_system_media` | media_commands.rs | 媒体播放控制 (播放/暂停/上下首) |
 | `get_random_cover_url` | media_commands.rs | 获取歌曲封面 (本地 SMTC + 多源竞速) |
+| `get_lyrics_for_track` | lyrics_commands.rs | 获取歌词 (缓存 + 在线) |
 | `get_audio_spectrum` | audio_spectrum_commands.rs | 获取 5 段音频频谱数据 |
 | `get_network_stats` | system_commands.rs | 获取网络收发字节数 |
 | `get_hardware_stats` | system_commands.rs | 获取 CPU/内存使用率 |
@@ -291,10 +319,17 @@ CodePulse/
 
 | 测试文件 | 覆盖内容 |
 |---|---|
-| `src/modules/island/display.test.ts` | 灵动岛展示优先级调度 |
+| `src/modules/island/display.test.ts` | 灵动岛多岛布局调度引擎 |
+| `src/modules/island/lyrics.test.ts` | 歌词解析 (播放位置推算、当前歌词匹配) |
+| `src/modules/island/musicPlatform.test.ts` | 音乐平台归一化 |
 | `src/shared/utils/storage.test.ts` | localStorage 类型安全读写 |
 | `src/stores/island.test.ts` | 灵动岛 Store 状态管理 |
+| `src/composables/useIslandWindow.test.ts` | 灵动岛窗口管理 |
+| `src/composables/useMusicSpectrum.test.ts` | 音乐频谱轮询 |
 | `src/components/island/IslandStatusIndicator.test.ts` | 频谱/状态灯渲染 |
+| `src/components/island/IslandDisplayController.test.ts` | 内容分发控制器 |
+| `src/components/island/IslandSatelliteStrip.test.ts` | 卫星岛条 |
+| `src/components/island/MusicContent.test.ts` | 音乐内容渲染 |
 
 ---
 
@@ -355,9 +390,11 @@ pnpm tauri build
 3. **主窗口关闭行为**: 关闭主窗口时隐藏到托盘而非退出，通过系统托盘图标恢复。
 4. **设置存储**: 当前使用 localStorage，Rust 侧 `settings_commands.rs` 的快照/更新为简化实现。
 5. **音乐封面获取**: 多源竞速策略 (本地 SMTC → Apple Music → 网易云 → Deezer)，3 秒超时。
-6. **音频频谱**: 使用系统默认输出设备采集，通过 FFT 转换为 5 段频谱。
-7. **通知过滤**: 自动过滤微信通知，通过 AUMID 识别。
-8. **互斥模块**: 音乐控制器与硬件监控互斥，开启一方自动关闭另一方。
+6. **音频频谱**: 使用 WASAPI loopback 采集系统默认输出设备，通过 FFT 转换为 5 段频谱 (20-150Hz / 150-500Hz / 500-2kHz / 2k-6kHz / 6k-20kHz)。
+7. **歌词系统**: LRC 格式解析 + 文件缓存 + 在线获取，250ms 精度播放位置推算。
+8. **通知过滤**: 自动过滤微信通知，通过 AUMID 识别。
+9. **互斥模块**: 音乐控制器与硬件监控互斥，开启一方自动关闭另一方。
+10. **系统事件**: 音量变化通过 WASAPI 音频端点 800ms 轮询，电源事件通过 Win32 Power API 监控。
 
 ---
 
