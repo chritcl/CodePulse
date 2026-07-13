@@ -10,3 +10,4 @@ export { useIslandWindow } from './useIslandWindow';
 export { useIslandAnimation } from './useIslandAnimation';
 export { useIslandDrag } from './useIslandDrag';
 export { useMusicSpectrum } from './useMusicSpectrum';
+export { usePlaybackTimeline } from './usePlaybackTimeline';

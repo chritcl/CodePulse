@@ -5,143 +5,103 @@ export interface CurrentLyricResult {
   nextLine: LyricLine | null;
 }
 
-/** 构建前端曲目身份，仅用于避免重复请求歌词 */
+type TimedLyricLine = LyricLine & { startMs: number };
+
+const normalizeIdentityPart = (value: string | number): string =>
+  String(value).trim().toLowerCase();
+
+/** 构建歌词请求身份，专辑或时长变化时允许重新请求 */
 export const buildTrackIdentity = (state: MusicPlaybackState | null): string => {
   if (!state?.title.trim()) return '';
 
-  return [
-    state.player,
-    state.title,
-    state.artist,
-    state.album ?? '',
-    state.durationMs ?? 0,
-  ]
-    .map((value) => String(value).trim().toLowerCase())
+  return [state.player, state.title, state.artist, state.album ?? '', state.durationMs ?? 0]
+    .map(normalizeIdentityPart)
     .join('|');
 };
 
-/** 根据最近一次系统时间线同步结果推算当前播放位置 */
-export const estimatePlaybackPosition = (
-  state: Pick<
-    MusicPlaybackState,
-    'durationMs' | 'isPlaying' | 'positionMs' | 'timelineSampledAtMs'
-  > | null,
-  nowMs = Date.now()
-): number | null => {
-  if (!state || state.positionMs === undefined) return null;
+/** 构建稳定的播放会话身份，不受专辑和时长后续补全影响 */
+export const buildPlaybackSessionIdentity = (state: MusicPlaybackState | null): string => {
+  if (!state?.title.trim()) return '';
 
-  const elapsedMs = state.isPlaying ? Math.max(0, nowMs - state.timelineSampledAtMs) : 0;
-  const estimatedPosition = state.positionMs + elapsedMs;
+  return [state.player, state.sourceAppId, state.title, state.artist]
+    .map(normalizeIdentityPart)
+    .join('|');
+};
 
-  if (state.durationMs === undefined) {
-    return Math.max(0, estimatedPosition);
+const isValidTimedLine = (line: LyricLine): line is TimedLyricLine =>
+  line.startMs !== undefined &&
+  Number.isFinite(line.startMs) &&
+  line.startMs >= 0 &&
+  line.text.trim().length > 0;
+
+/** 清洗、稳定排序歌词，并补全可推导的结束时间 */
+export const normalizeLyricLines = (lines: readonly LyricLine[]): LyricLine[] => {
+  const sortedLines = lines
+    .map((line, sourceIndex) => ({ line, sourceIndex }))
+    .filter((entry): entry is { line: TimedLyricLine; sourceIndex: number } =>
+      isValidTimedLine(entry.line)
+    )
+    .sort(
+      (left, right) =>
+        left.line.startMs - right.line.startMs ||
+        left.line.index - right.line.index ||
+        left.sourceIndex - right.sourceIndex
+    );
+
+  const uniqueLines: TimedLyricLine[] = [];
+  for (const { line } of sortedLines) {
+    if (uniqueLines[uniqueLines.length - 1]?.startMs === line.startMs) continue;
+    uniqueLines.push(line);
   }
 
-  return Math.min(Math.max(0, estimatedPosition), state.durationMs);
+  return uniqueLines.map((line, index) => {
+    const explicitEndMs =
+      line.endMs !== undefined && Number.isFinite(line.endMs) && line.endMs > line.startMs
+        ? line.endMs
+        : undefined;
+    const endMs = explicitEndMs ?? uniqueLines[index + 1]?.startMs;
+
+    return { ...line, endMs };
+  });
 };
 
-export interface LyricTimelineClock {
-  sync: (
-    state: Pick<MusicPlaybackState, 'durationMs' | 'isPlaying' | 'positionMs'>,
-    nowMs?: number
-  ) => void;
-  getPosition: (nowMs?: number) => number | null;
-  reset: () => void;
-}
-
-/** 创建可容忍播放器静止快照的本地歌词时间线时钟 */
-export const createLyricTimelineClock = (): LyricTimelineClock => {
-  let anchorPositionMs: number | null = null;
-  let anchorAtMs = 0;
-  let lastReportedPositionMs: number | null = null;
-  let durationMs: number | undefined;
-  let isPlaying = false;
-
-  const getPosition = (nowMs = Date.now()): number | null => {
-    if (anchorPositionMs === null) return null;
-
-    const elapsedMs = isPlaying ? Math.max(0, nowMs - anchorAtMs) : 0;
-    const positionMs = anchorPositionMs + elapsedMs;
-    return durationMs === undefined
-      ? Math.max(0, positionMs)
-      : Math.min(Math.max(0, positionMs), durationMs);
-  };
-
-  const reset = () => {
-    anchorPositionMs = null;
-    anchorAtMs = 0;
-    lastReportedPositionMs = null;
-    durationMs = undefined;
-    isPlaying = false;
-  };
-
-  const sync: LyricTimelineClock['sync'] = (state, nowMs = Date.now()) => {
-    durationMs = state.durationMs;
-    const reportedPositionMs = state.positionMs;
-
-    if (reportedPositionMs === undefined) {
-      if (isPlaying && !state.isPlaying) {
-        const currentPositionMs = getPosition(nowMs);
-        if (currentPositionMs !== null) {
-          anchorPositionMs = currentPositionMs;
-          anchorAtMs = nowMs;
-        }
-      }
-      isPlaying = state.isPlaying;
-      return;
-    }
-
-    const positionChanged =
-      lastReportedPositionMs === null ||
-      Math.abs(reportedPositionMs - lastReportedPositionMs) >= 500;
-    const shouldReanchor = anchorPositionMs === null || !state.isPlaying || positionChanged;
-
-    if (shouldReanchor) {
-      anchorPositionMs = reportedPositionMs;
-      anchorAtMs = nowMs;
-    }
-
-    lastReportedPositionMs = reportedPositionMs;
-    isPlaying = state.isPlaying;
-  };
-
-  return { sync, getPosition, reset };
-};
-
-/** 根据播放位置解析当前歌词和下一句歌词 */
+/** 使用二分查找解析规范化歌词中的当前句和下一句 */
 export const resolveCurrentLyricLine = (
-  lines: LyricLine[],
+  lines: readonly LyricLine[],
   positionMs: number | null
 ): CurrentLyricResult => {
-  if (positionMs === null) {
+  if (positionMs === null || !Number.isFinite(positionMs) || lines.length === 0) {
     return { currentLine: null, nextLine: null };
   }
 
-  const timedLines = lines.filter((line) => line.startMs !== undefined);
-  if (timedLines.length === 0) {
-    return { currentLine: null, nextLine: null };
-  }
-
+  let low = 0;
+  let high = lines.length - 1;
   let currentIndex = -1;
 
-  for (let index = 0; index < timedLines.length; index += 1) {
-    const line = timedLines[index];
-    if ((line.startMs ?? 0) <= positionMs) {
-      currentIndex = index;
-      continue;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const startMs = lines[middle]?.startMs;
+    if (startMs !== undefined && startMs <= positionMs) {
+      currentIndex = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
     }
-    break;
   }
 
   if (currentIndex < 0) {
+    const firstLine = lines[0];
     return {
       currentLine: null,
-      nextLine: timedLines[0] ?? null,
+      nextLine: firstLine && isValidTimedLine(firstLine) ? firstLine : null,
     };
   }
 
-  return {
-    currentLine: timedLines[currentIndex] ?? null,
-    nextLine: timedLines[currentIndex + 1] ?? null,
-  };
+  const currentLine = lines[currentIndex] ?? null;
+  const nextLine = lines[currentIndex + 1] ?? null;
+  if (currentLine?.endMs !== undefined && positionMs >= currentLine.endMs) {
+    return { currentLine: null, nextLine };
+  }
+
+  return { currentLine, nextLine };
 };
