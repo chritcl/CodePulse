@@ -132,6 +132,9 @@ export interface LyricLine {
 /** 歌词查询响应状态 */
 export type LyricsStatus = 'ready' | 'not_found' | 'error';
 
+/** 歌词查询错误类型 */
+export type LyricsErrorCode = 'invalid_request' | 'timeout' | 'upstream' | 'cache';
+
 /** 歌词来源类型 */
 export type LyricsSource = 'cache' | 'online';
 
@@ -142,6 +145,8 @@ export interface LyricsResponse {
   provider: string;
   source: LyricsSource;
   confidence: number;
+  retryable: boolean;
+  errorCode?: LyricsErrorCode;
   rawLrc?: string;
   lines: LyricLine[];
 }

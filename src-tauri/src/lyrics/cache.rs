@@ -19,6 +19,7 @@ const PARSER_VERSION: u8 = 1;
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 /// 歌词文件缓存仓库
+#[derive(Clone)]
 pub struct LyricsCacheRepository {
     cache_dir: PathBuf,
     ttl: Duration,
@@ -30,7 +31,15 @@ impl LyricsCacheRepository {
     }
 
     pub fn read(&self, identity: &TrackIdentity, track_key: &str) -> Option<LyricsResponse> {
-        self.read_at(identity, track_key, current_time_ms().ok()?)
+        self.try_read(identity, track_key).ok().flatten()
+    }
+
+    pub fn try_read(
+        &self,
+        identity: &TrackIdentity,
+        track_key: &str,
+    ) -> io::Result<Option<LyricsResponse>> {
+        self.try_read_at(identity, track_key, current_time_ms()?)
     }
 
     pub fn write(
@@ -42,18 +51,34 @@ impl LyricsCacheRepository {
         self.write_at(identity, track_key, lyrics, current_time_ms()?)
     }
 
+    #[cfg(test)]
     fn read_at(
         &self,
         identity: &TrackIdentity,
         track_key: &str,
         now_ms: u64,
     ) -> Option<LyricsResponse> {
-        let content = fs::read_to_string(cache_path(&self.cache_dir, track_key)).ok()?;
-        let cached = serde_json::from_str::<CachedLyrics>(&content).ok()?;
+        self.try_read_at(identity, track_key, now_ms).ok().flatten()
+    }
+
+    fn try_read_at(
+        &self,
+        identity: &TrackIdentity,
+        track_key: &str,
+        now_ms: u64,
+    ) -> io::Result<Option<LyricsResponse>> {
+        let content = match fs::read_to_string(cache_path(&self.cache_dir, track_key)) {
+            Ok(content) => content,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let Ok(cached) = serde_json::from_str::<CachedLyrics>(&content) else {
+            return Ok(None);
+        };
         if !self.is_valid(&cached, identity, now_ms) {
-            return None;
+            return Ok(None);
         }
-        Some(cached.into_response(track_key))
+        Ok(Some(cached.into_response(track_key)))
     }
 
     fn write_at(
@@ -105,6 +130,8 @@ impl CachedLyrics {
             provider: self.provider,
             source: LyricsSource::Cache,
             confidence: self.confidence,
+            retryable: false,
+            error_code: None,
             raw_lrc: self.raw_lrc,
             lines: self.lines,
         }

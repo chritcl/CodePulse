@@ -1,60 +1,35 @@
 mod netease;
 mod qq_music;
 
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
+use super::error::LyricsProviderError;
 use super::matcher::{is_confident_match, score_candidate};
 use super::types::{LyricsCandidate, LyricsTrackRequest, ProviderLyrics};
+use netease::NeteaseProvider;
+use qq_music::QqMusicProvider;
 
 const USER_AGENT: &str = "NetSpeedDynamic/2.3.8 (https://github.com/GEORGEWWWU/NetSpeed-Dynamic)";
 
-type ProviderResult = Result<Option<ProviderLyrics>, String>;
+/// 可注入的歌词源契约
+#[async_trait]
+pub trait LyricsProvider: Send + Sync {
+    fn name(&self) -> &'static str;
 
-/// 按固定优先级获取可同步歌词
-pub async fn fetch_online_lyrics(
-    request: &LyricsTrackRequest,
-    client: &reqwest::Client,
-) -> ProviderResult {
-    let mut last_error = None;
-
-    for provider in provider_order() {
-        let result = match provider {
-            ProviderKind::QqMusic => qq_music::fetch(request, client).await,
-            ProviderKind::Netease => netease::fetch(request, client).await,
-        };
-
-        match result {
-            Ok(Some(lyrics)) => return Ok(Some(lyrics)),
-            Ok(None) => {}
-            Err(err) => {
-                eprintln!("[NSD] 歌词源 {} 查询失败: {}", provider.name(), err);
-                last_error = Some(err);
-            }
-        }
-    }
-
-    if let Some(err) = last_error {
-        eprintln!("[NSD] 在线歌词查询未命中，最后错误: {}", err);
-    }
-
-    Ok(None)
+    async fn fetch(
+        &self,
+        request: &LyricsTrackRequest,
+    ) -> Result<Option<ProviderLyrics>, LyricsProviderError>;
 }
 
-#[derive(Clone, Copy)]
-enum ProviderKind {
-    QqMusic,
-    Netease,
-}
-
-impl ProviderKind {
-    fn name(self) -> &'static str {
-        match self {
-            Self::QqMusic => "qqmusic",
-            Self::Netease => "netease",
-        }
-    }
-}
-
-fn provider_order() -> [ProviderKind; 2] {
-    [ProviderKind::QqMusic, ProviderKind::Netease]
+/// 创建共享同一 HTTP 客户端的生产歌词源
+pub fn production_providers(client: &reqwest::Client) -> Vec<Arc<dyn LyricsProvider>> {
+    vec![
+        Arc::new(QqMusicProvider::new(client.clone())),
+        Arc::new(NeteaseProvider::new(client.clone())),
+    ]
 }
 
 pub(super) fn build_query(request: &LyricsTrackRequest) -> String {
@@ -77,19 +52,4 @@ pub(super) fn pick_best_candidate(
             (candidate, score)
         })
         .max_by(|left, right| left.1.total_cmp(&right.1))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn always_queries_qq_music_before_netease() {
-        let names = provider_order()
-            .iter()
-            .map(|provider| provider.name())
-            .collect::<Vec<_>>();
-
-        assert_eq!(names, vec!["qqmusic", "netease"]);
-    }
 }

@@ -44,6 +44,16 @@ pub enum LyricsStatus {
     Error,
 }
 
+/// 歌词查询错误类型
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LyricsErrorCode {
+    InvalidRequest,
+    Timeout,
+    Upstream,
+    Cache,
+}
+
 /// 歌词来源类型
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -61,6 +71,9 @@ pub struct LyricsResponse {
     pub provider: String,
     pub source: LyricsSource,
     pub confidence: f32,
+    pub retryable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<LyricsErrorCode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_lrc: Option<String>,
     pub lines: Vec<LyricLine>,

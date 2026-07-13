@@ -11,7 +11,7 @@
 mod app;
 mod commands;
 mod error;
-mod lyrics;
+pub mod lyrics;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
@@ -20,6 +20,7 @@ use tauri_plugin_autostart::MacosLauncher;
 
 use app::AppState;
 use commands::*;
+use lyrics::LyricsService;
 
 /// 应用程序入口点
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -59,6 +60,9 @@ pub fn run() {
             set_island_visible,
         ])
         .setup(|app| {
+            let lyrics_dir = app.path().app_data_dir()?.join("lyrics");
+            app.manage(LyricsService::new(lyrics_dir)?);
+
             // 启动后台系统监控
             start_audio_spectrum_monitor();
             start_system_event_monitor(app.handle().clone());

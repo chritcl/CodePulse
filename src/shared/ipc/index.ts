@@ -32,6 +32,7 @@ export type {
   LyricsRequest,
   LyricLine,
   LyricsStatus,
+  LyricsErrorCode,
   LyricsSource,
   LyricsResponse,
   AudioSpectrumData,

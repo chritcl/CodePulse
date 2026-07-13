@@ -1,10 +1,11 @@
 pub mod cache;
+pub mod error;
 pub mod matcher;
 pub mod parser;
+mod provider_http;
 pub mod providers;
+pub mod service;
 pub mod types;
 
-pub use cache::{read_cached_lyrics, save_cached_lyrics};
-pub use matcher::build_track_key;
-pub use providers::fetch_online_lyrics;
+pub use service::LyricsService;
 pub use types::*;
