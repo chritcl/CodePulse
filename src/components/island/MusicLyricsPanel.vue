@@ -1,11 +1,13 @@
 <template>
   <div class="lyrics-panel">
-    <div class="current-lyric" :class="{ 'is-fallback': !hasCurrentLyric }">
+    <div :class="['current-lyric', { 'is-fallback': !hasCurrentLyric }]">
       {{ expandedLyricText }}
     </div>
-    <div v-if="lyricsStatus === 'ready' && nextLyricText" class="next-lyric">
-      {{ nextLyricText }}
-    </div>
+    <template v-if="lyricsStatus === 'ready' && nextLyricText">
+      <div class="next-lyric">
+        {{ nextLyricText }}
+      </div>
+    </template>
   </div>
 </template>
 
