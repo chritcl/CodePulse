@@ -10,6 +10,19 @@ export interface MusicActivityActions {
   resetPresentation: () => void;
 }
 
+export type MusicStartupReceivedState = Record<keyof MusicActivityState, boolean>;
+
+/** 启动期间已收到事件的字段保留当前值，其余字段采用最新持久化设置 */
+export const resolveMusicStartupState = (
+  current: MusicActivityState,
+  persisted: MusicActivityState,
+  received: MusicStartupReceivedState
+): MusicActivityState => ({
+  musicEnabled: received.musicEnabled ? current.musicEnabled : persisted.musicEnabled,
+  rotationEnabled: received.rotationEnabled ? current.rotationEnabled : persisted.rotationEnabled,
+  targetPlayer: received.targetPlayer ? current.targetPlayer : persisted.targetPlayer,
+});
+
 /** 根据音乐控制和轮换开关统一启停播放器会话 */
 export const syncMusicActivity = async (
   state: MusicActivityState,

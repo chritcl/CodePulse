@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createMusicPresentationIdentityTracker,
+  resolveMusicStartupState,
   syncMusicActivity,
   type MusicActivityActions,
 } from './musicActivity';
@@ -75,5 +76,83 @@ describe('createMusicPresentationIdentityTracker', () => {
     expect(tracker.isNew('')).toBe(false);
     expect(tracker.isNew('歌曲 A')).toBe(false);
     expect(tracker.isNew('歌曲 B')).toBe(true);
+  });
+});
+
+describe('resolveMusicStartupState', () => {
+  it('监听注册期间未收到事件时采用最新持久化设置', () => {
+    const persistedState = {
+      musicEnabled: true,
+      rotationEnabled: true,
+      targetPlayer: 'qqmusic',
+    };
+
+    expect(
+      resolveMusicStartupState(
+        {
+          musicEnabled: false,
+          rotationEnabled: false,
+          targetPlayer: 'netease',
+        },
+        persistedState,
+        {
+          musicEnabled: false,
+          rotationEnabled: false,
+          targetPlayer: false,
+        }
+      )
+    ).toEqual(persistedState);
+  });
+
+  it('监听注册期间收到目标播放器事件时保留事件值', () => {
+    expect(
+      resolveMusicStartupState(
+        {
+          musicEnabled: false,
+          rotationEnabled: false,
+          targetPlayer: 'kugou',
+        },
+        {
+          musicEnabled: true,
+          rotationEnabled: true,
+          targetPlayer: 'qqmusic',
+        },
+        {
+          musicEnabled: false,
+          rotationEnabled: false,
+          targetPlayer: true,
+        }
+      )
+    ).toEqual({
+      musicEnabled: true,
+      rotationEnabled: true,
+      targetPlayer: 'kugou',
+    });
+  });
+
+  it('监听注册期间收到音乐与轮换事件时保留事件值', () => {
+    expect(
+      resolveMusicStartupState(
+        {
+          musicEnabled: false,
+          rotationEnabled: true,
+          targetPlayer: 'netease',
+        },
+        {
+          musicEnabled: true,
+          rotationEnabled: false,
+          targetPlayer: 'qqmusic',
+        },
+        {
+          musicEnabled: true,
+          rotationEnabled: true,
+          targetPlayer: false,
+        }
+      )
+    ).toEqual({
+      musicEnabled: false,
+      rotationEnabled: true,
+      targetPlayer: 'qqmusic',
+    });
   });
 });

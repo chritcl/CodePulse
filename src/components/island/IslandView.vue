@@ -152,6 +152,7 @@ import {
 import { buildPlaybackSessionIdentity } from '@/modules/island/lyrics';
 import {
   createMusicPresentationIdentityTracker,
+  resolveMusicStartupState,
   syncMusicActivity,
 } from '@/modules/island/musicActivity';
 import { hasStorageValue, readBoolean, writeBoolean } from '@/shared/utils/storage';
@@ -239,6 +240,8 @@ const memUsage = ref('0%');
 /** 音乐控制相关 */
 const isMusicCtlEnabled = ref(readBoolean('nsd_music_ctrl'));
 const activeTargetPlayer = ref(readTargetPlayer());
+let hasReceivedMusicCtlEvent = false;
+let hasReceivedTargetPlayerEvent = false;
 const isPlaying = computed(() => musicSession.playback.value?.isPlaying ?? false);
 const coverUrl = trackCover.coverUrl;
 const currentSongName = computed(() => musicSession.playback.value?.title || '未在播放歌曲');
@@ -279,6 +282,7 @@ let isProcessingToast = false;
 const isRotationEnabled = ref(readBoolean('nsd_rotation_mode'));
 const currentRotIndex = ref(0);
 let rotationTimer: number | null = null;
+let hasReceivedRotationEvent = false;
 
 /** 多岛布局调度 */
 const layoutNow = ref(Date.now());
@@ -941,6 +945,7 @@ onMounted(async () => {
   layoutClockTimer = window.setInterval(refreshLayoutNow, 500);
 
   await eventListeners.register<{ enabled: boolean }>('control-music-ctl', async (event) => {
+    hasReceivedMusicCtlEvent = true;
     isMusicCtlEnabled.value = event.payload.enabled;
     if (event.payload.enabled && !hasStorageValue('nsd_glow_border')) {
       isGlowBorderEnabled.value = true;
@@ -955,6 +960,7 @@ onMounted(async () => {
   if (disposed) return;
 
   await eventListeners.register<TargetPlayerPayload>('control-target-player', async (event) => {
+    hasReceivedTargetPlayerEvent = true;
     await switchTargetPlayer(event.payload.player);
     if (disposed) return;
   });
@@ -998,6 +1004,7 @@ onMounted(async () => {
   if (disposed) return;
 
   await eventListeners.register<{ enabled: boolean }>('control-rotation-mode', async (event) => {
+    hasReceivedRotationEvent = true;
     isRotationEnabled.value = event.payload.enabled;
     if (isRotationEnabled.value) {
       startRotation();
@@ -1056,6 +1063,27 @@ onMounted(async () => {
     islandWindow.currentHeight.value = height;
   });
   if (disposed) return;
+
+  const startupMusicState = resolveMusicStartupState(
+    {
+      musicEnabled: isMusicCtlEnabled.value,
+      rotationEnabled: isRotationEnabled.value,
+      targetPlayer: activeTargetPlayer.value,
+    },
+    {
+      musicEnabled: readBoolean('nsd_music_ctrl'),
+      rotationEnabled: readBoolean('nsd_rotation_mode'),
+      targetPlayer: readTargetPlayer(),
+    },
+    {
+      musicEnabled: hasReceivedMusicCtlEvent,
+      rotationEnabled: hasReceivedRotationEvent,
+      targetPlayer: hasReceivedTargetPlayerEvent,
+    }
+  );
+  isMusicCtlEnabled.value = startupMusicState.musicEnabled;
+  isRotationEnabled.value = startupMusicState.rotationEnabled;
+  activeTargetPlayer.value = normalizeTargetPlayer(startupMusicState.targetPlayer);
 
   if (isRotationEnabled.value) startRotation();
   try {
