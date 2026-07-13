@@ -59,7 +59,7 @@ impl LyricsCache for SlowCache {
         _lyrics: &ProviderLyrics,
     ) -> io::Result<()> {
         self.write_started.store(true, Ordering::SeqCst);
-        std::thread::sleep(Duration::from_millis(200));
+        std::thread::sleep(Duration::from_secs(1));
         Ok(())
     }
 }
@@ -82,16 +82,16 @@ async fn slow_cache_write_does_not_delay_ready_response() {
         Arc::new(SlowCache {
             write_started: write_started.clone(),
         }),
-        Duration::from_millis(10),
+        Duration::from_secs(1),
     )
     .unwrap();
 
-    let response = tokio::time::timeout(Duration::from_millis(50), service.get_lyrics(request()))
+    let response = tokio::time::timeout(Duration::from_millis(250), service.get_lyrics(request()))
         .await
         .expect("歌词命中不应等待慢缓存写入");
 
     assert_eq!(response.status, LyricsStatus::Ready);
-    tokio::time::timeout(Duration::from_millis(50), async {
+    tokio::time::timeout(Duration::from_millis(250), async {
         while !write_started.load(Ordering::SeqCst) {
             tokio::task::yield_now().await;
         }

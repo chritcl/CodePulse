@@ -185,10 +185,10 @@ async fn returns_timeout_when_collection_exceeds_total_deadline() {
         vec![recording_provider(
             "qqmusic",
             Ok(None),
-            Duration::from_millis(80),
+            Duration::from_secs(1),
             Arc::new(Mutex::new(Vec::new())),
         )],
-        Duration::from_millis(10),
+        Duration::from_millis(250),
     );
     let response = service.get_lyrics(request()).await;
 
@@ -205,11 +205,11 @@ async fn keeps_first_hit_when_later_provider_exceeds_deadline() {
             recording_provider(
                 "netease",
                 Ok(None),
-                Duration::from_millis(80),
+                Duration::from_secs(1),
                 Arc::new(Mutex::new(Vec::new())),
             ),
         ],
-        Duration::from_millis(10),
+        Duration::from_millis(250),
     );
     let response = service.get_lyrics(request()).await;
 
