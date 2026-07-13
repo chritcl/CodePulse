@@ -17,6 +17,7 @@ tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 sysinfo = "0.30"
 tauri-plugin-single-instance = "2.0.0" # 根据你的Tauri2版本调整具体小版本
 tokio = { version = "1", features = ["full", "rt-multi-thread"] }
@@ -43,5 +44,6 @@ windows = { version = "0.58.0", features = [
     "Media_Control",
     "Storage_Streams",
     "Win32_System_Power",
+    "Win32_Storage_FileSystem",
 ] }
 rustfft = "6.2"

@@ -60,7 +60,7 @@ pub(super) async fn fetch(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let lines = parse_lrc(&raw_lrc, translation);
+    let lines = parse_lrc(&raw_lrc, translation).map_err(|err| err.to_string())?;
     if !has_timed_lines(&lines) {
         return Ok(None);
     }
@@ -76,14 +76,12 @@ fn parse_candidate(song: &Value) -> Option<LyricsCandidate> {
     let id = song.get("id")?.as_i64()?.to_string();
     let title = song.get("name")?.as_str()?.to_string();
     let artist = join_artist_names(song.get("artists").or_else(|| song.get("ar")));
-    let duration_ms = song
-        .get("duration")
-        .or_else(|| song.get("dt"))
-        .and_then(Value::as_u64);
+    let duration_ms = song.get("duration").or_else(|| song.get("dt")).and_then(Value::as_u64);
 
     Some(LyricsCandidate {
         title,
         artist,
+        album: None,
         duration_ms,
         id,
     })

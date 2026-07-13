@@ -1,23 +1,51 @@
-use std::collections::HashSet;
+use sha2::{Digest, Sha256};
 
-use super::types::{LyricsCandidate, LyricsTrackRequest};
+use super::types::{LyricsCandidate, LyricsTrackRequest, TrackIdentity};
 
-const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-const FNV_PRIME: u64 = 0x100000001b3;
+const DURATION_BUCKET_MS: u64 = 5_000;
+
+/// 为缓存键提供规范化歌曲身份
+pub trait TrackKeySource {
+    fn track_identity(&self) -> TrackIdentity;
+}
+
+impl TrackKeySource for LyricsTrackRequest {
+    fn track_identity(&self) -> TrackIdentity {
+        build_track_identity(self)
+    }
+}
+
+impl TrackKeySource for TrackIdentity {
+    fn track_identity(&self) -> TrackIdentity {
+        self.clone()
+    }
+}
+
+/// 构建规范化歌曲身份
+pub fn build_track_identity(request: &LyricsTrackRequest) -> TrackIdentity {
+    TrackIdentity {
+        normalized_title: normalize_text(&request.title),
+        normalized_artist: normalize_text(&request.artist),
+        normalized_album: normalize_text(request.album.as_deref().unwrap_or_default()),
+        duration_bucket_ms: request
+            .duration_ms
+            .map(|value| value / DURATION_BUCKET_MS * DURATION_BUCKET_MS)
+            .unwrap_or_default(),
+    }
+}
 
 /// 构建稳定的歌曲缓存键
-pub fn build_track_key(request: &LyricsTrackRequest) -> String {
-    let duration_bucket = request.duration_ms.map(|value| value / 1000).unwrap_or(0);
-    let album = request.album.as_deref().unwrap_or_default();
+pub fn build_track_key(source: &(impl TrackKeySource + ?Sized)) -> String {
+    let identity = source.track_identity();
     let payload = format!(
         "{}|{}|{}|{}",
-        normalize_text(&request.title),
-        normalize_text(&request.artist),
-        normalize_text(album),
-        duration_bucket
+        identity.normalized_title,
+        identity.normalized_artist,
+        identity.normalized_album,
+        identity.duration_bucket_ms
     );
 
-    format!("{:016x}", fnv1a(payload.as_bytes()))
+    format!("{:x}", Sha256::digest(payload.as_bytes()))
 }
 
 /// 计算候选匹配分
@@ -41,23 +69,27 @@ pub fn is_confident_match(request: &LyricsTrackRequest, candidate: &LyricsCandid
     let artist_score = artist_similarity(&request.artist, &candidate.artist);
     let duration_score = duration_similarity(request.duration_ms, candidate.duration_ms);
     let has_duration = request.duration_ms.is_some() && candidate.duration_ms.is_some();
+    let has_artists = !normalize_text(&request.artist).is_empty()
+        && !normalize_text(&candidate.artist).is_empty();
+
+    if has_artists && artist_score < 0.55 {
+        return false;
+    }
 
     if has_duration && duration_score == 0.0 {
         return false;
     }
 
-    let is_strict_match = if has_duration { score >= 0.82 } else { score >= 0.90 };
+    let is_strict_match = if has_duration {
+        score >= 0.82
+    } else {
+        score >= 0.90
+    };
     if is_strict_match {
         return true;
     }
 
     title_score >= 0.88 && (artist_score >= 0.72 || (has_duration && duration_score >= 0.65))
-}
-
-fn fnv1a(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(FNV_OFFSET, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
-    })
 }
 
 fn normalize_text(value: &str) -> String {
@@ -111,7 +143,7 @@ fn text_similarity(left: &str, right: &str) -> f32 {
         return 0.88;
     }
 
-    char_jaccard(&left, &right)
+    ordered_similarity(&left, &right)
 }
 
 fn artist_similarity(left: &str, right: &str) -> f32 {
@@ -126,10 +158,7 @@ fn artist_similarity(left: &str, right: &str) -> f32 {
         return 1.0;
     }
 
-    let artists = right
-        .split(|ch| matches!(ch, '/' | '&' | '、' | ';' | '；'))
-        .map(normalize_text)
-        .collect::<Vec<_>>();
+    let artists = right.split(['/', '&', '、', ';', '；']).map(normalize_text).collect::<Vec<_>>();
 
     if artists.iter().any(|artist| artist == &left) {
         return 0.94;
@@ -139,7 +168,7 @@ fn artist_similarity(left: &str, right: &str) -> f32 {
         return 0.72;
     }
 
-    char_jaccard(&left, &right)
+    ordered_similarity(&left, &right)
 }
 
 fn duration_similarity(left: Option<u64>, right: Option<u64>) -> f32 {
@@ -159,85 +188,27 @@ fn duration_similarity(left: Option<u64>, right: Option<u64>) -> f32 {
     }
 }
 
-fn char_jaccard(left: &str, right: &str) -> f32 {
-    let left_chars = left.chars().collect::<HashSet<_>>();
-    let right_chars = right.chars().collect::<HashSet<_>>();
+fn ordered_similarity(left: &str, right: &str) -> f32 {
+    let left_chars = left.chars().collect::<Vec<_>>();
+    let right_chars = right.chars().collect::<Vec<_>>();
+    let mut previous = (0..=right_chars.len()).collect::<Vec<_>>();
+    let mut current = vec![0; right_chars.len() + 1];
 
-    if left_chars.is_empty() || right_chars.is_empty() {
-        return 0.0;
+    for (left_index, left_char) in left_chars.iter().enumerate() {
+        current[0] = left_index + 1;
+        for (right_index, right_char) in right_chars.iter().enumerate() {
+            let substitution = previous[right_index] + usize::from(left_char != right_char);
+            let insertion = current[right_index] + 1;
+            let deletion = previous[right_index + 1] + 1;
+            current[right_index + 1] = substitution.min(insertion).min(deletion);
+        }
+        std::mem::swap(&mut previous, &mut current);
     }
 
-    let intersection = left_chars.intersection(&right_chars).count() as f32;
-    let union = left_chars.union(&right_chars).count() as f32;
-    intersection / union
+    let length = left_chars.len().max(right_chars.len());
+    1.0 - previous[right_chars.len()] as f32 / length as f32
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn request(duration_ms: Option<u64>) -> LyricsTrackRequest {
-        LyricsTrackRequest {
-            title: "晴天".to_string(),
-            artist: "周杰伦".to_string(),
-            album: Some("叶惠美".to_string()),
-            duration_ms,
-            player: Some("netease".to_string()),
-        }
-    }
-
-    #[test]
-    fn track_key_is_stable_for_same_track() {
-        let first = build_track_key(&request(Some(269_000)));
-        let second = build_track_key(&request(Some(269_000)));
-
-        assert_eq!(first, second);
-    }
-
-    #[test]
-    fn track_key_changes_for_different_track() {
-        let mut changed = request(Some(269_000));
-        changed.title = "夜曲".to_string();
-
-        assert_ne!(
-            build_track_key(&request(Some(269_000))),
-            build_track_key(&changed)
-        );
-    }
-
-    #[test]
-    fn accepts_candidate_with_matching_duration() {
-        let candidate = LyricsCandidate {
-            title: "晴天".to_string(),
-            artist: "周杰伦".to_string(),
-            duration_ms: Some(269_000),
-            id: "1".to_string(),
-        };
-
-        assert!(is_confident_match(&request(Some(269_000)), &candidate));
-    }
-
-    #[test]
-    fn rejects_same_title_with_bad_duration_and_mixed_artist() {
-        let candidate = LyricsCandidate {
-            title: "晴天".to_string(),
-            artist: "周杰伦-/A-LNK".to_string(),
-            duration_ms: Some(182_890),
-            id: "2".to_string(),
-        };
-
-        assert!(!is_confident_match(&request(Some(269_000)), &candidate));
-    }
-
-    #[test]
-    fn accepts_relaxed_match_when_title_and_duration_are_exact() {
-        let candidate = LyricsCandidate {
-            title: "晴天".to_string(),
-            artist: "Jay Chou".to_string(),
-            duration_ms: Some(269_000),
-            id: "3".to_string(),
-        };
-
-        assert!(is_confident_match(&request(Some(269_000)), &candidate));
-    }
-}
+#[path = "matcher_tests.rs"]
+mod tests;

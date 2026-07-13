@@ -11,6 +11,16 @@ pub struct LyricsTrackRequest {
     pub player: Option<String>,
 }
 
+/// 用于匹配和缓存的规范化歌曲身份
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackIdentity {
+    pub normalized_title: String,
+    pub normalized_artist: String,
+    pub normalized_album: String,
+    pub duration_bucket_ms: u64,
+}
+
 /// 歌词行
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -61,6 +71,9 @@ pub struct LyricsResponse {
 #[serde(rename_all = "camelCase")]
 pub struct CachedLyrics {
     pub schema_version: u8,
+    pub parser_version: u8,
+    pub identity: TrackIdentity,
+    pub fetched_at_ms: u64,
     pub provider: String,
     pub confidence: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -82,6 +95,7 @@ pub struct ProviderLyrics {
 pub struct LyricsCandidate {
     pub title: String,
     pub artist: String,
+    pub album: Option<String>,
     pub duration_ms: Option<u64>,
     pub id: String,
 }

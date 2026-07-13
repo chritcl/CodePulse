@@ -69,7 +69,7 @@ pub(super) async fn fetch(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let lines = parse_lrc(&raw_lrc, translation);
+    let lines = parse_lrc(&raw_lrc, translation).map_err(|err| err.to_string())?;
     if !has_timed_lines(&lines) {
         return Ok(None);
     }
@@ -90,6 +90,7 @@ fn parse_candidate(song: &Value) -> Option<LyricsCandidate> {
     Some(LyricsCandidate {
         title,
         artist,
+        album: None,
         duration_ms,
         id,
     })
