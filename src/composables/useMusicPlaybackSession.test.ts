@@ -38,9 +38,13 @@ const createTimeline = (): PlaybackTimelineController => ({
 });
 
 const flushPromises = async (): Promise<void> => {
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let index = 0; index < 8; index += 1) await Promise.resolve();
 };
+
+const createSession = (
+  options: Parameters<typeof useMusicPlaybackSession>[0]
+): ReturnType<typeof useMusicPlaybackSession> =>
+  useMusicPlaybackSession({ setPlayer: vi.fn().mockResolvedValue(undefined), ...options });
 
 describe('useMusicPlaybackSession', () => {
   beforeEach(() => {
@@ -56,7 +60,7 @@ describe('useMusicPlaybackSession', () => {
     const timeline = createTimeline();
     const first = deferred<MusicPlaybackState | null>();
     const getPlayback = vi.fn(() => first.promise);
-    const session = useMusicPlaybackSession({ timeline, getPlayback });
+    const session = createSession({ timeline, getPlayback });
 
     session.start('qqmusic');
     await vi.advanceTimersByTimeAsync(5_000);
@@ -67,7 +71,7 @@ describe('useMusicPlaybackSession', () => {
   it('首个请求永不完成时三秒后独立冻结时间线', async () => {
     const timeline = createTimeline();
     const first = deferred<MusicPlaybackState | null>();
-    const session = useMusicPlaybackSession({ timeline, getPlayback: () => first.promise });
+    const session = createSession({ timeline, getPlayback: () => first.promise });
 
     session.start('qqmusic');
     await vi.advanceTimersByTimeAsync(2_999);
@@ -82,7 +86,7 @@ describe('useMusicPlaybackSession', () => {
   it('陈旧后收到成功快照会重新锚定', async () => {
     const timeline = createTimeline();
     const first = deferred<MusicPlaybackState | null>();
-    const session = useMusicPlaybackSession({ timeline, getPlayback: () => first.promise });
+    const session = createSession({ timeline, getPlayback: () => first.promise });
     const snapshot = playback();
 
     session.start('qqmusic');
@@ -98,7 +102,7 @@ describe('useMusicPlaybackSession', () => {
   it('停止后旧响应不能回写且清理时间线', async () => {
     const timeline = createTimeline();
     const first = deferred<MusicPlaybackState | null>();
-    const session = useMusicPlaybackSession({ timeline, getPlayback: () => first.promise });
+    const session = createSession({ timeline, getPlayback: () => first.promise });
 
     session.start('qqmusic');
     session.stop();
@@ -123,10 +127,14 @@ describe('useMusicPlaybackSession', () => {
       .mockImplementationOnce(() => oldRequest.promise)
       .mockResolvedValueOnce(newSnapshot);
     const targetSet = deferred<void>();
-    const setPlayer = vi.fn(() => targetSet.promise);
-    const session = useMusicPlaybackSession({ timeline, getPlayback, setPlayer });
+    const setPlayer = vi
+      .fn<(player: string) => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => targetSet.promise);
+    const session = createSession({ timeline, getPlayback, setPlayer });
 
     session.start('qqmusic');
+    await flushPromises();
     const switching = session.setTargetPlayer('netease');
     oldRequest.resolve(playback({ title: '旧播放器歌曲' }));
     await flushPromises();
@@ -155,16 +163,23 @@ describe('useMusicPlaybackSession', () => {
       .mockResolvedValueOnce(playback({ player: 'netease', title: '过期选择歌曲' }));
     const setPlayer = vi
       .fn<(player: string) => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
       .mockImplementationOnce(() => firstSwitch.promise)
       .mockResolvedValueOnce(undefined);
-    const session = useMusicPlaybackSession({ timeline, getPlayback, setPlayer });
+    const session = createSession({ timeline, getPlayback, setPlayer });
 
     session.start('qqmusic');
+    await flushPromises();
     const olderSwitch = session.setTargetPlayer('netease');
-    await session.setTargetPlayer('spotify');
-    firstSwitch.resolve();
-    await olderSwitch;
+    const latestSwitch = session.setTargetPlayer('spotify');
+    await flushPromises();
 
+    expect(setPlayer).toHaveBeenCalledTimes(2);
+    initialRequest.resolve(playback({ title: '过期初始歌曲' }));
+    firstSwitch.resolve();
+    await Promise.all([olderSwitch, latestSwitch]);
+
+    expect(setPlayer).toHaveBeenNthCalledWith(3, 'spotify');
     expect(getPlayback).toHaveBeenCalledTimes(2);
     expect(session.playback.value).toEqual(spotifySnapshot);
   });
@@ -172,14 +187,18 @@ describe('useMusicPlaybackSession', () => {
   it('切换播放器失败后也不允许旧快照恢复回写', async () => {
     const timeline = createTimeline();
     const oldRequest = deferred<MusicPlaybackState | null>();
-    const setPlayer = vi.fn().mockRejectedValue(new Error('切换失败'));
-    const session = useMusicPlaybackSession({
+    const setPlayer = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('切换失败'));
+    const session = createSession({
       timeline,
       getPlayback: () => oldRequest.promise,
       setPlayer,
     });
 
     session.start('qqmusic');
+    await flushPromises();
     const switching = session.setTargetPlayer('netease');
     oldRequest.resolve(playback({ title: '旧播放器歌曲' }));
 
@@ -189,11 +208,182 @@ describe('useMusicPlaybackSession', () => {
     expect(timeline.sync).not.toHaveBeenCalled();
   });
 
+  it('首次启动必须等待后端提交目标后再取快照', async () => {
+    const timeline = createTimeline();
+    const targetCommit = deferred<void>();
+    const snapshot = playback();
+    const setPlayer = vi.fn(() => targetCommit.promise);
+    const getPlayback = vi.fn().mockResolvedValue(snapshot);
+    const session = createSession({ timeline, setPlayer, getPlayback });
+
+    const starting = session.start('qqmusic');
+    await flushPromises();
+
+    expect(setPlayer).toHaveBeenCalledWith('qqmusic');
+    expect(getPlayback).not.toHaveBeenCalled();
+
+    targetCommit.resolve();
+    await starting;
+    expect(getPlayback).toHaveBeenCalledTimes(1);
+    expect(session.playback.value).toEqual(snapshot);
+  });
+
+  it('运行中使用不同播放器启动也必须先提交目标', async () => {
+    const timeline = createTimeline();
+    const secondCommit = deferred<void>();
+    const neteaseSnapshot = playback({ player: 'netease', title: '新目标歌曲' });
+    const setPlayer = vi
+      .fn<(player: string) => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => secondCommit.promise);
+    const getPlayback = vi
+      .fn()
+      .mockResolvedValueOnce(playback())
+      .mockResolvedValueOnce(neteaseSnapshot);
+    const session = createSession({ timeline, setPlayer, getPlayback });
+
+    await session.start('qqmusic');
+    const restarting = session.start('netease');
+    await flushPromises();
+
+    expect(setPlayer).toHaveBeenNthCalledWith(2, 'netease');
+    expect(getPlayback).toHaveBeenCalledTimes(1);
+
+    secondCommit.resolve();
+    await restarting;
+    expect(session.playback.value).toEqual(neteaseSnapshot);
+  });
+
+  it('旧目标提交跨越停止和重启时新目标必须最后写入', async () => {
+    const timeline = createTimeline();
+    const oldCommit = deferred<void>();
+    const setPlayer = vi
+      .fn<(player: string) => Promise<void>>()
+      .mockImplementationOnce(() => oldCommit.promise)
+      .mockResolvedValueOnce(undefined);
+    const qqSnapshot = playback({ title: '重启后歌曲' });
+    const getPlayback = vi.fn().mockResolvedValue(qqSnapshot);
+    const session = createSession({ timeline, setPlayer, getPlayback });
+
+    const oldStart = session.start('netease');
+    await flushPromises();
+    session.stop();
+    const restarted = session.start('qqmusic');
+    await flushPromises();
+
+    expect(setPlayer).toHaveBeenCalledTimes(1);
+    expect(getPlayback).not.toHaveBeenCalled();
+
+    oldCommit.resolve();
+    await Promise.all([oldStart, restarted]);
+    expect(setPlayer).toHaveBeenNthCalledWith(2, 'qqmusic');
+    expect(getPlayback).toHaveBeenCalledTimes(1);
+    expect(session.playback.value).toEqual(qqSnapshot);
+  });
+
+  it('目标提交期间立即同步和控制都必须等待屏障', async () => {
+    const timeline = createTimeline();
+    const switchCommit = deferred<void>();
+    const switchedSnapshot = playback({ player: 'netease', positionMs: 20_000 });
+    const controlledSnapshot = playback({ player: 'netease', positionMs: 21_000 });
+    const setPlayer = vi
+      .fn<(player: string) => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => switchCommit.promise);
+    const getPlayback = vi
+      .fn<() => Promise<MusicPlaybackState | null>>()
+      .mockResolvedValueOnce(playback())
+      .mockResolvedValueOnce(switchedSnapshot)
+      .mockResolvedValueOnce(controlledSnapshot);
+    const controlMedia = vi.fn().mockResolvedValue(undefined);
+    const session = createSession({ timeline, setPlayer, getPlayback, controlMedia });
+
+    await session.start('qqmusic');
+    const switching = session.setTargetPlayer('netease');
+    const syncing = session.syncNow();
+    const controlling = session.control('next');
+    await flushPromises();
+
+    expect(getPlayback).toHaveBeenCalledTimes(1);
+    expect(controlMedia).not.toHaveBeenCalled();
+
+    switchCommit.resolve();
+    await Promise.all([switching, syncing, controlling]);
+    expect(controlMedia).toHaveBeenCalledWith('next');
+    expect(getPlayback).toHaveBeenCalledTimes(3);
+    expect(session.playback.value).toEqual(controlledSnapshot);
+  });
+
+  it('同目标切换失败后重试成功会恢复立即同步', async () => {
+    const timeline = createTimeline();
+    const recoveredSnapshot = playback({ player: 'netease', title: '恢复后歌曲' });
+    const setPlayer = vi
+      .fn<(player: string) => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('首次失败'))
+      .mockResolvedValueOnce(undefined);
+    const getPlayback = vi
+      .fn()
+      .mockResolvedValueOnce(playback())
+      .mockResolvedValueOnce(recoveredSnapshot);
+    const session = createSession({ timeline, setPlayer, getPlayback });
+
+    await session.start('qqmusic');
+    await expect(session.setTargetPlayer('netease')).rejects.toThrow('首次失败');
+    await session.setTargetPlayer('netease');
+
+    expect(setPlayer).toHaveBeenCalledTimes(3);
+    expect(getPlayback).toHaveBeenCalledTimes(2);
+    expect(session.playback.value).toEqual(recoveredSnapshot);
+  });
+
+  it('两个同目标并发选择只在最新提交后恢复同步', async () => {
+    const timeline = createTimeline();
+    const firstSameCommit = deferred<void>();
+    const latestSnapshot = playback({ title: '最新同目标歌曲' });
+    const setPlayer = vi
+      .fn<(player: string) => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => firstSameCommit.promise)
+      .mockResolvedValueOnce(undefined);
+    const getPlayback = vi
+      .fn()
+      .mockResolvedValueOnce(playback())
+      .mockResolvedValueOnce(latestSnapshot);
+    const session = createSession({ timeline, setPlayer, getPlayback });
+
+    await session.start('qqmusic');
+    const olderSelection = session.setTargetPlayer('qqmusic');
+    const latestSelection = session.setTargetPlayer('qqmusic');
+    await flushPromises();
+
+    expect(setPlayer).toHaveBeenCalledTimes(2);
+    expect(getPlayback).toHaveBeenCalledTimes(1);
+
+    firstSameCommit.resolve();
+    await Promise.all([olderSelection, latestSelection]);
+    expect(setPlayer).toHaveBeenCalledTimes(3);
+    expect(getPlayback).toHaveBeenCalledTimes(2);
+    expect(session.playback.value).toEqual(latestSnapshot);
+  });
+
+  it('快照播放器与当前目标不一致时拒绝回写', async () => {
+    const timeline = createTimeline();
+    const mismatched = playback({ player: 'netease', title: '错误播放器歌曲' });
+    const session = createSession({ timeline, getPlayback: vi.fn().mockResolvedValue(mismatched) });
+
+    await session.start('qqmusic');
+
+    expect(session.playback.value).toBeNull();
+    expect(session.status.value).toBe('error');
+    expect(timeline.sync).not.toHaveBeenCalled();
+  });
+
   it('同一播放器重复启动不会创建双轮询', async () => {
     const timeline = createTimeline();
     const first = deferred<MusicPlaybackState | null>();
     const getPlayback = vi.fn(() => first.promise);
-    const session = useMusicPlaybackSession({ timeline, getPlayback });
+    const session = createSession({ timeline, getPlayback });
 
     session.start('qqmusic');
     session.start('qqmusic');
@@ -206,7 +396,7 @@ describe('useMusicPlaybackSession', () => {
   it('重复停止会话不会重复清理时间线', () => {
     const timeline = createTimeline();
     const first = deferred<MusicPlaybackState | null>();
-    const session = useMusicPlaybackSession({ timeline, getPlayback: () => first.promise });
+    const session = createSession({ timeline, getPlayback: () => first.promise });
 
     session.start('qqmusic');
     session.stop();
@@ -223,7 +413,7 @@ describe('useMusicPlaybackSession', () => {
       .fn<() => Promise<MusicPlaybackState | null>>()
       .mockResolvedValueOnce(playback())
       .mockImplementationOnce(() => second.promise);
-    const session = useMusicPlaybackSession({ timeline, getPlayback });
+    const session = createSession({ timeline, getPlayback });
 
     session.start('qqmusic');
     await flushPromises();
@@ -249,7 +439,7 @@ describe('useMusicPlaybackSession', () => {
     const controlMedia = vi
       .fn<(action: MediaAction) => Promise<void>>()
       .mockResolvedValue(undefined);
-    const session = useMusicPlaybackSession({ timeline, getPlayback, controlMedia });
+    const session = createSession({ timeline, getPlayback, controlMedia });
 
     session.start('qqmusic');
     const controlPromise = session.control('play_pause');
@@ -271,7 +461,7 @@ describe('useMusicPlaybackSession', () => {
     const snapshot = playback({ isPlaying: false });
     const getPlayback = vi.fn().mockResolvedValue(snapshot);
     const controlMedia = vi.fn().mockRejectedValue(new Error('控制失败'));
-    const session = useMusicPlaybackSession({ timeline, getPlayback, controlMedia });
+    const session = createSession({ timeline, getPlayback, controlMedia });
 
     session.start('qqmusic');
     await flushPromises();
@@ -287,7 +477,7 @@ describe('useMusicPlaybackSession', () => {
       .fn<() => Promise<MusicPlaybackState | null>>()
       .mockResolvedValueOnce(null)
       .mockRejectedValue(new Error('SMTC 不可用'));
-    const session = useMusicPlaybackSession({ timeline, getPlayback });
+    const session = createSession({ timeline, getPlayback });
 
     session.start('qqmusic');
     await flushPromises();
@@ -303,9 +493,7 @@ describe('useMusicPlaybackSession', () => {
     const timeline = createTimeline();
     const first = deferred<MusicPlaybackState | null>();
     const scope = effectScope();
-    const session = scope.run(() =>
-      useMusicPlaybackSession({ timeline, getPlayback: () => first.promise })
-    );
+    const session = scope.run(() => createSession({ timeline, getPlayback: () => first.promise }));
     if (!session) throw new Error('未能创建音乐会话');
 
     session.start('qqmusic');
