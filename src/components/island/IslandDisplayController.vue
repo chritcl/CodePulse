@@ -117,6 +117,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import type { TrackLyricsStatus } from '@/composables/useTrackLyrics';
 import type { IslandDisplayKind } from '@/modules/island/display';
 import SpeedContent from './SpeedContent.vue';
 import MusicContent from './MusicContent.vue';
@@ -145,7 +146,7 @@ interface MusicDisplayState {
   currentTrackInfo: string;
   currentSongName: string;
   currentArtistName: string;
-  lyricsStatus: 'idle' | 'loading' | 'ready' | 'not_found' | 'error';
+  lyricsStatus: TrackLyricsStatus;
   currentLyricText: string;
   nextLyricText: string;
 }

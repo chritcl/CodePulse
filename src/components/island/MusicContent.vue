@@ -1,49 +1,52 @@
 <template>
-  <div class="music-ctl-box" :class="{ expanded: isMusicExpanded }" style="cursor: pointer"
-    @click="$emit('expand-music', $event)">
+  <div
+    class="music-ctl-box"
+    :class="{ expanded: isMusicExpanded }"
+    @click="$emit('expand-music', $event)"
+  >
     <div class="music-top-row">
       <div class="album-cover" :class="{ 'is-playing': isPlaying }">
-        <div class="cover-inner"
-          :style="coverUrl ? { backgroundImage: `url(${coverUrl})`, backgroundSize: 'cover' } : {}" />
+        <div
+          class="cover-inner"
+          :style="coverUrl ? { backgroundImage: `url(${coverUrl})`, backgroundSize: 'cover' } : {}"
+        />
       </div>
       <div ref="maskBoxRef" class="music-info-mask-box">
         <div class="music-info-text single-line" :class="{ 'fade-out': isMusicExpanded }">
-          <span ref="textInnerRef" class="scroll-inner" :class="{ 'is-scrolling': scrollDist > 0 && !isMusicExpanded }"
-            :style="scrollDist > 0
-              ? { '--scroll-dist': `${scrollDist}px`, '--scroll-duration': scrollDuration }
-              : {}
-              ">
+          <span
+            ref="textInnerRef"
+            class="scroll-inner"
+            :class="{ 'is-scrolling': scrollDist > 0 && !isMusicExpanded }"
+            :style="
+              scrollDist > 0
+                ? { '--scroll-dist': `${scrollDist}px`, '--scroll-duration': scrollDuration }
+                : {}
+            "
+          >
             {{ compactDisplayText }}
           </span>
         </div>
-        <div class="music-info-text double-line" :class="{ 'fade-in': isMusicExpanded }">
-          <div class="song-title">
-            {{ currentSongName }}
-          </div>
-          <div class="song-artist">
-            {{ currentArtistName }}
-          </div>
+        <div class="music-info-text double-line">
+          <div class="song-title">{{ currentSongName }}</div>
+          <div class="song-artist">{{ currentArtistName }}</div>
         </div>
       </div>
     </div>
     <transition name="fade">
-      <div v-show="isMusicExpanded" class="lyrics-panel">
-        <div class="current-lyric" :class="{ 'is-fallback': !hasCurrentLyric }">
-          {{ expandedLyricText }}
-        </div>
-        <div v-if="lyricsStatus === 'ready' && nextLyricText" class="next-lyric">
-          {{ nextLyricText }}
-        </div>
-      </div>
+      <MusicLyricsPanel
+        v-show="isMusicExpanded"
+        v-bind="{ lyricsStatus, currentLyricText, nextLyricText }"
+        :fallback-text="currentTrackInfo"
+      />
     </transition>
     <transition name="fade">
       <div v-show="isMusicExpanded" class="music-controls">
-        <button class="ctl-btn" @click.stop="$emit('prev-track')">
+        <button class="ctl-btn" aria-label="上一首" @click.stop="$emit('prev-track')">
           <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
           </svg>
         </button>
-        <button class="ctl-btn play-btn" @click.stop="$emit('toggle-play')">
+        <button class="ctl-btn play-btn" aria-label="播放或暂停" @click.stop="$emit('toggle-play')">
           <svg v-if="isPlaying" viewBox="0 0 24 24" fill="currentColor">
             <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
           </svg>
@@ -51,7 +54,7 @@
             <path d="M8 5v14l11-7z" />
           </svg>
         </button>
-        <button class="ctl-btn" @click.stop="$emit('next-track')">
+        <button class="ctl-btn" aria-label="下一首" @click.stop="$emit('next-track')">
           <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
           </svg>
@@ -63,6 +66,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import type { TrackLyricsStatus } from '@/composables/useTrackLyrics';
+import MusicLyricsPanel from './MusicLyricsPanel.vue';
 
 interface Props {
   isPlaying: boolean;
@@ -70,7 +75,7 @@ interface Props {
   currentTrackInfo: string;
   currentSongName: string;
   currentArtistName: string;
-  lyricsStatus: 'idle' | 'loading' | 'ready' | 'not_found' | 'error';
+  lyricsStatus: TrackLyricsStatus;
   currentLyricText: string;
   nextLyricText: string;
   isMusicExpanded: boolean;
@@ -90,27 +95,11 @@ const textInnerRef = ref<HTMLElement | null>(null);
 const scrollDist = ref(0);
 const scrollDuration = ref('8s');
 const hasCurrentLyric = computed(
-  () => props.lyricsStatus === 'ready' && props.currentLyricText.trim().length > 0
+  () => props.lyricsStatus === 'ready' && !!props.currentLyricText.trim()
 );
 const compactDisplayText = computed(() =>
   hasCurrentLyric.value ? props.currentLyricText : props.currentTrackInfo
 );
-const expandedLyricText = computed(() => {
-  if (hasCurrentLyric.value) return props.currentLyricText;
-
-  switch (props.lyricsStatus) {
-    case 'ready':
-      return '等待歌词开始…';
-    case 'loading':
-      return '正在加载歌词…';
-    case 'not_found':
-      return '未找到可同步歌词';
-    case 'error':
-      return '歌词服务暂不可用';
-    default:
-      return props.currentTrackInfo;
-  }
-});
 
 const calculateScroll = () => {
   const maskBox = maskBoxRef.value;
@@ -118,32 +107,14 @@ const calculateScroll = () => {
   if (!maskBox || !textInner) return;
 
   const overflowDistance = textInner.scrollWidth - maskBox.clientWidth;
-  if (overflowDistance > 8) {
-    scrollDist.value = Math.ceil(overflowDistance + 12);
-    scrollDuration.value = `${Math.max(6, scrollDist.value / 18).toFixed(1)}s`;
-  } else {
-    scrollDist.value = 0;
-    scrollDuration.value = '8s';
-  }
+  scrollDist.value = overflowDistance > 8 ? Math.ceil(overflowDistance + 12) : 0;
+  scrollDuration.value = scrollDist.value
+    ? `${Math.max(6, scrollDist.value / 18).toFixed(1)}s`
+    : '8s';
 };
 
-watch(
-  compactDisplayText,
-  () => {
-    nextTick(calculateScroll);
-  }
-);
-
-watch(
-  () => props.isMusicExpanded,
-  () => {
-    nextTick(calculateScroll);
-  }
-);
-
-onMounted(() => {
-  nextTick(calculateScroll);
-});
+watch([compactDisplayText, () => props.isMusicExpanded], () => nextTick(calculateScroll));
+onMounted(() => nextTick(calculateScroll));
 </script>
 
 <style scoped>
@@ -153,6 +124,7 @@ onMounted(() => {
   gap: 8px;
   min-width: 180px;
   width: 100%;
+  cursor: pointer;
 }
 
 .music-top-row {
@@ -232,7 +204,6 @@ onMounted(() => {
 
 .music-info-text.double-line {
   display: none;
-  font-size: 11px;
 }
 
 .music-info-text.double-line .song-title {
@@ -252,40 +223,6 @@ onMounted(() => {
 
 .music-ctl-box.expanded .music-info-text.double-line {
   display: block;
-}
-
-.lyrics-panel {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 2px 2px 0;
-}
-
-.current-lyric {
-  color: currentColor;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.25;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.current-lyric.is-fallback {
-  font-size: 12px;
-  font-weight: 600;
-  opacity: 0.82;
-}
-
-.next-lyric {
-  color: currentColor;
-  font-size: 10px;
-  line-height: 1.2;
-  opacity: 0.55;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .music-controls {
@@ -308,9 +245,8 @@ onMounted(() => {
   background: rgba(255, 255, 255, 0.1);
   color: currentColor;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
   transition: all 0.2s ease;
   padding: 0;
 }
@@ -345,17 +281,12 @@ onMounted(() => {
 }
 
 @keyframes rotate {
-  from {
-    transform: rotate(0deg);
-  }
-
   to {
     transform: rotate(360deg);
   }
 }
 
 @keyframes scroll-ping-pong {
-
   0%,
   20% {
     transform: translateX(0);

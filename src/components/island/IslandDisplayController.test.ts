@@ -80,4 +80,38 @@ describe('IslandDisplayController', () => {
 
     expect(wrapper.text()).toContain('故事的小黄花');
   });
+
+  it('音乐模块透传歌词重连状态', () => {
+    const wrapper = mount(IslandDisplayController, {
+      props: {
+        ...baseProps,
+        display: 'music',
+        mode: 'detail',
+        music: {
+          ...baseProps.music,
+          lyricsStatus: 'retrying',
+        },
+      },
+    });
+
+    expect(wrapper.text()).toContain('歌词服务重连中…');
+  });
+
+  it.each([
+    ['上一首', 'prev-track'],
+    ['播放或暂停', 'toggle-play'],
+    ['下一首', 'next-track'],
+  ] as const)('音乐模块透传%s控制事件', async (ariaLabel, eventName) => {
+    const wrapper = mount(IslandDisplayController, {
+      props: {
+        ...baseProps,
+        display: 'music',
+        mode: 'detail',
+      },
+    });
+
+    await wrapper.find(`[aria-label="${ariaLabel}"]`).trigger('click');
+
+    expect(wrapper.emitted(eventName)).toHaveLength(1);
+  });
 });
