@@ -89,6 +89,12 @@ export const useTrackLyrics = (options: UseTrackLyricsOptions): TrackLyricsContr
     return true;
   };
 
+  const markNotFound = (identity: string): void => {
+    cache.setNegative(identity);
+    lines.value = [];
+    status.value = 'not_found';
+  };
+
   const requestLyrics = async (expectedGeneration: number, identity: string): Promise<void> => {
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
       const request = latestRequest;
@@ -103,15 +109,17 @@ export const useTrackLyrics = (options: UseTrackLyricsOptions): TrackLyricsContr
 
       if (response?.status === 'ready') {
         const normalizedLines = normalizeLyricLines(response.lines);
+        if (normalizedLines.length === 0) {
+          markNotFound(identity);
+          return;
+        }
         cache.setReady(identity, normalizedLines);
         lines.value = normalizedLines;
         status.value = 'ready';
         return;
       }
       if (response?.status === 'not_found') {
-        cache.setNegative(identity);
-        lines.value = [];
-        status.value = 'not_found';
+        markNotFound(identity);
         return;
       }
 

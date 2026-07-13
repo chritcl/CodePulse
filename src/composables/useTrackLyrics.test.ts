@@ -1,6 +1,11 @@
 import { effectScope, ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { LyricsRequest, LyricsResponse, MusicPlaybackState } from '@/shared/ipc/contracts';
+import type {
+  LyricLine,
+  LyricsRequest,
+  LyricsResponse,
+  MusicPlaybackState,
+} from '@/shared/ipc/contracts';
 import { useTrackLyrics } from './useTrackLyrics';
 
 const deferred = <T>() => {
@@ -171,6 +176,36 @@ describe('useTrackLyrics', () => {
     positionMs.value = 500;
     expect(lyrics.currentLyricText.value).toBe('第一句');
     expect(lyrics.nextLyricText.value).toBe('第二句');
+  });
+
+  it.each<{ name: string; lines: LyricLine[] }>([
+    { name: '只有无时间戳纯文本', lines: [{ index: 0, text: '纯文本歌词' }] },
+    {
+      name: '所有歌词行都无效',
+      lines: [
+        { index: 0, startMs: -1, text: '负时间' },
+        { index: 1, startMs: 1_000, text: '   ' },
+      ],
+    },
+    { name: '歌词行为空', lines: [] },
+  ])('就绪响应$name时转为未找到并写入负缓存', async ({ lines: responseLines }) => {
+    const invalidReady: LyricsResponse = { ...ready('无效歌词'), lines: responseLines };
+    const getLyrics = vi
+      .fn()
+      .mockResolvedValueOnce(invalidReady)
+      .mockResolvedValueOnce(ready('另一首歌'));
+    const lyrics = useTrackLyrics({ positionMs: ref(0), getLyrics });
+
+    await lyrics.load(playback());
+    expect(lyrics.status.value).toBe('not_found');
+    expect(lyrics.lines.value).toEqual([]);
+    expect(lyrics.currentLyricText.value).toBe('');
+    expect(lyrics.nextLyricText.value).toBe('');
+
+    await lyrics.load(playback({ title: '另一首歌' }));
+    await lyrics.load(playback());
+    expect(getLyrics).toHaveBeenCalledTimes(2);
+    expect(lyrics.status.value).toBe('not_found');
   });
 
   it('重试时使用同一会话的最新元信息且重复加载不新增请求', async () => {
