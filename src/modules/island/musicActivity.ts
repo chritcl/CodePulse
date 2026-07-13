@@ -10,6 +10,10 @@ export interface MusicActivityActions {
   resetPresentation: () => void;
 }
 
+export interface MusicInitializationActions extends MusicActivityActions {
+  setTargetPlayer: (player: string) => Promise<void>;
+}
+
 export type MusicStartupReceivedState = Record<keyof MusicActivityState, boolean>;
 
 /** 启动期间已收到事件的字段保留当前值，其余字段采用最新持久化设置 */
@@ -22,6 +26,20 @@ export const resolveMusicStartupState = (
   rotationEnabled: received.rotationEnabled ? current.rotationEnabled : persisted.rotationEnabled,
   targetPlayer: received.targetPlayer ? current.targetPlayer : persisted.targetPlayer,
 });
+
+/** 按最终启动状态初始化播放器会话 */
+export const initializeMusicActivity = async (
+  state: MusicActivityState,
+  actions: MusicInitializationActions
+): Promise<void> => {
+  if (state.musicEnabled || state.rotationEnabled) {
+    await actions.start(state.targetPlayer);
+    return;
+  }
+  actions.stop();
+  await actions.setTargetPlayer(state.targetPlayer);
+  actions.resetPresentation();
+};
 
 /** 根据音乐控制和轮换开关统一启停播放器会话 */
 export const syncMusicActivity = async (

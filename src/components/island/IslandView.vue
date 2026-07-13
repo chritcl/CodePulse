@@ -152,6 +152,7 @@ import {
 import { buildPlaybackSessionIdentity } from '@/modules/island/lyrics';
 import {
   createMusicPresentationIdentityTracker,
+  initializeMusicActivity,
   resolveMusicStartupState,
   syncMusicActivity,
 } from '@/modules/island/musicActivity';
@@ -1087,12 +1088,19 @@ onMounted(async () => {
 
   if (isRotationEnabled.value) startRotation();
   try {
-    if (isMusicCtlEnabled.value || isRotationEnabled.value) {
-      await musicSession.start(activeTargetPlayer.value);
-    } else {
-      await musicSession.setTargetPlayer(activeTargetPlayer.value);
-      resetMusicPresentation();
-    }
+    await initializeMusicActivity(
+      {
+        musicEnabled: isMusicCtlEnabled.value,
+        rotationEnabled: isRotationEnabled.value,
+        targetPlayer: activeTargetPlayer.value,
+      },
+      {
+        start: musicSession.start,
+        stop: musicSession.stop,
+        setTargetPlayer: musicSession.setTargetPlayer,
+        resetPresentation: resetMusicPresentation,
+      }
+    );
   } catch (error) {
     if (!disposed) console.error('初始化音乐平台失败:', error);
   }

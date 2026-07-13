@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createMusicPresentationIdentityTracker,
+  initializeMusicActivity,
   resolveMusicStartupState,
   syncMusicActivity,
   type MusicActivityActions,
+  type MusicInitializationActions,
 } from './musicActivity';
 
 const createActions = (): MusicActivityActions => ({
@@ -65,6 +67,71 @@ describe('syncMusicActivity', () => {
     expect(actions.stop).toHaveBeenCalledTimes(1);
     expect(actions.resetPresentation).toHaveBeenCalledTimes(1);
     expect(actions.start).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('initializeMusicActivity', () => {
+  it.each([
+    { musicEnabled: true, rotationEnabled: false },
+    { musicEnabled: false, rotationEnabled: true },
+    { musicEnabled: true, rotationEnabled: true },
+  ])('最终状态活跃时只启动最终目标播放器', async (state) => {
+    const actions: MusicInitializationActions = {
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn(),
+      setTargetPlayer: vi.fn().mockResolvedValue(undefined),
+      resetPresentation: vi.fn(),
+    };
+
+    await initializeMusicActivity({ ...state, targetPlayer: 'qqmusic' }, actions);
+
+    expect(actions.start).toHaveBeenCalledWith('qqmusic');
+    expect(actions.stop).not.toHaveBeenCalled();
+    expect(actions.setTargetPlayer).not.toHaveBeenCalled();
+    expect(actions.resetPresentation).not.toHaveBeenCalled();
+  });
+
+  it('旧状态已启动但最终关闭时按顺序停止并同步最终目标', async () => {
+    const calls: string[] = [];
+    let finishTargetUpdate!: () => void;
+    const targetUpdate = new Promise<void>((resolve) => {
+      finishTargetUpdate = resolve;
+    });
+    const actions: MusicInitializationActions = {
+      start: vi.fn(async (player: string) => {
+        calls.push(`启动:${player}`);
+      }),
+      stop: vi.fn(() => {
+        calls.push('停止');
+      }),
+      setTargetPlayer: vi.fn(async (player: string) => {
+        calls.push(`切换:${player}`);
+        await targetUpdate;
+        calls.push('切换完成');
+      }),
+      resetPresentation: vi.fn(() => {
+        calls.push('重置展示');
+      }),
+    };
+
+    await initializeMusicActivity(
+      { musicEnabled: true, rotationEnabled: false, targetPlayer: 'netease' },
+      actions
+    );
+    const finalInitialization = initializeMusicActivity(
+      { musicEnabled: false, rotationEnabled: false, targetPlayer: 'qqmusic' },
+      actions
+    );
+
+    expect(calls).toEqual(['启动:netease', '停止', '切换:qqmusic']);
+    expect(actions.start).toHaveBeenCalledTimes(1);
+    expect(actions.start).not.toHaveBeenCalledWith('qqmusic');
+    expect(actions.resetPresentation).not.toHaveBeenCalled();
+
+    finishTargetUpdate();
+    await finalInitialization;
+
+    expect(calls).toEqual(['启动:netease', '停止', '切换:qqmusic', '切换完成', '重置展示']);
   });
 });
 
