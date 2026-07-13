@@ -6,6 +6,8 @@ pub mod audio_spectrum_commands;
  */
 pub mod lyrics_commands;
 pub mod media_commands;
+pub mod media_session_commands;
+mod media_timeline;
 pub mod notification_commands;
 pub mod settings_commands;
 pub mod system_commands;
@@ -16,6 +18,7 @@ pub mod window_commands;
 pub use audio_spectrum_commands::*;
 pub use lyrics_commands::*;
 pub use media_commands::*;
+pub use media_session_commands::*;
 pub use notification_commands::*;
 pub use settings_commands::*;
 pub use system_commands::*;
