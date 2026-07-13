@@ -27,7 +27,8 @@ pub struct MusicPlaybackState {
     pub is_playing: bool,
     pub duration_ms: Option<u64>,
     pub position_ms: Option<u64>,
-    pub timeline_sampled_at_ms: u64,
+    pub timeline_updated_at_ms: Option<u64>,
+    pub snapshot_taken_at_ms: u64,
 }
 
 /// 设置目标音乐平台
@@ -165,7 +166,7 @@ pub async fn get_music_playback_state() -> Result<Option<MusicPlaybackState>, St
     let artist = properties.Artist().unwrap_or_default().to_string();
     let album = non_empty_string(properties.AlbumTitle().unwrap_or_default().to_string());
     let timeline = read_timeline_state(&session).unwrap_or_default();
-    let timeline_sampled_at_ms = now_ms();
+    let snapshot_taken_at_ms = now_ms();
 
     Ok(Some(MusicPlaybackState {
         title,
@@ -176,7 +177,8 @@ pub async fn get_music_playback_state() -> Result<Option<MusicPlaybackState>, St
         is_playing,
         duration_ms: timeline.duration_ms,
         position_ms: timeline.position_ms,
-        timeline_sampled_at_ms,
+        timeline_updated_at_ms: timeline.timeline_updated_at_ms,
+        snapshot_taken_at_ms,
     }))
 }
 
@@ -207,30 +209,43 @@ fn read_timeline_state(
     let start_ms = timeline.StartTime().ok().and_then(timespan_to_ms);
     let end_ms = timeline.EndTime().ok().and_then(timespan_to_ms);
     let position_ms = timeline.Position().ok().and_then(timespan_to_ms);
+    let timeline_updated_at_ms = timeline
+        .LastUpdatedTime()
+        .ok()
+        .and_then(|value| datetime_ticks_to_unix_ms(value.UniversalTime));
 
-    Some(build_timeline_snapshot(start_ms, end_ms, position_ms))
+    Some(build_timeline_snapshot(
+        start_ms,
+        end_ms,
+        position_ms,
+        timeline_updated_at_ms,
+    ))
 }
 
 #[derive(Default)]
 struct TimelineSnapshot {
     duration_ms: Option<u64>,
     position_ms: Option<u64>,
+    timeline_updated_at_ms: Option<u64>,
 }
 
 fn build_timeline_snapshot(
     start_ms: Option<u64>,
     end_ms: Option<u64>,
     position_ms: Option<u64>,
+    timeline_updated_at_ms: Option<u64>,
 ) -> TimelineSnapshot {
     let duration_ms = match (start_ms, end_ms) {
         (Some(start), Some(end)) if end > start => Some(end - start),
         _ => None,
     };
-    let position_ms = position_ms.map(|position| position.saturating_sub(start_ms.unwrap_or_default()));
+    let position_ms =
+        position_ms.map(|position| position.saturating_sub(start_ms.unwrap_or_default()));
 
     TimelineSnapshot {
         duration_ms,
         position_ms,
+        timeline_updated_at_ms,
     }
 }
 
@@ -240,6 +255,17 @@ fn timespan_to_ms(value: TimeSpan) -> Option<u64> {
     }
 
     Some((value.Duration / 10_000) as u64)
+}
+
+fn datetime_ticks_to_unix_ms(value: i64) -> Option<u64> {
+    const WINDOWS_UNIX_EPOCH_OFFSET_TICKS: i64 = 116_444_736_000_000_000;
+
+    let ticks_since_unix_epoch = value.checked_sub(WINDOWS_UNIX_EPOCH_OFFSET_TICKS)?;
+    if ticks_since_unix_epoch < 0 {
+        return None;
+    }
+
+    Some((ticks_since_unix_epoch / 10_000) as u64)
 }
 
 fn now_ms() -> u64 {
@@ -263,8 +289,48 @@ mod timeline_tests {
     use super::*;
 
     #[test]
+    fn converts_windows_datetime_to_unix_milliseconds() {
+        let unix_epoch_windows_ticks = 116_444_736_000_000_000_i64;
+        assert_eq!(
+            datetime_ticks_to_unix_ms(unix_epoch_windows_ticks + 12_345_000),
+            Some(1_234)
+        );
+    }
+
+    #[test]
+    fn timeline_snapshot_keeps_source_update_time() {
+        let snapshot = build_timeline_snapshot(Some(500), Some(10_500), Some(2_500), Some(42_000));
+
+        assert_eq!(snapshot.duration_ms, Some(10_000));
+        assert_eq!(snapshot.position_ms, Some(2_000));
+        assert_eq!(snapshot.timeline_updated_at_ms, Some(42_000));
+    }
+
+    #[test]
+    fn playback_state_serializes_time_anchor_fields() {
+        let state = MusicPlaybackState {
+            title: "晴天".to_string(),
+            artist: "周杰伦".to_string(),
+            album: None,
+            source_app_id: "cloudmusic".to_string(),
+            player: "netease".to_string(),
+            is_playing: true,
+            duration_ms: Some(10_000),
+            position_ms: Some(2_000),
+            timeline_updated_at_ms: Some(42_000),
+            snapshot_taken_at_ms: 43_000,
+        };
+
+        let json = serde_json::to_value(state).expect("播放状态应可序列化");
+
+        assert_eq!(json["timelineUpdatedAtMs"], 42_000);
+        assert_eq!(json["snapshotTakenAtMs"], 43_000);
+        assert!(json.get("timelineSampledAtMs").is_none());
+    }
+
+    #[test]
     fn keeps_playback_position_when_duration_is_unavailable() {
-        let snapshot = build_timeline_snapshot(Some(500), None, Some(1_500));
+        let snapshot = build_timeline_snapshot(Some(500), None, Some(1_500), None);
 
         assert_eq!(snapshot.position_ms, Some(1_000));
         assert_eq!(snapshot.duration_ms, None);

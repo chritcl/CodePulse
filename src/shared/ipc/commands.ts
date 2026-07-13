@@ -27,7 +27,7 @@ import type {
 export const mediaCommands = {
   /**
    * 执行媒体控制动作
-   * @param action - 播放/暂停/上一首/下一首/停止
+   * @param action - 播放/暂停/上一首/下一首
    */
   controlSystemMedia: (action: MediaAction): Promise<void> =>
     invoke('control_system_media', { action }),
@@ -41,6 +41,10 @@ export const mediaCommands = {
   /** 获取完整音乐播放状态 */
   getMusicPlaybackState: (): Promise<MusicPlaybackState | null> =>
     invoke('get_music_playback_state'),
+
+  /** 获取歌曲封面 */
+  getRandomCoverUrl: (songName: string, artistName: string): Promise<string> =>
+    invoke('get_random_cover_url', { songName, artistName }),
 
   /**
    * 获取当前歌曲歌词

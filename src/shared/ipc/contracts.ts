@@ -80,7 +80,7 @@ export interface IslandVisibilityPayload {
 // ============================================================
 
 /** 媒体控制动作 */
-export type MediaAction = 'play_pause' | 'prev' | 'next' | 'stop';
+export type MediaAction = 'play_pause' | 'prev' | 'next';
 
 /** 媒体控制命令 */
 export interface MediaControlPayload {
@@ -107,7 +107,8 @@ export interface MusicPlaybackState {
   isPlaying: boolean;
   durationMs?: number;
   positionMs?: number;
-  timelineSampledAtMs: number;
+  timelineUpdatedAtMs?: number;
+  snapshotTakenAtMs: number;
 }
 
 /** 歌词查询请求 */

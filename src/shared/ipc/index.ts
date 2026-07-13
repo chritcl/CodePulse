@@ -27,6 +27,13 @@ export type {
   MediaAction,
   MediaControlPayload,
   SetTargetPlayerPayload,
+  TargetPlayerPayload,
+  MusicPlaybackState,
+  LyricsRequest,
+  LyricLine,
+  LyricsStatus,
+  LyricsSource,
+  LyricsResponse,
   AudioSpectrumData,
 
   // 窗口控制
