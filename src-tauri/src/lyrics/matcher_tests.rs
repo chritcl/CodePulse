@@ -33,6 +33,24 @@ fn track_key_changes_for_different_track() {
 }
 
 #[test]
+fn track_key_preserves_identity_field_boundaries() {
+    let left = TrackIdentity {
+        normalized_title: "a|b".to_string(),
+        normalized_artist: "c".to_string(),
+        normalized_album: String::new(),
+        duration_bucket_ms: 0,
+    };
+    let right = TrackIdentity {
+        normalized_title: "a".to_string(),
+        normalized_artist: "b|c".to_string(),
+        normalized_album: String::new(),
+        duration_bucket_ms: 0,
+    };
+
+    assert_ne!(build_track_key(&left), build_track_key(&right));
+}
+
+#[test]
 fn builds_normalized_identity_with_five_second_duration_bucket() {
     let identity = build_track_identity(&request(Some(269_999)));
 

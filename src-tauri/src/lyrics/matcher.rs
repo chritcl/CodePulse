@@ -37,15 +37,19 @@ pub fn build_track_identity(request: &LyricsTrackRequest) -> TrackIdentity {
 /// 构建稳定的歌曲缓存键
 pub fn build_track_key(source: &(impl TrackKeySource + ?Sized)) -> String {
     let identity = source.track_identity();
-    let payload = format!(
-        "{}|{}|{}|{}",
-        identity.normalized_title,
-        identity.normalized_artist,
-        identity.normalized_album,
-        identity.duration_bucket_ms
-    );
+    let mut digest = Sha256::new();
+    update_key_field(&mut digest, &identity.normalized_title);
+    update_key_field(&mut digest, &identity.normalized_artist);
+    update_key_field(&mut digest, &identity.normalized_album);
+    digest.update(identity.duration_bucket_ms.to_be_bytes());
 
-    format!("{:x}", Sha256::digest(payload.as_bytes()))
+    format!("{:x}", digest.finalize())
+}
+
+fn update_key_field(digest: &mut Sha256, value: &str) {
+    let length = u64::try_from(value.len()).expect("字符串长度不能超过 u64");
+    digest.update(length.to_be_bytes());
+    digest.update(value.as_bytes());
 }
 
 /// 计算候选匹配分

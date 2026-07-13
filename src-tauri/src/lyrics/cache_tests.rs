@@ -115,6 +115,29 @@ fn compatibility_wrappers_round_trip_lyrics() {
 }
 
 #[test]
+fn compatibility_wrappers_do_not_cross_identity_boundaries() {
+    let cache_dir = unique_temp_dir("compatibility-boundaries");
+    let left = TrackIdentity {
+        normalized_title: "a|b".to_string(),
+        normalized_artist: "c".to_string(),
+        normalized_album: String::new(),
+        duration_bucket_ms: 0,
+    };
+    let right = TrackIdentity {
+        normalized_title: "a".to_string(),
+        normalized_artist: "b|c".to_string(),
+        normalized_album: String::new(),
+        duration_bucket_ms: 0,
+    };
+    let left_key = build_track_key(&left);
+    let right_key = build_track_key(&right);
+    save_cached_lyrics(&cache_dir, &left_key, &lyrics("第一句", Some(0))).unwrap();
+
+    assert!(read_cached_lyrics(&cache_dir, &right_key).is_none());
+    let _ = fs::remove_dir_all(cache_dir);
+}
+
+#[test]
 fn rejects_legacy_cache_without_schema_version() {
     let cache_dir = unique_temp_dir("legacy");
     fs::create_dir_all(&cache_dir).unwrap();
