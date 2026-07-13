@@ -36,7 +36,7 @@
 - Produces: `MusicPlaybackState.snapshotTakenAtMs: number`
 - Produces: `mediaCommands.getMusicPlaybackState()`、`setTargetPlayer()`、`controlSystemMedia()`、`getRandomCoverUrl()` 作为唯一前端媒体 IPC 边界
 
-- [ ] **Step 1: 写入失败的 Rust 时间锚点测试**
+- [x] **Step 1: 写入失败的 Rust 时间锚点测试**
 
 ```rust
 #[test]
@@ -54,13 +54,13 @@ fn timeline_snapshot_keeps_source_update_time() {
 }
 ```
 
-- [ ] **Step 2: 运行 Rust 定向测试并确认 RED**
+- [x] **Step 2: 运行 Rust 定向测试并确认 RED**
 
 Run: `cd src-tauri; cargo test timeline_tests --lib`
 
 Expected: FAIL，原因是 `datetime_ticks_to_unix_ms` 或新的时间字段尚不存在。
 
-- [ ] **Step 3: 写入失败的 TypeScript IPC 契约测试**
+- [x] **Step 3: 写入失败的 TypeScript IPC 契约测试**
 
 ```typescript
 it('通过统一命令封装读取播放快照', async () => {
@@ -88,13 +88,13 @@ it('通过统一命令封装读取歌曲封面', async () => {
 });
 ```
 
-- [ ] **Step 4: 运行 IPC 测试并确认 RED**
+- [x] **Step 4: 运行 IPC 测试并确认 RED**
 
 Run: `pnpm test -- src/shared/ipc/commands.test.ts`
 
 Expected: FAIL，原因是公共类型导出和测试边界尚未补齐。
 
-- [ ] **Step 5: 实现 SMTC 锚点与公共契约**
+- [x] **Step 5: 实现 SMTC 锚点与公共契约**
 
 ```typescript
 export interface MusicPlaybackState {
@@ -115,13 +115,13 @@ Rust 从 `LastUpdatedTime()` 读取 Windows `DateTime.UniversalTime`，减去 Wi
 
 同时把未被 Rust 实现的 `stop` 从 `MediaAction` 联合类型移除，避免控制命令静默成功。
 
-- [ ] **Step 6: 运行定向测试并确认 GREEN**
+- [x] **Step 6: 运行定向测试并确认 GREEN**
 
 Run: `pnpm test -- src/shared/ipc/commands.test.ts && cd src-tauri && cargo test timeline_tests --lib`
 
 Expected: PASS。
 
-- [ ] **Step 7: 提交契约变更**
+- [x] **Step 7: 提交契约变更**
 
 ```powershell
 git add src/shared/ipc src-tauri/src/commands/media_commands.rs
@@ -145,7 +145,7 @@ git commit -m "refactor: 统一音乐播放时间锚点契约" -m "Co-Authored-B
 - Produces: `usePlaybackTimeline()`，包含 `positionMs`、`sync()`、`reset()`、`markStale()`、`start()`、`stop()`
 - Produces: `buildPlaybackSessionIdentity()`、`normalizeLyricLines()`、二分实现的 `resolveCurrentLyricLine()`
 
-- [ ] **Step 1: 写入播放时钟失败测试**
+- [x] **Step 1: 写入播放时钟失败测试**
 
 ```typescript
 const playback = (patch: Partial<MusicPlaybackState> = {}): MusicPlaybackState => ({
@@ -182,13 +182,13 @@ it('暂停五秒后从相同位置恢复不会前跳', () => {
 
 同时增加静止锚点、前后跳播、缺失 `timelineUpdatedAtMs`、时长补全、陈旧冻结和系统墙钟跳变测试。
 
-- [ ] **Step 2: 运行时钟测试并确认 RED**
+- [x] **Step 2: 运行时钟测试并确认 RED**
 
 Run: `pnpm test -- src/modules/island/playbackTimeline.test.ts`
 
 Expected: FAIL，原因是新时钟模块不存在。
 
-- [ ] **Step 3: 实现纯播放时钟**
+- [x] **Step 3: 实现纯播放时钟**
 
 ```typescript
 export interface PlaybackTimelineClock {
@@ -275,7 +275,7 @@ export const createPlaybackTimelineClock = (): PlaybackTimelineClock => {
 
 跳播阈值为 1,500ms；状态变化总是重新锚定；有 `timelineUpdatedAtMs` 时以源锚点计算报告位置，没有时对重复静止位置保持本地推进。
 
-- [ ] **Step 4: 写入歌词身份和二分匹配失败测试**
+- [x] **Step 4: 写入歌词身份和二分匹配失败测试**
 
 ```typescript
 const lyric = (index: number, startMs: number, endMs?: number): LyricLine => ({
@@ -300,23 +300,23 @@ it('会排序歌词并在结束时间后清空当前句', () => {
 });
 ```
 
-- [ ] **Step 5: 运行歌词纯逻辑测试并确认 RED**
+- [x] **Step 5: 运行歌词纯逻辑测试并确认 RED**
 
 Run: `pnpm test -- src/modules/island/lyrics.test.ts`
 
 Expected: FAIL，原因是稳定会话身份、规范化和 `endMs` 语义尚未实现。
 
-- [ ] **Step 6: 实现歌词纯逻辑与响应式包装**
+- [x] **Step 6: 实现歌词纯逻辑与响应式包装**
 
 `usePlaybackTimeline` 每 100ms 刷新响应式位置，只调用纯时钟；`stop()` 必须清除 timer，`markStale()` 冻结当前位置。删除旧的 `estimatePlaybackPosition` 与 `createLyricTimelineClock`，避免第二套时间算法继续存在。
 
-- [ ] **Step 7: 运行 Task 2 测试并确认 GREEN**
+- [x] **Step 7: 运行 Task 2 测试并确认 GREEN**
 
 Run: `pnpm test -- src/modules/island/playbackTimeline.test.ts src/composables/usePlaybackTimeline.test.ts src/modules/island/lyrics.test.ts`
 
 Expected: PASS。
 
-- [ ] **Step 8: 提交播放时间线**
+- [x] **Step 8: 提交播放时间线**
 
 ```powershell
 git add src/modules/island src/composables
@@ -342,7 +342,7 @@ git commit -m "refactor: 重建音乐播放时间线" -m "Co-Authored-By: Claude
 - Produces: `parse_lrc() -> Result<Vec<LyricLine>, LyricsParseError>`
 - Produces: `LyricsCacheRepository::read()`、`write()`
 
-- [ ] **Step 1: 写入匹配器失败测试**
+- [x] **Step 1: 写入匹配器失败测试**
 
 ```rust
 #[test]
@@ -363,7 +363,7 @@ fn preserves_character_order_in_title_similarity() {
 }
 ```
 
-- [ ] **Step 2: 写入解析器和缓存失败测试**
+- [x] **Step 2: 写入解析器和缓存失败测试**
 
 ```rust
 #[test]
@@ -407,13 +407,13 @@ fn cache_rejects_expired_or_mismatched_identity() {
 }
 ```
 
-- [ ] **Step 3: 运行 Rust 核心测试并确认 RED**
+- [x] **Step 3: 运行 Rust 核心测试并确认 RED**
 
 Run: `cd src-tauri; cargo test lyrics::matcher lyrics::parser lyrics::cache --lib`
 
 Expected: FAIL，原因是新身份、严格解析和缓存校验尚不存在。
 
-- [ ] **Step 4: 实现身份、顺序敏感匹配和严格解析**
+- [x] **Step 4: 实现身份、顺序敏感匹配和严格解析**
 
 ```rust
 pub struct TrackIdentity {
@@ -431,7 +431,7 @@ pub fn parse_lrc(raw_lrc: &str, translation_lrc: Option<&str>)
 
 同时把两个现有 provider 调整为处理 `parse_lrc()` 的 `Result`。`cache.rs` 暂时保留 `read_cached_lyrics()` 与 `save_cached_lyrics()` 兼容包装，它们内部调用新仓库，直到 Task 4 将命令层迁移到 `LyricsService`。
 
-- [ ] **Step 5: 实现 schema 3 缓存仓库**
+- [x] **Step 5: 实现 schema 3 缓存仓库**
 
 ```rust
 fn unique_temp_dir(label: &str) -> PathBuf {
@@ -456,13 +456,13 @@ impl LyricsCacheRepository {
 
 缓存保存身份、`fetchedAtMs`、解析器版本和 provider；写入使用同目录临时文件后替换目标文件。添加 `sha2 = "0.10"` 直接依赖用于稳定键。
 
-- [ ] **Step 6: 运行 Rust 核心测试并确认 GREEN**
+- [x] **Step 6: 运行 Rust 核心测试并确认 GREEN**
 
 Run: `cd src-tauri; cargo test lyrics::matcher lyrics::parser lyrics::cache --lib`
 
 Expected: PASS。
 
-- [ ] **Step 7: 提交歌词核心**
+- [x] **Step 7: 提交歌词核心**
 
 ```powershell
 git add src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/src/lyrics
@@ -492,7 +492,7 @@ git commit -m "refactor: 重建歌词解析匹配与缓存" -m "Co-Authored-By: 
 - Produces: `LyricsResponse.errorCode?: invalid_request | timeout | upstream | cache`
 - Produces: `LyricsResponse.retryable: boolean`
 
-- [ ] **Step 1: 写入 provider 编排失败测试**
+- [x] **Step 1: 写入 provider 编排失败测试**
 
 ```rust
 struct FakeProvider {
@@ -584,13 +584,13 @@ async fn returns_retryable_error_when_no_provider_hits_and_one_fails() {
 
 增加多个命中选择最高置信度、八秒总期限、空标题输入拒绝和相同服务复用 Client 的测试。
 
-- [ ] **Step 2: 运行服务测试并确认 RED**
+- [x] **Step 2: 运行服务测试并确认 RED**
 
 Run: `cd src-tauri; cargo test lyrics::service --lib`
 
 Expected: FAIL，原因是服务层和可注入 provider 尚不存在。
 
-- [ ] **Step 3: 实现错误类型、provider trait 和服务编排**
+- [x] **Step 3: 实现错误类型、provider trait 和服务编排**
 
 ```rust
 #[async_trait::async_trait]
@@ -611,11 +611,11 @@ pub struct LyricsService {
 
 当 `request.player` 能映射到 QQ 音乐或网易云时，对应 provider 优先执行，但仍收集另一个 provider 的结果用于全局置信度比较。
 
-- [ ] **Step 4: 强化生产 provider HTTP 边界**
+- [x] **Step 4: 强化生产 provider HTTP 边界**
 
 两个 provider 使用共享 Client；每个响应先 `error_for_status()`，再读取 bytes 并限制为 512 KiB，最后反序列化。Client 请求期限为三秒。解析错误、HTTP 状态和超大响应均返回带 provider 与阶段的 `LyricsProviderError`。
 
-- [ ] **Step 5: 将 Tauri 命令改为 State 适配器**
+- [x] **Step 5: 将 Tauri 命令改为 State 适配器**
 
 ```rust
 #[tauri::command]
@@ -635,13 +635,13 @@ pub async fn get_lyrics_for_track(
 
 同步更新 TypeScript `LyricsResponse`：`retryable` 为必填布尔值，`errorCode` 为可选的 `invalid_request | timeout | upstream | cache`。
 
-- [ ] **Step 6: 运行服务与歌词模块测试并确认 GREEN**
+- [x] **Step 6: 运行服务与歌词模块测试并确认 GREEN**
 
 Run: `cd src-tauri; cargo test lyrics --lib`
 
 Expected: PASS，且测试不访问真实网络。
 
-- [ ] **Step 7: 提交歌词服务**
+- [x] **Step 7: 提交歌词服务**
 
 ```powershell
 git add src-tauri
@@ -661,7 +661,7 @@ git commit -m "refactor: 建立统一歌词服务" -m "Co-Authored-By: Claude <n
 - Consumes: `mediaCommands.getLyricsForTrack()` 和 Task 4 的 `retryable`
 - Produces: `useTrackLyrics({ positionMs })`
 
-- [ ] **Step 1: 写入歌词状态机失败测试**
+- [x] **Step 1: 写入歌词状态机失败测试**
 
 ```typescript
 const deferred = <T>() => {
@@ -746,13 +746,13 @@ it('可重试错误按一秒和三秒退避后恢复', async () => {
 
 增加 `not_found` 五分钟负缓存、不可重试错误、卸载清理和位置后退重新匹配测试。
 
-- [ ] **Step 2: 运行状态机测试并确认 RED**
+- [x] **Step 2: 运行状态机测试并确认 RED**
 
 Run: `pnpm test -- src/composables/useTrackLyrics.test.ts`
 
 Expected: FAIL，原因是组合式函数不存在。
 
-- [ ] **Step 3: 实现歌词状态机**
+- [x] **Step 3: 实现歌词状态机**
 
 ```typescript
 export type TrackLyricsStatus = 'idle' | 'loading' | 'ready' | 'not_found' | 'retrying' | 'error';
@@ -770,13 +770,13 @@ export const useTrackLyrics = (options: UseTrackLyricsOptions) => ({
 
 ready 内存缓存最多 50 首；`not_found` 负缓存五分钟；可重试错误最多重试两次，延迟为 1,000ms 和 3,000ms。内部 generation 在切歌、reset 和 dispose 时递增，所有 Promise 完成前校验 generation。
 
-- [ ] **Step 4: 运行歌词状态机及纯逻辑测试并确认 GREEN**
+- [x] **Step 4: 运行歌词状态机及纯逻辑测试并确认 GREEN**
 
 Run: `pnpm test -- src/composables/useTrackLyrics.test.ts src/modules/island/lyrics.test.ts`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交歌词状态机**
+- [x] **Step 5: 提交歌词状态机**
 
 ```powershell
 git add src/composables src/shared/ipc/contracts.ts
@@ -796,7 +796,7 @@ git commit -m "refactor: 重建前端歌词状态机" -m "Co-Authored-By: Claude
 - Consumes: Task 2 的 `usePlaybackTimeline()`
 - Produces: `playback`、`status`、`start()`、`stop()`、`setTargetPlayer()`、`syncNow()`、`control()`
 
-- [ ] **Step 1: 写入会话失败测试**
+- [x] **Step 1: 写入会话失败测试**
 
 ```typescript
 const deferred = <T>() => {
@@ -870,13 +870,13 @@ it('连续三秒失败后冻结时间线为 stale', async () => {
 
 增加播放控制成功后立即同步、控制失败不乐观翻转、stop 清 timer、重复 start 不创建双循环的测试。
 
-- [ ] **Step 2: 运行会话测试并确认 RED**
+- [x] **Step 2: 运行会话测试并确认 RED**
 
 Run: `pnpm test -- src/composables/useMusicPlaybackSession.test.ts`
 
 Expected: FAIL，原因是会话组合式函数不存在。
 
-- [ ] **Step 3: 实现串行播放器会话**
+- [x] **Step 3: 实现串行播放器会话**
 
 ```typescript
 export type MusicSessionStatus = 'idle' | 'ready' | 'stale' | 'error';
@@ -894,13 +894,13 @@ export const useMusicPlaybackSession = (options: UseMusicPlaybackSessionOptions)
 
 轮询周期 1,000ms；成功同步更新时间并调用 timeline.sync；连续失败超过 3,000ms 时调用 timeline.markStale；所有请求使用 generation，`stop()`、切换播放器和重新 start 都会使旧结果失效。
 
-- [ ] **Step 4: 运行会话与时间线测试并确认 GREEN**
+- [x] **Step 4: 运行会话与时间线测试并确认 GREEN**
 
 Run: `pnpm test -- src/composables/useMusicPlaybackSession.test.ts src/composables/usePlaybackTimeline.test.ts src/modules/island/playbackTimeline.test.ts`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交播放器会话**
+- [x] **Step 5: 提交播放器会话**
 
 ```powershell
 git add src/composables src/shared/ipc/contracts.ts
@@ -923,7 +923,7 @@ git commit -m "refactor: 重建音乐播放器会话" -m "Co-Authored-By: Claude
 - Consumes: Tasks 2、5、6 的三个 composable
 - Produces: 保持现有 `MusicContent` props 与事件行为
 
-- [ ] **Step 1: 写入集成回归测试**
+- [x] **Step 1: 写入集成回归测试**
 
 ```typescript
 it('歌词重试状态显示正在重新连接', () => {
@@ -940,13 +940,13 @@ it('播放控制事件仍由内容分发器透传', async () => {
 });
 ```
 
-- [ ] **Step 2: 运行组件测试并确认 RED**
+- [x] **Step 2: 运行组件测试并确认 RED**
 
 Run: `pnpm test -- src/components/island/MusicContent.test.ts src/components/island/IslandDisplayController.test.ts`
 
 Expected: FAIL，原因是 `retrying` 展示状态尚未接入。
 
-- [ ] **Step 3: 用新 composable 替换 IslandView 旧状态**
+- [x] **Step 3: 用新 composable 替换 IslandView 旧状态**
 
 ```typescript
 const playbackTimeline = usePlaybackTimeline();
@@ -961,25 +961,25 @@ watch(musicSession.playback, (playback) => {
 
 删除 `musicTimer`、`lyricPositionTimer`、`isMusicSyncing`、`lyricsRequestId`、`createLyricTimelineClock`、`syncMusicStatus` 和 `loadLyricsForPlayback`。控制按钮改为调用 `musicSession.control()`。
 
-- [ ] **Step 4: 完成生命周期和封面竞态清理**
+- [x] **Step 4: 完成生命周期和封面竞态清理**
 
 所有音乐相关 `listen()` 返回值加入 `UnlistenFn[]`；卸载时依次执行，随后调用 `musicSession.stop()`、`playbackTimeline.stop()`、`trackLyrics.dispose()`。异步 `onMounted` 使用 disposed 标志，组件已经卸载时不再注册后续监听器或 timer。封面请求增加 generation 与曲目身份校验，旧请求不得覆盖或清空新封面。歌词展示文案与样式移入 `MusicLyricsPanel.vue`，让 `MusicContent.vue` 回到 300 行以内。
 
 删除 `src/types/index.ts` 中未使用且与 IPC 毫秒位置语义冲突的 `MusicState` / `MusicData` 重复结构；如果仍有调用则迁移到 `MusicPlaybackState`。
 
-- [ ] **Step 5: 运行音乐相关前端测试并确认 GREEN**
+- [x] **Step 5: 运行音乐相关前端测试并确认 GREEN**
 
 Run: `pnpm test -- src/modules/island/lyrics.test.ts src/modules/island/playbackTimeline.test.ts src/composables/usePlaybackTimeline.test.ts src/composables/useTrackLyrics.test.ts src/composables/useMusicPlaybackSession.test.ts src/components/island/MusicContent.test.ts src/components/island/IslandDisplayController.test.ts`
 
 Expected: PASS。
 
-- [ ] **Step 6: 检查文件规模与中文注释**
+- [x] **Step 6: 检查文件规模与中文注释**
 
 Run: `Get-ChildItem src -Recurse -File -Include *.ts,*.vue | ForEach-Object { $count=(Get-Content -LiteralPath $_.FullName -Encoding UTF8).Count; if ($_.Extension -eq '.vue' -and $count -gt 300) { "$count $($_.FullName)" } }`
 
 Expected: 新建或完成拆分的 composable 均不超过 200 行；本任务不向超过限制的组件继续堆积业务逻辑，音乐业务逻辑从 `IslandView.vue` 明显减少。
 
-- [ ] **Step 7: 提交集成变更**
+- [x] **Step 7: 提交集成变更**
 
 ```powershell
 git add src
@@ -996,7 +996,7 @@ git commit -m "refactor: 接入全新歌词与播放进度链路" -m "Co-Authore
 - Consumes: Tasks 1–7 的全部实现
 - Produces: 可复现的测试、构建、格式、lint、Clippy 与编码验证记录
 
-- [ ] **Step 1: 运行前端全量验证**
+- [x] **Step 1: 运行前端全量验证**
 
 Run: `pnpm test`
 
@@ -1014,7 +1014,7 @@ Run: `pnpm run build`
 
 Expected: exit 0。
 
-- [ ] **Step 2: 运行 Rust 全量验证**
+- [x] **Step 2: 运行 Rust 全量验证**
 
 Run: `cd src-tauri; cargo test --lib`
 
@@ -1028,7 +1028,7 @@ Run: `cd src-tauri; cargo clippy --all-targets --all-features -- -D warnings`
 
 Expected: exit 0。
 
-- [ ] **Step 3: 检查 UTF-8 without BOM 与禁用锁文件**
+- [x] **Step 3: 检查 UTF-8 without BOM 与禁用锁文件**
 
 ```powershell
 $textExtensions = @('.ts', '.vue', '.rs', '.toml', '.json', '.md', '.css', '.html')
@@ -1046,15 +1046,23 @@ if (Test-Path yarn.lock) { throw '禁止存在 yarn.lock' }
 
 Expected: 无输出、无异常。
 
-- [ ] **Step 4: 复核需求清单和 git diff**
+- [x] **Step 4: 复核需求清单和 git diff**
 
 Run: `git diff --check; git status --short; git diff --stat $(git merge-base main HEAD)..HEAD`
 
 Expected: 无空白错误；只包含设计、测试和音乐歌词重构相关文件。
 
-- [ ] **Step 5: 提交文档收尾**
+- [x] **Step 5: 提交文档收尾**
 
 ```powershell
 git add docs
 git commit -m "docs: 完成音乐歌词重构记录" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
+
+### 验证记录（2026-07-13）
+
+- 前端：`pnpm test` 通过，22 个测试文件共 186 个测试；`pnpm run typecheck`、`pnpm run lint`、`pnpm run build` 均以 0 退出。
+- Rust：`cargo test` 通过，库测试 58 个；`cargo clippy --all-targets --all-features -- -D warnings`、`cargo build`、`cargo check` 均通过。
+- 格式：本分支变更的 24 个 Rust 文件均通过 Rustfmt；全仓 `cargo fmt --check` 仅因未修改的 `src-tauri/build.rs` 与 `src-tauri/src/main.rs` 既有换行风格退出非零，未在本任务中扩大改动范围。
+- Lint：全仓为 0 错误、5386 条告警，低于主分支基线的 11538 条；新增前端文件定向检查为 0 错误、0 告警，本次新增的两条模板告警已修复。
+- 静态审计：变更文件均为严格 UTF-8 without BOM，无 `package-lock.json` 或 `yarn.lock`，`git diff --check` 通过；新增文件规模、中文注释和本次新增监听器的清理符合项目约束。
