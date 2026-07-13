@@ -126,13 +126,17 @@
 import { ref, onMounted, onUnmounted, computed, watch, nextTick, type CSSProperties } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { listen, emit, type UnlistenFn } from '@tauri-apps/api/event';
+import { emit } from '@tauri-apps/api/event';
 
 import {
   useIslandWindow,
   useIslandAnimation,
   useIslandDrag,
   useMusicSpectrum,
+  useMusicPlaybackSession,
+  usePlaybackTimeline,
+  useTrackCover,
+  useTrackLyrics,
 } from '@/composables';
 import {
   resolveIslandLayout,
@@ -145,20 +149,14 @@ import {
   normalizeTargetPlayer,
   readTargetPlayer,
 } from '@/modules/island/musicPlatform';
+import { buildPlaybackSessionIdentity } from '@/modules/island/lyrics';
 import {
-  buildTrackIdentity,
-  createLyricTimelineClock,
-  resolveCurrentLyricLine,
-} from '@/modules/island/lyrics';
+  createMusicPresentationIdentityTracker,
+  syncMusicActivity,
+} from '@/modules/island/musicActivity';
 import { hasStorageValue, readBoolean, writeBoolean } from '@/shared/utils/storage';
-import type {
-  LyricLine,
-  LyricsResponse,
-  LyricsStatus,
-  MusicPlaybackState,
-  SystemToastType,
-  TargetPlayerPayload,
-} from '@/shared/ipc/contracts';
+import { createEventListenerRegistry } from '@/shared/utils/eventListenerRegistry';
+import type { SystemToastType, TargetPlayerPayload } from '@/shared/ipc/contracts';
 import { useIslandContextMenu } from './IslandContextMenu';
 
 import IslandShell from './IslandShell.vue';
@@ -184,8 +182,6 @@ interface SystemToastItem {
   type: SystemToastType;
 }
 
-type MusicLyricsStatus = LyricsStatus | 'idle' | 'loading';
-
 type ElementRect = ReturnType<HTMLElement['getBoundingClientRect']>;
 
 interface IslandShellExpose {
@@ -204,6 +200,12 @@ const animation = useIslandAnimation();
 const drag = useIslandDrag();
 const contextMenu = useIslandContextMenu();
 const islandShellRef = ref<IslandShellExpose | null>(null);
+const playbackTimeline = usePlaybackTimeline();
+const musicSession = useMusicPlaybackSession({ timeline: playbackTimeline });
+const trackLyrics = useTrackLyrics({ positionMs: playbackTimeline.positionMs });
+const trackCover = useTrackCover();
+const eventListeners = createEventListenerRegistry();
+const musicPresentationIdentity = createMusicPresentationIdentityTracker();
 
 // ============================================================
 // 状态
@@ -237,50 +239,22 @@ const memUsage = ref('0%');
 /** 音乐控制相关 */
 const isMusicCtlEnabled = ref(readBoolean('nsd_music_ctrl'));
 const activeTargetPlayer = ref(readTargetPlayer());
-const isPlaying = ref(false);
-const coverUrl = ref('');
-const coverCache = new Map<string, string>();
-const currentSongName = ref('未在播放歌曲');
-const currentArtistName = ref('');
-const currentAlbumName = ref('');
-const currentTrackInfo = ref('');
-const currentPlaybackPositionMs = ref<number | null>(null);
-const lyricLines = ref<LyricLine[]>([]);
-const lyricsStatus = ref<MusicLyricsStatus>('idle');
-const lyricsTrackIdentity = ref('');
-const lyricTimelineClock = createLyricTimelineClock();
-let timelineTrackIdentity = '';
+const isPlaying = computed(() => musicSession.playback.value?.isPlaying ?? false);
+const coverUrl = trackCover.coverUrl;
+const currentSongName = computed(() => musicSession.playback.value?.title || '未在播放歌曲');
+const currentArtistName = computed(() => {
+  const playback = musicSession.playback.value;
+  if (!playback) return getPlayerName(activeTargetPlayer.value);
+  return playback.artist.trim() || '未知歌手';
+});
+const currentTrackInfo = computed(() => `${currentSongName.value} - ${currentArtistName.value}`);
+const lyricsStatus = trackLyrics.status;
+const currentLyricText = trackLyrics.currentLyricText;
+const nextLyricText = trackLyrics.nextLyricText;
 const musicBoxKey = ref(0);
 const expandedKind = ref<IslandDisplayKind | null>(null);
 const isMusicExpanded = computed(() => expandedKind.value === 'music');
 let expandCollapseTimer: number | null = null;
-let lyricsRequestId = 0;
-
-/** 重置音乐占位信息 */
-const resetMusicPlaceholder = () => {
-  const playerName = getPlayerName(activeTargetPlayer.value);
-  currentSongName.value = '未在播放歌曲';
-  currentArtistName.value = playerName;
-  currentAlbumName.value = '';
-  currentTrackInfo.value = `未在播放歌曲 - ${playerName}`;
-  currentPlaybackPositionMs.value = null;
-  timelineTrackIdentity = '';
-  lyricTimelineClock.reset();
-  coverUrl.value = '';
-};
-
-/** 重置歌词状态 */
-const resetLyricsState = () => {
-  lyricsRequestId += 1;
-  lyricLines.value = [];
-  lyricsStatus.value = 'idle';
-  lyricsTrackIdentity.value = '';
-  currentPlaybackPositionMs.value = null;
-  timelineTrackIdentity = '';
-  lyricTimelineClock.reset();
-};
-
-resetMusicPlaceholder();
 
 /** 消息模式相关 */
 const isMsgModeEnabled = ref(readBoolean('nsd_msg_mode'));
@@ -313,17 +287,21 @@ const manualFocusUntil = ref(0);
 const stableMainKind = ref<IslandDisplayKind | null>(null);
 const hardwareStrongActive = ref(false);
 let hardwareHighSampleCount = 0;
-let layoutClockTimer: number;
+let layoutClockTimer: number | null = null;
 
 /** 定时器 */
-let speedTimer: number;
-let pingTimer: number;
-let musicTimer: number;
-let lyricPositionTimer: number;
-let notifyTimer: number;
-let isMusicSyncing = false;
-let systemEventUnlisten: UnlistenFn | null = null;
-let batteryEventUnlisten: UnlistenFn | null = null;
+let speedTimer: number | null = null;
+let pingTimer: number | null = null;
+let notifyTimer: number | null = null;
+let disposed = false;
+let delayedVisibilityTimer: number | null = null;
+let delayedMessageHideTimer: number | null = null;
+let delayedToastHideTimer: number | null = null;
+interface PendingDelay {
+  timer: number;
+  resolve: (active: boolean) => void;
+}
+const pendingDelays = new Set<PendingDelay>();
 
 /** 流量监控相关 */
 let lastRx = 0;
@@ -419,17 +397,6 @@ const activeDisplay = computed<IslandDisplayKind>(() => islandLayout.value.main)
 
 /** 是否展示音乐内容 */
 const displayMusic = computed(() => activeDisplay.value === 'music');
-
-/** 当前歌词匹配结果 */
-const currentLyricState = computed(() =>
-  resolveCurrentLyricLine(lyricLines.value, currentPlaybackPositionMs.value)
-);
-
-/** 当前歌词文本 */
-const currentLyricText = computed(() => currentLyricState.value.currentLine?.text ?? '');
-
-/** 下一句歌词文本 */
-const nextLyricText = computed(() => currentLyricState.value.nextLine?.text ?? '');
 
 /** 主岛当前表面样式 */
 const activeCoreStyle = computed<CSSProperties>(() => {
@@ -531,18 +498,45 @@ const updateHardwareSeverity = () => {
 
 /** 推入系统操作通知 */
 const showToast = (text: string, type: SystemToastType = 'app') => {
-  if (!text.trim()) return;
+  if (disposed || !text.trim()) return;
   toastQueue.value.push({ text, type });
   void processToastQueue();
 };
 
+/** 创建可在组件卸载时中止的延迟 */
+const waitForLifecycleDelay = (delayMs: number): Promise<boolean> =>
+  new Promise((resolve) => {
+    if (disposed) {
+      resolve(false);
+      return;
+    }
+    const pending: PendingDelay = {
+      timer: 0,
+      resolve,
+    };
+    pending.timer = window.setTimeout(() => {
+      pendingDelays.delete(pending);
+      resolve(!disposed);
+    }, delayMs);
+    pendingDelays.add(pending);
+  });
+
+/** 清理所有等待中的生命周期延迟 */
+const clearLifecycleDelays = () => {
+  for (const pending of pendingDelays) {
+    window.clearTimeout(pending.timer);
+    pending.resolve(false);
+  }
+  pendingDelays.clear();
+};
+
 /** 顺序展示系统操作通知 */
 const processToastQueue = async () => {
-  if (isProcessingToast || toastQueue.value.length === 0) return;
+  if (disposed || isProcessingToast || toastQueue.value.length === 0) return;
   if (isMsgActive.value) return;
 
   isProcessingToast = true;
-  // 记录 toast 开始前灵动岛是否已可见，用于判断是否为消息模式临时显示
+  // 记录系统提示开始前灵动岛是否已可见，用于判断是否为消息模式临时显示
   const islandWasVisible = isIslandVisible.value;
   const nextToast = toastQueue.value.shift();
 
@@ -556,14 +550,15 @@ const processToastQueue = async () => {
 
     if (isMsgModeEnabled.value && !isIslandVisible.value) {
       await getCurrentWindow().show();
+      if (disposed) return;
       isIslandVisible.value = true;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, SYSTEM_TOAST_MS));
+    if (!(await waitForLifecycleDelay(SYSTEM_TOAST_MS))) return;
     displaySysToast.value = false;
     sysToastSoftUntil.value = 0;
     refreshLayoutNow();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    if (!(await waitForLifecycleDelay(200))) return;
   }
 
   isProcessingToast = false;
@@ -571,7 +566,10 @@ const processToastQueue = async () => {
     void processToastQueue();
   } else if (isMsgModeEnabled.value && !isMsgActive.value && !islandWasVisible) {
     // 仅当灵动岛之前不可见（消息模式临时显示）时，才在 toast 结束后隐藏
-    window.setTimeout(() => {
+    if (delayedToastHideTimer !== null) window.clearTimeout(delayedToastHideTimer);
+    delayedToastHideTimer = window.setTimeout(() => {
+      delayedToastHideTimer = null;
+      if (disposed) return;
       if (!isMsgActive.value && !displaySysToast.value) {
         isIslandVisible.value = false;
       }
@@ -600,6 +598,7 @@ const setNetworkStatus = (nextStatus: 'good' | 'warning' | 'error') => {
 const fetchSpeedStats = async () => {
   try {
     const [currentRx, currentTx] = await invoke<[number, number]>('get_network_stats');
+    if (disposed) return;
     if (lastRx !== 0) {
       const rxDiff = currentRx - lastRx;
       const txDiff = currentTx - lastTx;
@@ -621,7 +620,7 @@ const fetchSpeedStats = async () => {
     lastRx = currentRx;
     lastTx = currentTx;
   } catch (error) {
-    console.error('流量获取失败:', error);
+    if (!disposed) console.error('流量获取失败:', error);
   }
 };
 
@@ -641,6 +640,7 @@ const fetchGpuUsage = async () => {
 const checkNetworkLatency = async () => {
   try {
     const latency = await invoke<number>('get_network_latency');
+    if (disposed) return;
 
     if (latency < 150) {
       setNetworkStatus('good');
@@ -648,6 +648,7 @@ const checkNetworkLatency = async () => {
       setNetworkStatus('warning');
     }
   } catch {
+    if (disposed) return;
     if (isHighDownload.value || isHighUpload.value) {
       setNetworkStatus('warning');
       return;
@@ -662,142 +663,51 @@ const checkNetworkLatency = async () => {
   }
 };
 
-/** 同步目标播放器到 Rust */
-const syncTargetPlayer = async (player: string | null | undefined = readTargetPlayer()) => {
+/** 重置音乐展示状态，保留歌词和封面缓存 */
+const resetMusicPresentation = () => {
+  trackLyrics.reset();
+  trackCover.reset();
+};
+
+/** 按当前开关同步播放器会话的活动状态 */
+const syncMusicModuleActivity = () =>
+  syncMusicActivity(
+    {
+      musicEnabled: isMusicCtlEnabled.value,
+      rotationEnabled: isRotationEnabled.value,
+      targetPlayer: activeTargetPlayer.value,
+    },
+    {
+      start: musicSession.start,
+      stop: musicSession.stop,
+      resetPresentation: resetMusicPresentation,
+    }
+  );
+
+/** 切换目标播放器，并立即失效旧歌词与封面请求 */
+const switchTargetPlayer = async (player: string | null | undefined) => {
   const targetPlayer = normalizeTargetPlayer(player);
   activeTargetPlayer.value = targetPlayer;
-
+  resetMusicPresentation();
   try {
-    await invoke('set_target_player', { player: targetPlayer });
-  } catch (err) {
-    console.error('同步音乐平台失败:', err);
+    await musicSession.setTargetPlayer(targetPlayer);
+  } catch (error) {
+    if (!disposed) console.error('同步音乐平台失败:', error);
   }
-
-  return targetPlayer;
 };
 
-/** 更新本地推算的播放位置 */
-const updateLyricPlaybackPosition = () => {
-  currentPlaybackPositionMs.value = lyricTimelineClock.getPosition();
-};
-
-/** 同步当前曲目封面 */
-const syncCoverForTrack = async (trackInfo: string, song: string, artist: string) => {
-  if (coverCache.has(trackInfo)) {
-    coverUrl.value = coverCache.get(trackInfo)!;
-    return;
-  }
-
+/** 执行媒体控制，不提前修改本地播放状态 */
+const controlMusic = async (action: 'play_pause' | 'prev' | 'next') => {
   try {
-    const realCoverUrl = await invoke<string>('get_random_cover_url', {
-      songName: song,
-      artistName: artist,
-    });
-    coverUrl.value = realCoverUrl;
-    if (coverCache.size > 50) coverCache.clear();
-    coverCache.set(trackInfo, realCoverUrl);
-  } catch (coverErr) {
-    console.error('所有封面源均获取失败:', coverErr);
-    coverUrl.value = '';
+    await musicSession.control(action);
+  } catch (error) {
+    if (!disposed) console.error('播放控制失败:', error);
   }
 };
 
-/** 为当前曲目加载歌词 */
-const loadLyricsForPlayback = async (playback: MusicPlaybackState) => {
-  const trackIdentity = buildTrackIdentity(playback);
-  if (!trackIdentity || lyricsTrackIdentity.value === trackIdentity) return;
-
-  lyricsTrackIdentity.value = trackIdentity;
-  lyricLines.value = [];
-  lyricsStatus.value = 'loading';
-  const requestId = ++lyricsRequestId;
-
-  try {
-    const response = await invoke<LyricsResponse>('get_lyrics_for_track', {
-      title: playback.title,
-      artist: playback.artist,
-      album: playback.album,
-      durationMs: playback.durationMs,
-      player: playback.player || activeTargetPlayer.value,
-    });
-
-    if (requestId !== lyricsRequestId || lyricsTrackIdentity.value !== trackIdentity) return;
-
-    lyricsStatus.value = response.status;
-    lyricLines.value = response.status === 'ready' ? response.lines : [];
-    updateLyricPlaybackPosition();
-  } catch (err) {
-    if (requestId !== lyricsRequestId || lyricsTrackIdentity.value !== trackIdentity) return;
-    console.error('歌词获取失败:', err);
-    lyricsStatus.value = 'error';
-    lyricLines.value = [];
-  }
-};
-
-/** 同步音乐状态 */
-const syncMusicStatus = async () => {
-  if (isMusicSyncing) return;
-  isMusicSyncing = true;
-
-  try {
-    const playback = await invoke<MusicPlaybackState | null>('get_music_playback_state');
-
-    if (!playback) {
-      resetMusicPlaceholder();
-      resetLyricsState();
-      isPlaying.value = false;
-      return;
-    }
-
-    const playbackIdentity = buildTrackIdentity(playback);
-    if (timelineTrackIdentity !== playbackIdentity) {
-      timelineTrackIdentity = playbackIdentity;
-      lyricTimelineClock.reset();
-    }
-
-    currentSongName.value = playback.title;
-    currentArtistName.value = playback.artist || '未知歌手';
-    currentAlbumName.value = playback.album ?? '';
-    isPlaying.value = playback.isPlaying;
-    lyricTimelineClock.sync(playback);
-    updateLyricPlaybackPosition();
-
-    const newTrackInfo = playback.artist ? `${playback.title} - ${playback.artist}` : playback.title;
-
-    if (currentTrackInfo.value !== newTrackInfo) {
-      currentTrackInfo.value = newTrackInfo;
-      void syncCoverForTrack(newTrackInfo, playback.title, playback.artist);
-      musicBoxKey.value++;
-    }
-
-    void loadLyricsForPlayback(playback);
-  } catch (err) {
-    console.error('音乐信息获取失败:', err);
-  } finally {
-    isMusicSyncing = false;
-  }
-};
-
-/** 切换播放 */
-const togglePlay = async () => {
-  isPlaying.value = !isPlaying.value;
-  try {
-    await invoke('control_system_media', { action: 'play_pause' });
-  } catch (err) {
-    console.error('播放控制失败:', err);
-    isPlaying.value = !isPlaying.value;
-  }
-};
-
-/** 上一首 */
-const prevTrack = async () => {
-  await invoke('control_system_media', { action: 'prev' });
-};
-
-/** 下一首 */
-const nextTrack = async () => {
-  await invoke('control_system_media', { action: 'next' });
-};
+const togglePlay = () => controlMusic('play_pause');
+const prevTrack = () => controlMusic('prev');
+const nextTrack = () => controlMusic('next');
 
 /** 获取卫星按钮元素 */
 const getSatelliteButtonFromEvent = (kind: IslandDisplayKind, event: MouseEvent) => {
@@ -811,7 +721,8 @@ const handleSatelliteSelect = async (kind: IslandDisplayKind, event: MouseEvent)
   const previousMain = activeDisplay.value;
   const shell = islandShellRef.value;
   const selectedButton = getSatelliteButtonFromEvent(kind, event);
-  const selectedRect = selectedButton?.getBoundingClientRect() ?? shell?.getSatelliteRect(kind) ?? null;
+  const selectedRect =
+    selectedButton?.getBoundingClientRect() ?? shell?.getSatelliteRect(kind) ?? null;
   const previousMainRect = shell?.getMainRect() ?? null;
 
   await animation.playPressSpring(selectedButton, { scale: 0.88 });
@@ -828,9 +739,8 @@ const handleSatelliteSelect = async (kind: IslandDisplayKind, event: MouseEvent)
 
   const nextShell = islandShellRef.value;
   const mainElement = nextShell?.getMainElement() ?? null;
-  const oldMainSatellite = previousMain !== kind
-    ? nextShell?.getSatelliteElement(previousMain) ?? null
-    : null;
+  const oldMainSatellite =
+    previousMain !== kind ? (nextShell?.getSatelliteElement(previousMain) ?? null) : null;
 
   await Promise.all([
     animation.playFlipSpring(mainElement, selectedRect),
@@ -855,10 +765,13 @@ const handleMainClick = async (event: MouseEvent) => {
 
 /** 处理鼠标离开 */
 const handleMouseLeave = () => {
-  if (!expandedKind.value) return;
+  if (disposed || !expandedKind.value) return;
 
   if (expandCollapseTimer) clearTimeout(expandCollapseTimer);
-  expandCollapseTimer = window.setTimeout(collapseExpanded, 1000);
+  expandCollapseTimer = window.setTimeout(() => {
+    expandCollapseTimer = null;
+    if (!disposed) collapseExpanded();
+  }, 1000);
 };
 
 /** 处理鼠标进入 */
@@ -886,6 +799,7 @@ const handleMsgClick = async () => {
         aumid: msgAumid.value,
         appName: msgTitle.value,
       });
+      if (disposed) return;
 
       isMsgActive.value = false;
       notificationUnreadCount.value = 0;
@@ -932,9 +846,10 @@ const handleRightClick = async (event: MouseEvent) => {
 
 /** 启动轮换 */
 const startRotation = () => {
+  if (disposed) return;
   if (rotationTimer) clearInterval(rotationTimer);
   rotationTimer = window.setInterval(() => {
-    currentRotIndex.value = (currentRotIndex.value + 1) % 3;
+    if (!disposed) currentRotIndex.value = (currentRotIndex.value + 1) % 3;
   }, 5000);
 };
 
@@ -950,12 +865,41 @@ const stopRotation = () => {
 // 监听器
 // ============================================================
 
+watch(
+  musicSession.playback,
+  (playback) => {
+    if (playback) {
+      void trackLyrics.load(playback);
+    } else {
+      trackLyrics.reset();
+    }
+  },
+  { flush: 'sync' }
+);
+
+watch(
+  () => buildPlaybackSessionIdentity(musicSession.playback.value),
+  (identity) => {
+    if (!identity) {
+      trackCover.reset();
+      return;
+    }
+    const playback = musicSession.playback.value;
+    if (musicPresentationIdentity.isNew(identity)) musicBoxKey.value += 1;
+    if (playback) void trackCover.load(playback);
+  },
+  { flush: 'sync' }
+);
+
 watch(activeDisplay, (newVal) => {
   if (expandedKind.value && expandedKind.value !== newVal) {
     collapseExpanded();
   }
 
-  if (!['system-toast'].includes(newVal) && !['soft-interrupt', 'strong-interrupt'].includes(islandLayout.value.reason)) {
+  if (
+    !['system-toast'].includes(newVal) &&
+    !['soft-interrupt', 'strong-interrupt'].includes(islandLayout.value.reason)
+  ) {
     stableMainKind.value = newVal;
   }
 });
@@ -988,81 +932,72 @@ watch(isMsgActive, (newVal) => {
 // 生命周期
 // ============================================================
 
+const preventDocumentContextMenu = (event: Event) => event.preventDefault();
+
 onMounted(async () => {
+  if (disposed) return;
   window.addEventListener('blur', collapseExpanded);
+  document.addEventListener('contextmenu', preventDocumentContextMenu, true);
   layoutClockTimer = window.setInterval(refreshLayoutNow, 500);
 
-  document.addEventListener(
-    'contextmenu',
-    (e) => {
-      e.preventDefault();
-    },
-    { capture: true }
-  );
-
-  // 监听音乐控制器状态
-  await listen<{ enabled: boolean }>('control-music-ctl', async (event) => {
-    const isEnabled = event.payload.enabled;
-    isMusicCtlEnabled.value = isEnabled;
-
-    if (isEnabled) {
-      if (!hasStorageValue('nsd_glow_border')) {
-        isGlowBorderEnabled.value = true;
-        writeBoolean('nsd_glow_border', true);
-      }
-      await syncTargetPlayer();
-      resetMusicPlaceholder();
-      resetLyricsState();
-      await syncMusicStatus();
-      musicBoxKey.value++;
+  await eventListeners.register<{ enabled: boolean }>('control-music-ctl', async (event) => {
+    isMusicCtlEnabled.value = event.payload.enabled;
+    if (event.payload.enabled && !hasStorageValue('nsd_glow_border')) {
+      isGlowBorderEnabled.value = true;
+      writeBoolean('nsd_glow_border', true);
+    }
+    try {
+      await syncMusicModuleActivity();
+    } catch (error) {
+      if (!disposed) console.error('切换音乐控制状态失败:', error);
     }
   });
+  if (disposed) return;
 
-  // 监听目标播放器同步
-  await listen<TargetPlayerPayload>('control-target-player', async (event) => {
-    await syncTargetPlayer(event.payload.player);
-    resetMusicPlaceholder();
-    resetLyricsState();
-    if (isMusicCtlEnabled.value || isRotationEnabled.value) {
-      await syncMusicStatus();
-    }
-    musicBoxKey.value++;
+  await eventListeners.register<TargetPlayerPayload>('control-target-player', async (event) => {
+    await switchTargetPlayer(event.payload.player);
+    if (disposed) return;
   });
+  if (disposed) return;
 
-  // 监听透明度同步
-  await listen<{ opacity: number }>('control-island-opacity', (event) => {
+  await eventListeners.register<{ opacity: number }>('control-island-opacity', (event) => {
     islandWindow.setOpacity(event.payload.opacity);
   });
+  if (disposed) return;
 
-  // 监听主题同步
-  await listen<{ theme: string }>('control-island-theme', (event) => {
+  await eventListeners.register<{ theme: string }>('control-island-theme', (event) => {
     islandWindow.setTheme(event.payload.theme);
   });
+  if (disposed) return;
 
-  // 监听任务栏停靠
-  await listen<{ enabled: boolean }>('control-pin-taskbar', async (event) => {
+  await eventListeners.register<{ enabled: boolean }>('control-pin-taskbar', async (event) => {
     islandWindow.setPinnedToTaskbar(event.payload.enabled);
     if (event.payload.enabled) {
       await islandWindow.snapToBottomLeft();
     } else {
       await islandWindow.adjustWindowPosition();
     }
+    if (disposed) return;
   });
+  if (disposed) return;
 
-  // 监听消息模式
-  await listen<{ enabled: boolean }>('control-msg-mode', async (event) => {
+  await eventListeners.register<{ enabled: boolean }>('control-msg-mode', async (event) => {
     isMsgModeEnabled.value = event.payload.enabled;
     if (isMsgModeEnabled.value && !isMsgActive.value) {
       isIslandVisible.value = false;
-    } else if (!isMsgModeEnabled.value) {
+      return;
+    }
+    if (!isMsgModeEnabled.value) {
       await getCurrentWindow().show();
+      if (disposed) return;
       isIslandVisible.value = true;
       await emit('island-status-sync', { visible: true });
+      if (disposed) return;
     }
   });
+  if (disposed) return;
 
-  // 监听轮换模式
-  await listen<{ enabled: boolean }>('control-rotation-mode', (event) => {
+  await eventListeners.register<{ enabled: boolean }>('control-rotation-mode', async (event) => {
     isRotationEnabled.value = event.payload.enabled;
     if (isRotationEnabled.value) {
       startRotation();
@@ -1070,13 +1005,20 @@ onMounted(async () => {
       stopRotation();
       currentRotIndex.value = 0;
     }
+    try {
+      await syncMusicModuleActivity();
+    } catch (error) {
+      if (!disposed) console.error('切换轮换模式失败:', error);
+    }
   });
+  if (disposed) return;
 
-  systemEventUnlisten = await listen<string>('system-event', (event) => {
+  await eventListeners.register<string>('system-event', (event) => {
     showToast(event.payload, 'sys');
   });
+  if (disposed) return;
 
-  batteryEventUnlisten = await listen<BatteryEventPayload>('battery-event', (event) => {
+  await eventListeners.register<BatteryEventPayload>('battery-event', (event) => {
     const { state, percent } = event.payload;
     if (state === 'charging') {
       showToast(`已接入电源，当前电量 ${percent}%`, 'battery-charge');
@@ -1084,163 +1026,162 @@ onMounted(async () => {
       showToast(`电池电量低，剩余 ${percent}%`, 'battery-low');
     }
   });
+  if (disposed) return;
 
-  // 启动时如果开了轮换，就跑起来
-  if (isRotationEnabled.value) {
-    startRotation();
+  await eventListeners.register<{ enabled: boolean }>('control-hardware-mon', (event) => {
+    isHardwareMonEnabled.value = event.payload.enabled;
+  });
+  if (disposed) return;
+
+  await eventListeners.register<{ show: boolean }>('control-island-visibility', async (event) => {
+    if (!event.payload.show) {
+      isIslandVisible.value = false;
+      return;
+    }
+    await getCurrentWindow().show();
+    if (disposed) return;
+    await getCurrentWindow().setAlwaysOnTop(true);
+    if (disposed) return;
+    if (delayedVisibilityTimer !== null) window.clearTimeout(delayedVisibilityTimer);
+    delayedVisibilityTimer = window.setTimeout(() => {
+      delayedVisibilityTimer = null;
+      if (!disposed) isIslandVisible.value = true;
+    }, 40);
+  });
+  if (disposed) return;
+
+  await eventListeners.register<number[]>('island-resize', (event) => {
+    const [width, height] = event.payload;
+    islandWindow.currentWidth.value = width;
+    islandWindow.currentHeight.value = height;
+  });
+  if (disposed) return;
+
+  if (isRotationEnabled.value) startRotation();
+  try {
+    if (isMusicCtlEnabled.value || isRotationEnabled.value) {
+      await musicSession.start(activeTargetPlayer.value);
+    } else {
+      await musicSession.setTargetPlayer(activeTargetPlayer.value);
+      resetMusicPresentation();
+    }
+  } catch (error) {
+    if (!disposed) console.error('初始化音乐平台失败:', error);
   }
+  if (disposed) return;
 
-  await syncTargetPlayer();
-  resetMusicPlaceholder();
-  resetLyricsState();
-  if (isMusicCtlEnabled.value || isRotationEnabled.value) {
-    await syncMusicStatus();
-  }
-
-  // 根据持久化设置决定是否显示灵动岛
   const islandEnabled = readBoolean('nsd_island_enabled', true);
   if (islandEnabled && !isMsgModeEnabled.value) {
-    // 先设置内容可见，再显示窗口，避免窗口出现但内容不可见
     isIslandVisible.value = true;
-
-    // 初始化位置（内部会调用 show）
     try {
       await getCurrentWindow().innerPosition();
     } catch {
-      /* 忽略 */
+      // 窗口尚未完成定位时继续使用后续位置修正
     }
-
+    if (disposed) return;
     if (islandWindow.isPinnedToTaskbar.value) {
       await islandWindow.snapToBottomLeft();
     } else {
       await islandWindow.adjustWindowPosition();
     }
-
-    // 同步状态到主窗口
+    if (disposed) return;
     await emit('island-status-sync', { visible: true });
+    if (disposed) return;
   }
 
-  // 监听硬件监控开关
-  await listen<{ enabled: boolean }>('control-hardware-mon', (event) => {
-    isHardwareMonEnabled.value = event.payload.enabled;
-  });
+  void fetchSpeedStats();
+  void checkNetworkLatency();
 
-  // 启动定时器
-  fetchSpeedStats();
-  checkNetworkLatency();
-
-  // 高频定时器：网速和硬件监控
-  speedTimer = setInterval(async () => {
+  speedTimer = window.setInterval(async () => {
+    if (disposed) return;
     if (islandWindow.isPinnedToTaskbar.value && isIslandVisible.value && !isMenuOpen.value) {
-      invoke('force_window_topmost').catch(() => {});
+      void invoke('force_window_topmost').catch(() => {});
     }
-
-    fetchSpeedStats();
-
-    if (isHardwareMonEnabled.value || isRotationEnabled.value) {
-      try {
-        const [cpu, usedMem, totalMem] =
-          await invoke<[number, number, number]>('get_hardware_stats');
-        cpuUsage.value = Math.round(cpu) + '%';
-        if (totalMem > 0) {
-          memUsage.value = Math.round((usedMem / totalMem) * 100) + '%';
-        }
-        await fetchGpuUsage();
-        updateHardwareSeverity();
-      } catch (err) {
-        console.error('获取硬件信息失败:', err);
-      }
-    }
-  }, 800) as unknown as number;
-
-  // 中频定时器：音乐状态同步
-  musicTimer = setInterval(() => {
-    if (isMusicCtlEnabled.value || isRotationEnabled.value) {
-      syncMusicStatus();
-    }
-  }, 1000);
-
-  // 高频本地计时器：歌词位置推算，不访问 Rust
-  lyricPositionTimer = setInterval(updateLyricPlaybackPosition, 250) as unknown as number;
-
-  // 低频定时器：系统通知轮询
-  notifyTimer = setInterval(async () => {
-    const enabled = readBoolean('nsd_msg_notify');
-    if (!enabled) return;
-
+    await fetchSpeedStats();
+    if (disposed || (!isHardwareMonEnabled.value && !isRotationEnabled.value)) return;
     try {
-      const res = await invoke<LatestNotificationPayload | null>('fetch_latest_notification');
-      if (res) {
-        msgTitle.value = res.app_name;
-        msgAumid.value = res.aumid;
-        msgBody.value = res.body ? `${res.title}: ${res.body}` : res.title;
-        currentMsgIcon.value = getAppIcon(res.app_name);
-        notificationUnreadCount.value += 1;
-        notificationSoftUntil.value = Date.now() + NOTIFICATION_SOFT_MS;
-        refreshLayoutNow();
+      const [cpu, usedMem, totalMem] = await invoke<[number, number, number]>('get_hardware_stats');
+      if (disposed) return;
+      cpuUsage.value = Math.round(cpu) + '%';
+      if (totalMem > 0) memUsage.value = Math.round((usedMem / totalMem) * 100) + '%';
+      await fetchGpuUsage();
+      if (disposed) return;
+      updateHardwareSeverity();
+    } catch (error) {
+      if (!disposed) console.error('获取硬件信息失败:', error);
+    }
+  }, 800);
 
-        if (!isMsgActive.value) {
-          isMsgActive.value = true;
-          if (isMsgModeEnabled.value && !isIslandVisible.value) {
-            getCurrentWindow().show();
-            isIslandVisible.value = true;
-          }
+  notifyTimer = window.setInterval(async () => {
+    if (disposed || !readBoolean('nsd_msg_notify')) return;
+    try {
+      const notification = await invoke<LatestNotificationPayload | null>(
+        'fetch_latest_notification'
+      );
+      if (disposed || !notification) return;
+      msgTitle.value = notification.app_name;
+      msgAumid.value = notification.aumid;
+      msgBody.value = notification.body
+        ? `${notification.title}: ${notification.body}`
+        : notification.title;
+      currentMsgIcon.value = getAppIcon(notification.app_name);
+      notificationUnreadCount.value += 1;
+      notificationSoftUntil.value = Date.now() + NOTIFICATION_SOFT_MS;
+      refreshLayoutNow();
+
+      if (!isMsgActive.value) {
+        isMsgActive.value = true;
+        if (isMsgModeEnabled.value && !isIslandVisible.value) {
+          await getCurrentWindow().show();
+          if (disposed) return;
+          isIslandVisible.value = true;
         }
-
-        if (msgTimer) clearTimeout(msgTimer);
-        msgTimer = window.setTimeout(() => {
-          isMsgActive.value = false;
-          notificationSoftUntil.value = 0;
-          refreshLayoutNow();
-          if (isMsgModeEnabled.value) {
-            setTimeout(() => {
-              if (!isMsgActive.value) isIslandVisible.value = false;
-            }, 600);
-          }
-        }, 5000);
       }
-    } catch (err) {
-      console.error(err);
+
+      if (msgTimer !== null) window.clearTimeout(msgTimer);
+      msgTimer = window.setTimeout(() => {
+        msgTimer = null;
+        if (disposed) return;
+        isMsgActive.value = false;
+        notificationSoftUntil.value = 0;
+        refreshLayoutNow();
+        if (!isMsgModeEnabled.value) return;
+        if (delayedMessageHideTimer !== null) window.clearTimeout(delayedMessageHideTimer);
+        delayedMessageHideTimer = window.setTimeout(() => {
+          delayedMessageHideTimer = null;
+          if (!disposed && !isMsgActive.value) isIslandVisible.value = false;
+        }, 600);
+      }, 5000);
+    } catch (error) {
+      if (!disposed) console.error(error);
     }
   }, 2500);
 
   musicSpectrum.start();
-
-  // 低频定时器：网络延迟检查
-  pingTimer = setInterval(checkNetworkLatency, 5500) as unknown as number;
-
-  // 监听显隐调度
-  await listen<{ show: boolean }>('control-island-visibility', async (event) => {
-    if (event.payload.show) {
-      await getCurrentWindow().show();
-      await getCurrentWindow().setAlwaysOnTop(true);
-      setTimeout(() => {
-        isIslandVisible.value = true;
-      }, 40);
-    } else {
-      isIslandVisible.value = false;
-    }
-  });
-
-  // 监听窗口大小变化
-  await listen<number[]>('island-resize', (event) => {
-    const [w, h] = event.payload;
-    islandWindow.currentWidth.value = w;
-    islandWindow.currentHeight.value = h;
-  });
+  pingTimer = window.setInterval(() => void checkNetworkLatency(), 5500);
 });
 
 onUnmounted(() => {
+  disposed = true;
+  trackCover.dispose();
   window.removeEventListener('blur', collapseExpanded);
-  clearInterval(layoutClockTimer);
-  clearInterval(speedTimer);
-  clearInterval(pingTimer);
-  stopRotation();
-  clearInterval(musicTimer);
-  clearInterval(lyricPositionTimer);
-  clearInterval(notifyTimer);
+  document.removeEventListener('contextmenu', preventDocumentContextMenu, true);
+  eventListeners.dispose();
+  musicSession.stop();
+  playbackTimeline.stop();
+  trackLyrics.dispose();
   musicSpectrum.stop();
-  systemEventUnlisten?.();
-  batteryEventUnlisten?.();
+
+  if (layoutClockTimer !== null) window.clearInterval(layoutClockTimer);
+  if (speedTimer !== null) window.clearInterval(speedTimer);
+  if (pingTimer !== null) window.clearInterval(pingTimer);
+  if (notifyTimer !== null) window.clearInterval(notifyTimer);
+  stopRotation();
+  if (msgTimer !== null) window.clearTimeout(msgTimer);
+  if (expandCollapseTimer !== null) window.clearTimeout(expandCollapseTimer);
+  if (delayedVisibilityTimer !== null) window.clearTimeout(delayedVisibilityTimer);
+  if (delayedMessageHideTimer !== null) window.clearTimeout(delayedMessageHideTimer);
+  if (delayedToastHideTimer !== null) window.clearTimeout(delayedToastHideTimer);
+  clearLifecycleDelays();
 });
 </script>

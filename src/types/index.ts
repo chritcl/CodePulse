@@ -51,17 +51,6 @@ export type TrafficStats = Record<string, DailyTraffic>;
 /** 支持的音乐平台 */
 export type MusicPlatform = 'netease' | 'spotify' | 'apple' | 'qqmusic' | 'kugou' | 'echo';
 
-/** 音乐播放状态 */
-export interface MusicState {
-  title: string;
-  artist: string;
-  album?: string;
-  coverUrl?: string;
-  isPlaying: boolean;
-  progress?: number; // 0.0 - 1.0
-  duration?: number; // 毫秒
-}
-
 // ============================================================
 // 硬件监控
 // ============================================================

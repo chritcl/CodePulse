@@ -236,18 +236,6 @@ export interface HardwareData {
   timestamp: number;
 }
 
-/** 音乐状态 */
-export interface MusicData {
-  title: string;
-  artist: string;
-  album?: string;
-  coverUrl?: string;
-  isPlaying: boolean;
-  progress?: number; // 0.0 - 1.0
-  duration?: number; // 毫秒
-  timestamp: number;
-}
-
 /** 通知数据 */
 export interface NotificationData {
   id: string;

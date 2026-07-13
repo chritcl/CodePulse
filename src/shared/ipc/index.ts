@@ -54,7 +54,6 @@ export type {
   // 系统状态
   NetworkSpeedData,
   HardwareData,
-  MusicData,
   NotificationData,
 
   // R4 统一状态类型

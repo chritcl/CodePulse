@@ -13,3 +13,4 @@ export { useMusicSpectrum } from './useMusicSpectrum';
 export { usePlaybackTimeline } from './usePlaybackTimeline';
 export { useTrackLyrics } from './useTrackLyrics';
 export { useMusicPlaybackSession } from './useMusicPlaybackSession';
+export { useTrackCover } from './useTrackCover';
