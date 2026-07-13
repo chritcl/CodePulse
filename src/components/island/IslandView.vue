@@ -192,7 +192,7 @@ interface IslandShellExpose {
 }
 
 // ============================================================
-// Composables
+// 组合式函数
 // ============================================================
 
 const islandWindow = useIslandWindow();
@@ -565,7 +565,7 @@ const processToastQueue = async () => {
   if (toastQueue.value.length > 0) {
     void processToastQueue();
   } else if (isMsgModeEnabled.value && !isMsgActive.value && !islandWasVisible) {
-    // 仅当灵动岛之前不可见（消息模式临时显示）时，才在 toast 结束后隐藏
+    // 仅当灵动岛之前不可见（消息模式临时显示）时，才在系统提示结束后隐藏
     if (delayedToastHideTimer !== null) window.clearTimeout(delayedToastHideTimer);
     delayedToastHideTimer = window.setTimeout(() => {
       delayedToastHideTimer = null;
@@ -624,7 +624,7 @@ const fetchSpeedStats = async () => {
   }
 };
 
-/** 获取 GPU 使用率 */
+/** 获取图形处理器使用率 */
 const fetchGpuUsage = async () => {
   try {
     const cpuNum = parseInt(cpuUsage.value) || 10;

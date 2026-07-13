@@ -152,7 +152,6 @@
 <script setup lang="ts">
 import { useSettingsStore } from '@/stores';
 import { emit } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
 import type { MusicPlatform, IslandTheme } from '@/types';
 
 import neteaseIcon from '@/assets/musci163.svg';
@@ -177,11 +176,6 @@ const players = [
 /** 设置音乐平台 */
 const handleSetPlayer = async (player: MusicPlatform) => {
   settingsStore.setTargetPlayer(player);
-  try {
-    await invoke('set_target_player', { player });
-  } catch (e) {
-    console.error('切换平台失败', e);
-  }
   await emit('control-target-player', { player });
 };
 

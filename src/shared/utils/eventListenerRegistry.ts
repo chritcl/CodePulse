@@ -26,14 +26,20 @@ export const createEventListenerRegistry = (listenEvent: EventListen = listen) =
 
   const register = async <T>(eventName: string, handler: EventHandler<T>): Promise<void> => {
     if (disposed) return;
-    const unlisten = await listenEvent<T>(eventName, (event) => {
-      if (disposed) return;
-      try {
-        void Promise.resolve(handler(event)).catch(reportHandlerError);
-      } catch (error) {
-        reportHandlerError(error);
-      }
-    });
+    let unlisten: UnlistenFn;
+    try {
+      unlisten = await listenEvent<T>(eventName, (event) => {
+        if (disposed) return;
+        try {
+          void Promise.resolve(handler(event)).catch(reportHandlerError);
+        } catch (error) {
+          reportHandlerError(error);
+        }
+      });
+    } catch (error) {
+      console.error('注册事件监听失败:', eventName, error);
+      return;
+    }
     if (disposed) {
       safelyUnlisten(unlisten);
       return;

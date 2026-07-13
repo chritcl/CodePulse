@@ -1,5 +1,5 @@
 /**
- * Composables 入口
+ * 组合式函数入口
  */
 
 export { useTheme } from './useTheme';

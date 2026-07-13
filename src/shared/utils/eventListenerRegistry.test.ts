@@ -109,4 +109,23 @@ describe('createEventListenerRegistry', () => {
     expect(consoleError).toHaveBeenCalledWith('事件处理失败:', expect.any(Error));
     consoleError.mockRestore();
   });
+
+  it('单个底层监听注册失败不会阻断后续注册和清理', async () => {
+    const unlisten = vi.fn();
+    const listenEvent: EventListen = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('首次注册失败'))
+      .mockResolvedValueOnce(unlisten);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const registry = createEventListenerRegistry(listenEvent);
+
+    await expect(registry.register('失败事件', () => {})).resolves.toBeUndefined();
+    await registry.register('成功事件', () => {});
+    registry.dispose();
+
+    expect(consoleError).toHaveBeenCalledWith('注册事件监听失败:', '失败事件', expect.any(Error));
+    expect(listenEvent).toHaveBeenCalledTimes(2);
+    expect(unlisten).toHaveBeenCalledTimes(1);
+    consoleError.mockRestore();
+  });
 });

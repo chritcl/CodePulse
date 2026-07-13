@@ -6,6 +6,11 @@ export const MIN_SPECTRUM = [0.35, 0.35, 0.35, 0.35, 0.35] as const;
 type SpectrumFrame = [number, number, number, number, number];
 type SpectrumFetcher = () => Promise<number[]>;
 
+interface ActiveSpectrumRequest {
+  generation: number;
+  promise: Promise<void>;
+}
+
 const MAX_BAR_SCALE = 0.95;
 const STATIC_FRAME_LIMIT = 3;
 const STATIC_EPSILON = 0.012;
@@ -49,6 +54,8 @@ export const useMusicSpectrum = (
   let previousFrame: SpectrumFrame | null = null;
   let staticFrameCount = 0;
   let fallbackFrameIndex = 0;
+  let generation = 0;
+  let activeRequest: ActiveSpectrumRequest | null = null;
 
   const resetSpectrum = () => {
     spectrumData.value = [...MIN_SPECTRUM];
@@ -57,14 +64,15 @@ export const useMusicSpectrum = (
     fallbackFrameIndex = 0;
   };
 
-  const syncSpectrum = async () => {
+  const performSync = async (requestGeneration: number) => {
     if (!isPlaying.value || !displayMusic.value) {
-      resetSpectrum();
+      if (generation === requestGeneration) resetSpectrum();
       return;
     }
 
     try {
       const nextFrame = toSpectrumFrame(await fetchSpectrum());
+      if (generation !== requestGeneration) return;
       if (isStaticFrame(nextFrame, previousFrame)) {
         staticFrameCount += 1;
       } else {
@@ -80,12 +88,26 @@ export const useMusicSpectrum = (
 
       spectrumData.value = nextFrame;
     } catch {
-      resetSpectrum();
+      if (generation === requestGeneration) resetSpectrum();
     }
+  };
+
+  const syncSpectrum = (): Promise<void> => {
+    const requestGeneration = generation;
+    if (activeRequest?.generation === requestGeneration) return activeRequest.promise;
+    const promise = performSync(requestGeneration);
+    activeRequest = { generation: requestGeneration, promise };
+    const finish = () => {
+      if (activeRequest?.promise === promise) activeRequest = null;
+    };
+    void promise.then(finish, finish);
+    return promise;
   };
 
   const start = () => {
     if (timer !== null) return;
+    generation += 1;
+    activeRequest = null;
     void syncSpectrum();
     timer = window.setInterval(() => {
       void syncSpectrum();
@@ -93,9 +115,11 @@ export const useMusicSpectrum = (
   };
 
   const stop = () => {
-    if (timer === null) return;
-    clearInterval(timer);
+    generation += 1;
+    activeRequest = null;
+    if (timer !== null) clearInterval(timer);
     timer = null;
+    resetSpectrum();
   };
 
   return {
