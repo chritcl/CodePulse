@@ -1,5 +1,9 @@
 export interface MusicTargetCoordinator {
   select(player: string): MusicTargetSelection;
+  enqueueOperation(
+    selection: MusicTargetSelection,
+    operation: () => Promise<void>
+  ): Promise<boolean>;
   invalidate(): void;
   isCurrent(selection: MusicTargetSelection): boolean;
   waitForCurrent(): Promise<MusicTargetSelection | null>;
@@ -46,8 +50,32 @@ export const createMusicTargetCoordinator = (
     return null;
   };
 
+  const enqueueOperation = (
+    selection: MusicTargetSelection,
+    operation: () => Promise<void>
+  ): Promise<boolean> => {
+    const expectedInvalidation = invalidationId;
+    const queued = tail.then(async () => {
+      if (invalidationId !== expectedInvalidation) return false;
+      try {
+        await selection.committed;
+      } catch {
+        return false;
+      }
+      if (invalidationId !== expectedInvalidation) return false;
+      await operation();
+      return true;
+    });
+    tail = queued.then(
+      () => undefined,
+      () => undefined
+    );
+    return queued;
+  };
+
   return {
     select,
+    enqueueOperation,
     invalidate: () => {
       invalidationId += 1;
       current = null;

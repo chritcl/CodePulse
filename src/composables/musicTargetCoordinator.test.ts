@@ -78,4 +78,61 @@ describe('musicTargetCoordinator', () => {
     await expect(waiting).resolves.toBeNull();
     await expect(restarted.committed).resolves.toBeUndefined();
   });
+
+  it('当前目标操作会阻止后续目标写入超车', async () => {
+    const operationDone = deferred<void>();
+    const events: string[] = [];
+    const writeTarget = vi.fn(async (player: string) => {
+      events.push(`写入:${player}`);
+    });
+    const coordinator = createMusicTargetCoordinator(writeTarget);
+    const first = coordinator.select('qqmusic');
+    await first.committed;
+
+    const operation = coordinator.enqueueOperation(first, async () => {
+      events.push('控制:开始');
+      await operationDone.promise;
+      events.push('控制:结束');
+    });
+    await Promise.resolve();
+    const second = coordinator.select('netease');
+    await Promise.resolve();
+
+    expect(writeTarget).toHaveBeenCalledTimes(1);
+    operationDone.resolve();
+    await Promise.all([operation, second.committed]);
+    expect(events).toEqual(['写入:qqmusic', '控制:开始', '控制:结束', '写入:netease']);
+  });
+
+  it('会话失效会跳过尚未开始的当前目标操作', async () => {
+    const targetWrite = deferred<void>();
+    const writeTarget = vi.fn(() => targetWrite.promise);
+    const operationBody = vi.fn().mockResolvedValue(undefined);
+    const coordinator = createMusicTargetCoordinator(writeTarget);
+    const selection = coordinator.select('qqmusic');
+    const operation = coordinator.enqueueOperation(selection, operationBody);
+
+    coordinator.invalidate();
+    targetWrite.resolve();
+
+    await expect(operation).resolves.toBe(false);
+    expect(operationBody).not.toHaveBeenCalled();
+  });
+
+  it('目标写入失败会跳过操作但不阻断后续队列', async () => {
+    const writeTarget = vi
+      .fn<(player: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('目标失败'))
+      .mockResolvedValueOnce(undefined);
+    const operationBody = vi.fn().mockResolvedValue(undefined);
+    const coordinator = createMusicTargetCoordinator(writeTarget);
+    const failed = coordinator.select('netease');
+    const operation = coordinator.enqueueOperation(failed, operationBody);
+    const recovered = coordinator.select('qqmusic');
+
+    await expect(failed.committed).rejects.toThrow('目标失败');
+    await expect(operation).resolves.toBe(false);
+    await expect(recovered.committed).resolves.toBeUndefined();
+    expect(operationBody).not.toHaveBeenCalled();
+  });
 });

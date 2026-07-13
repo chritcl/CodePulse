@@ -379,6 +379,127 @@ describe('useMusicPlaybackSession', () => {
     expect(timeline.sync).not.toHaveBeenCalled();
   });
 
+  it('控制已发出时后续目标写入必须等待控制完成', async () => {
+    const timeline = createTimeline();
+    const controlDone = deferred<void>();
+    const events: string[] = [];
+    const setPlayer = vi.fn(async (player: string) => {
+      events.push(`写入:${player}`);
+    });
+    const controlMedia = vi.fn(async () => {
+      events.push('控制:开始');
+      await controlDone.promise;
+      events.push('控制:结束');
+    });
+    const getPlayback = vi
+      .fn<() => Promise<MusicPlaybackState | null>>()
+      .mockResolvedValueOnce(playback())
+      .mockResolvedValueOnce(playback({ player: 'netease', title: '切换后歌曲' }));
+    const session = createSession({ timeline, setPlayer, controlMedia, getPlayback });
+
+    await session.start('qqmusic');
+    const controlling = session.control('next');
+    await flushPromises();
+    const switching = session.setTargetPlayer('netease');
+    await flushPromises();
+
+    expect(setPlayer).toHaveBeenCalledTimes(1);
+    controlDone.resolve();
+    await Promise.all([controlling, switching]);
+    expect(events).toEqual(['写入:qqmusic', '控制:开始', '控制:结束', '写入:netease']);
+    expect(session.playback.value?.player).toBe('netease');
+  });
+
+  it('立即同步等待恢复的下一微任务切换目标不能越过新屏障', async () => {
+    const timeline = createTimeline();
+    const switchCommit = deferred<void>();
+    const neteaseSnapshot = playback({ player: 'netease', title: '新屏障歌曲' });
+    const setPlayer = vi
+      .fn<(player: string) => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => switchCommit.promise);
+    const getPlayback = vi
+      .fn()
+      .mockResolvedValueOnce(playback())
+      .mockResolvedValueOnce(neteaseSnapshot);
+    const session = createSession({ timeline, setPlayer, getPlayback });
+
+    await session.start('qqmusic');
+    const syncing = session.syncNow();
+    let switching!: Promise<void>;
+    await Promise.resolve().then(() => {
+      switching = session.setTargetPlayer('netease');
+    });
+    await flushPromises();
+
+    expect(getPlayback).toHaveBeenCalledTimes(1);
+    switchCommit.resolve();
+    await Promise.all([syncing, switching]);
+    expect(getPlayback).toHaveBeenCalledTimes(2);
+    expect(session.playback.value).toEqual(neteaseSnapshot);
+  });
+
+  it('控制后强制快照挂起超过一秒也不会被旧轮询并发', async () => {
+    const timeline = createTimeline();
+    const beforeControl = deferred<MusicPlaybackState | null>();
+    const forcedSnapshot = deferred<MusicPlaybackState | null>();
+    const getPlayback = vi
+      .fn<() => Promise<MusicPlaybackState | null>>()
+      .mockImplementationOnce(() => beforeControl.promise)
+      .mockImplementationOnce(() => forcedSnapshot.promise)
+      .mockResolvedValue(playback({ positionMs: 30_000 }));
+    const controlMedia = vi.fn().mockResolvedValue(undefined);
+    const session = createSession({ timeline, getPlayback, controlMedia });
+
+    const starting = session.start('qqmusic');
+    await flushPromises();
+    const controlling = session.control('play_pause');
+    await flushPromises();
+    beforeControl.resolve(playback({ isPlaying: false }));
+    await flushPromises();
+
+    expect(getPlayback).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(getPlayback).toHaveBeenCalledTimes(2);
+
+    forcedSnapshot.resolve(playback({ isPlaying: true, positionMs: 15_000 }));
+    await Promise.all([starting, controlling]);
+  });
+
+  it('目标提交在陈旧后迟到失败不能覆盖 stale', async () => {
+    const timeline = createTimeline();
+    const targetCommit = deferred<void>();
+    const session = createSession({
+      timeline,
+      setPlayer: () => targetCommit.promise,
+      getPlayback: vi.fn(),
+    });
+
+    const starting = session.start('qqmusic');
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(session.status.value).toBe('stale');
+
+    targetCommit.reject(new Error('目标迟到失败'));
+    await expect(starting).rejects.toThrow('目标迟到失败');
+    expect(session.status.value).toBe('stale');
+  });
+
+  it('持续返回不匹配快照超过三秒后保持 stale', async () => {
+    const timeline = createTimeline();
+    const mismatched = playback({ player: 'netease', title: '不匹配歌曲' });
+    const session = createSession({
+      timeline,
+      getPlayback: vi.fn().mockResolvedValue(mismatched),
+    });
+
+    await session.start('qqmusic');
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(session.status.value).toBe('stale');
+    expect(timeline.markStale).toHaveBeenCalledTimes(1);
+    expect(timeline.sync).not.toHaveBeenCalled();
+  });
+
   it('同一播放器重复启动不会创建双轮询', async () => {
     const timeline = createTimeline();
     const first = deferred<MusicPlaybackState | null>();
