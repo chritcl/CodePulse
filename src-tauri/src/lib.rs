@@ -1,5 +1,5 @@
 /**
- * NetSpeed Dynamic Pro - 主入口模块
+ * 网速灵动岛应用主入口模块
  *
  * 本模块负责：
  * 1. 应用程序初始化
@@ -54,102 +54,118 @@ pub fn run() {
             // 通知命令
             fetch_latest_notification,
             open_app_by_aumid,
-            // 设置命令 (R4 新增)
+            // 设置命令
             get_app_snapshot,
             update_settings,
             set_island_visible,
         ])
-        .setup(|app| {
-            let lyrics_dir = app.path().app_data_dir()?.join("lyrics");
-            app.manage(LyricsService::new(lyrics_dir)?);
+        .setup(initialize_app)
+        .run(tauri::generate_context!())
+        .expect("运行 Tauri 应用程序时发生错误");
+}
 
-            // 启动后台系统监控
-            start_audio_spectrum_monitor();
-            start_system_event_monitor(app.handle().clone());
+/// 初始化歌词服务、后台监控、窗口和系统托盘。
+fn initialize_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let lyrics_dir = app.path().app_data_dir()?.join("lyrics");
+    app.manage(LyricsService::new(lyrics_dir)?);
 
-            // 检查是否为自启动
-            let args: Vec<String> = std::env::args().collect();
-            let is_autostart = args.iter().any(|arg| arg == "--autostart");
+    start_audio_spectrum_monitor();
+    start_system_event_monitor(app.handle().clone());
+    show_main_window_for_launch_mode(app);
+    let _tray = create_system_tray(app)?;
+    register_main_window_close_handler(app);
+    register_widget_window_close_handler(app);
+    Ok(())
+}
 
-            // 显示主窗口（非自启动时）
-            if let Some(main_window) = app.get_webview_window("main") {
-                if !is_autostart {
+/// 非自启动时展示并聚焦主窗口。
+fn show_main_window_for_launch_mode(app: &tauri::App) {
+    let args: Vec<String> = std::env::args().collect();
+    let is_autostart = args.iter().any(|arg| arg == "--autostart");
+    if let Some(main_window) = app.get_webview_window("main") {
+        if !is_autostart {
+            let _ = main_window.show();
+            let _ = main_window.set_focus();
+        }
+    }
+}
+
+/// 创建系统托盘及其菜单和点击事件。
+fn create_system_tray(app: &tauri::App) -> tauri::Result<tauri::tray::TrayIcon> {
+    let quit_item = MenuItem::with_id(app, "quit", "强制退出", true, None::<&str>)?;
+    let tray_menu = Menu::with_items(app, &[&quit_item])?;
+    TrayIconBuilder::new()
+        .icon(app.default_window_icon().unwrap().clone())
+        .tooltip("NetSpeed Dynamic Pro")
+        .menu(&tray_menu)
+        .on_menu_event(move |_app_handle, event| {
+            if event.id == "quit" {
+                std::process::exit(0);
+            }
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                ..
+            } = event
+            {
+                if let Some(main_window) = tray.app_handle().get_webview_window("main") {
                     let _ = main_window.show();
+                    let _ = main_window.unminimize();
                     let _ = main_window.set_focus();
                 }
             }
-
-            // 创建系统托盘菜单
-            let quit_item = MenuItem::with_id(app, "quit", "强制退出", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(app, &[&quit_item])?;
-
-            // 构建系统托盘
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("NetSpeed Dynamic Pro")
-                .menu(&tray_menu)
-                .on_menu_event(move |_app_handle, event| {
-                    if event.id == "quit" {
-                        std::process::exit(0);
-                    }
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
-                        if let Some(main_window) = tray.app_handle().get_webview_window("main") {
-                            let _ = main_window.show();
-                            let _ = main_window.unminimize();
-                            let _ = main_window.set_focus();
-                        }
-                    }
-                })
-                .build(app)?;
-
-            // 主窗口关闭时隐藏而不是退出
-            if let Some(main_window) = app.get_webview_window("main") {
-                let w_clone = main_window.clone();
-                main_window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = w_clone.hide();
-                    }
-                });
-            }
-
-            // 灵动岛窗口事件处理
-            if let Some(widget_window) = app.get_webview_window("widget") {
-                #[cfg(target_os = "windows")]
-                {
-                    // 设置窗口样式
-                    use windows::Win32::Foundation::HWND;
-                    use windows::Win32::UI::WindowsAndMessaging::{
-                        GetWindowLongW, SetWindowLongW, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
-                        WS_EX_TRANSPARENT,
-                    };
-                    if let Ok(hwnd) = widget_window.hwnd() {
-                        // 安全性：句柄来自 Tauri 当前窗口，只修改该窗口扩展样式，不保存裸指针。
-                        unsafe {
-                            let hwnd = HWND(hwnd.0 as _);
-                            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
-                            let _ = SetWindowLongW(
-                                hwnd,
-                                GWL_EXSTYLE,
-                                ex_style | WS_EX_TOOLWINDOW.0 as i32 | WS_EX_TRANSPARENT.0 as i32,
-                            );
-                        }
-                    }
-                }
-
-                let w_clone = widget_window.clone();
-                widget_window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = w_clone.hide();
-                    }
-                });
-            }
-
-            Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("运行 Tauri 应用程序时发生错误");
+        .build(app)
+}
+
+/// 主窗口收到关闭请求时改为隐藏。
+fn register_main_window_close_handler(app: &tauri::App) {
+    if let Some(main_window) = app.get_webview_window("main") {
+        let w_clone = main_window.clone();
+        main_window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = w_clone.hide();
+            }
+        });
+    }
+}
+
+/// 灵动岛窗口收到关闭请求时改为隐藏。
+fn register_widget_window_close_handler(app: &tauri::App) {
+    if let Some(widget_window) = app.get_webview_window("widget") {
+        #[cfg(target_os = "windows")]
+        configure_widget_window_styles(&widget_window);
+
+        let w_clone = widget_window.clone();
+        widget_window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = w_clone.hide();
+            }
+        });
+    }
+}
+
+/// 设置灵动岛窗口扩展样式，避免出现在任务切换器中并允许鼠标穿透。
+#[cfg(target_os = "windows")]
+fn configure_widget_window_styles(widget_window: &tauri::WebviewWindow) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongW, SetWindowLongW, GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    };
+
+    if let Ok(hwnd) = widget_window.hwnd() {
+        // 安全性：句柄来自 Tauri 当前窗口，只修改该窗口扩展样式，不保存裸指针。
+        unsafe {
+            let hwnd = HWND(hwnd.0 as _);
+            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+            let _ = SetWindowLongW(
+                hwnd,
+                GWL_EXSTYLE,
+                ex_style | WS_EX_TOOLWINDOW.0 as i32 | WS_EX_TRANSPARENT.0 as i32,
+            );
+        }
+    }
 }
