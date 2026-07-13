@@ -58,6 +58,14 @@ describe('lyrics', () => {
     );
   });
 
+  it('身份字段中的分隔符不会造成字段边界碰撞', () => {
+    const left = playback({ title: 'a|b', artist: 'c' });
+    const right = playback({ title: 'a', artist: 'b|c' });
+
+    expect(buildPlaybackSessionIdentity(left)).not.toBe(buildPlaybackSessionIdentity(right));
+    expect(buildTrackIdentity(left)).not.toBe(buildTrackIdentity(right));
+  });
+
   it('按开始时间和原始索引排序且不修改输入', () => {
     const input = [lyric(2, 5_000), lyric(1, 1_000), lyric(0, 1_000)];
     const original = input.map((line) => ({ ...line }));

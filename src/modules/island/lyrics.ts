@@ -10,22 +10,27 @@ type TimedLyricLine = LyricLine & { startMs: number };
 const normalizeIdentityPart = (value: string | number): string =>
   String(value).trim().toLowerCase();
 
+const encodeIdentity = (parts: Array<string | number>): string =>
+  JSON.stringify(parts.map(normalizeIdentityPart));
+
 /** 构建歌词请求身份，专辑或时长变化时允许重新请求 */
 export const buildTrackIdentity = (state: MusicPlaybackState | null): string => {
   if (!state?.title.trim()) return '';
 
-  return [state.player, state.title, state.artist, state.album ?? '', state.durationMs ?? 0]
-    .map(normalizeIdentityPart)
-    .join('|');
+  return encodeIdentity([
+    state.player,
+    state.title,
+    state.artist,
+    state.album ?? '',
+    state.durationMs ?? 0,
+  ]);
 };
 
 /** 构建稳定的播放会话身份，不受专辑和时长后续补全影响 */
 export const buildPlaybackSessionIdentity = (state: MusicPlaybackState | null): string => {
   if (!state?.title.trim()) return '';
 
-  return [state.player, state.sourceAppId, state.title, state.artist]
-    .map(normalizeIdentityPart)
-    .join('|');
+  return encodeIdentity([state.player, state.sourceAppId, state.title, state.artist]);
 };
 
 const isValidTimedLine = (line: LyricLine): line is TimedLyricLine =>
