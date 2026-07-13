@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -8,11 +10,11 @@ use crate::lyrics::provider_http::fetch_json;
 use crate::lyrics::types::{LyricsCandidate, LyricsTrackRequest, ProviderLyrics};
 
 pub(super) struct NeteaseProvider {
-    client: reqwest::Client,
+    client: Arc<reqwest::Client>,
 }
 
 impl NeteaseProvider {
-    pub(super) fn new(client: reqwest::Client) -> Self {
+    pub(super) fn new(client: Arc<reqwest::Client>) -> Self {
         Self { client }
     }
 }
@@ -23,14 +25,19 @@ impl LyricsProvider for NeteaseProvider {
         "netease"
     }
 
+    #[cfg(test)]
+    fn client_identity(&self) -> Option<usize> {
+        Some(Arc::as_ptr(&self.client) as usize)
+    }
+
     async fn fetch(
         &self,
         request: &LyricsTrackRequest,
     ) -> Result<Option<ProviderLyrics>, LyricsProviderError> {
-        let Some((candidate, confidence)) = search(request, &self.client).await? else {
+        let Some((candidate, confidence)) = search(request, self.client.as_ref()).await? else {
             return Ok(None);
         };
-        load_lyrics(&candidate, confidence, &self.client).await
+        load_lyrics(&candidate, confidence, self.client.as_ref()).await
     }
 }
 
@@ -50,6 +57,7 @@ async fn search(
         .header("Referer", "https://music.163.com")
         .form(&form);
     let value: Value = fetch_json("netease", "search", request).await?;
+    validate_business_response(&value, "search")?;
     let candidates = value
         .pointer("/result/songs")
         .and_then(Value::as_array)
@@ -72,7 +80,20 @@ async fn load_lyrics(
         .header("User-Agent", USER_AGENT)
         .header("Referer", "https://music.163.com");
     let value: Value = fetch_json("netease", "lyrics", request).await?;
+    validate_business_response(&value, "lyrics")?;
     build_lyrics(value, confidence)
+}
+
+fn validate_business_response(value: &Value, stage: &str) -> Result<(), LyricsProviderError> {
+    match value.get("code").and_then(Value::as_i64) {
+        Some(200) => Ok(()),
+        Some(code) => Err(business_error(stage, format!("code 返回失败状态 {code}"))),
+        None => Err(business_error(stage, "缺少有效的 code 状态码".to_string())),
+    }
+}
+
+fn business_error(stage: &str, message: String) -> LyricsProviderError {
+    LyricsProviderError::with_message("netease", format!("{stage}.business"), message)
 }
 
 fn build_lyrics(
@@ -138,5 +159,22 @@ mod tests {
         let candidate = parse_candidate(&song).unwrap();
         assert_eq!(candidate.id, "186016");
         assert_eq!(candidate.artist, "周杰伦");
+    }
+
+    #[test]
+    fn rejects_netease_business_failure_code() {
+        let value = serde_json::json!({ "code": 500 });
+        let missing = serde_json::json!({ "result": {} });
+
+        let error = validate_business_response(&value, "search").unwrap_err();
+
+        assert_eq!(error.provider(), "netease");
+        assert_eq!(error.stage(), "search.business");
+        assert!(validate_business_response(&missing, "search").is_err());
+    }
+
+    #[test]
+    fn accepts_netease_success_code() {
+        validate_business_response(&serde_json::json!({ "code": 200 }), "lyrics").unwrap();
     }
 }

@@ -198,6 +198,26 @@ async fn returns_timeout_when_collection_exceeds_total_deadline() {
 }
 
 #[tokio::test]
+async fn keeps_first_hit_when_later_provider_exceeds_deadline() {
+    let service = service_with_deadline(
+        vec![
+            fake_provider("qqmusic", Ok(Some(lyrics("qqmusic", 0.92)))),
+            recording_provider(
+                "netease",
+                Ok(None),
+                Duration::from_millis(80),
+                Arc::new(Mutex::new(Vec::new())),
+            ),
+        ],
+        Duration::from_millis(10),
+    );
+    let response = service.get_lyrics(request()).await;
+
+    assert_eq!(response.status, LyricsStatus::Ready);
+    assert_eq!(response.provider, "qqmusic");
+}
+
+#[tokio::test]
 async fn rejects_blank_title_without_calling_provider() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let provider = recording_provider("qqmusic", Ok(None), Duration::ZERO, calls.clone());
@@ -212,14 +232,4 @@ async fn rejects_blank_title_without_calling_provider() {
     assert_eq!(response.error_code, Some(LyricsErrorCode::InvalidRequest));
     assert!(!response.retryable);
     assert!(calls.lock().unwrap().is_empty());
-}
-
-#[test]
-fn one_service_reuses_the_same_http_client_handle() {
-    let service = service_with(Vec::new());
-
-    assert!(std::ptr::eq(
-        service.client_handle(),
-        service.client_handle()
-    ));
 }

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
@@ -8,11 +10,11 @@ use crate::lyrics::provider_http::fetch_json;
 use crate::lyrics::types::{LyricsCandidate, LyricsTrackRequest, ProviderLyrics};
 
 pub(super) struct QqMusicProvider {
-    client: reqwest::Client,
+    client: Arc<reqwest::Client>,
 }
 
 impl QqMusicProvider {
-    pub(super) fn new(client: reqwest::Client) -> Self {
+    pub(super) fn new(client: Arc<reqwest::Client>) -> Self {
         Self { client }
     }
 }
@@ -23,14 +25,19 @@ impl LyricsProvider for QqMusicProvider {
         "qqmusic"
     }
 
+    #[cfg(test)]
+    fn client_identity(&self) -> Option<usize> {
+        Some(Arc::as_ptr(&self.client) as usize)
+    }
+
     async fn fetch(
         &self,
         request: &LyricsTrackRequest,
     ) -> Result<Option<ProviderLyrics>, LyricsProviderError> {
-        let Some((candidate, confidence)) = search(request, &self.client).await? else {
+        let Some((candidate, confidence)) = search(request, self.client.as_ref()).await? else {
             return Ok(None);
         };
-        load_lyrics(&candidate, confidence, &self.client).await
+        load_lyrics(&candidate, confidence, self.client.as_ref()).await
     }
 }
 
@@ -45,6 +52,7 @@ async fn search(
         .header("Referer", "https://y.qq.com/")
         .json(&payload);
     let value: Value = fetch_json("qqmusic", "search", http_request).await?;
+    validate_business_response(&value, "search", true)?;
     let candidates = value
         .pointer("/req/data/body/song/list")
         .and_then(Value::as_array)
@@ -81,7 +89,39 @@ async fn load_lyrics(
         .header("User-Agent", USER_AGENT)
         .header("Referer", "https://y.qq.com/");
     let value: Value = fetch_json("qqmusic", "lyrics", request).await?;
+    validate_business_response(&value, "lyrics", false)?;
     build_lyrics(value, confidence)
+}
+
+fn validate_business_response(
+    value: &Value,
+    stage: &str,
+    require_request_code: bool,
+) -> Result<(), LyricsProviderError> {
+    validate_code(value.get("code"), stage, "code")?;
+    if require_request_code {
+        validate_code(value.pointer("/req/code"), stage, "req.code")?;
+    }
+    Ok(())
+}
+
+fn validate_code(
+    value: Option<&Value>,
+    stage: &str,
+    field: &str,
+) -> Result<(), LyricsProviderError> {
+    match value.and_then(Value::as_i64) {
+        Some(0) => Ok(()),
+        Some(code) => Err(business_error(
+            stage,
+            format!("{field} 返回失败状态 {code}"),
+        )),
+        None => Err(business_error(stage, format!("缺少有效的 {field} 状态码"))),
+    }
+}
+
+fn business_error(stage: &str, message: String) -> LyricsProviderError {
+    LyricsProviderError::with_message("qqmusic", format!("{stage}.business"), message)
 }
 
 fn build_lyrics(
@@ -147,5 +187,28 @@ mod tests {
         let candidate = parse_candidate(&song).unwrap();
         assert_eq!(candidate.id, "0039MnYb0qxYhV");
         assert_eq!(candidate.duration_ms, Some(269_000));
+    }
+
+    #[test]
+    fn rejects_qq_search_business_failure_codes() {
+        let top_level = json!({ "code": 1000, "req": { "code": 0 } });
+        let request_level = json!({ "code": 0, "req": { "code": 1001 } });
+        let missing_top_level = json!({ "req": { "code": 0 } });
+        let missing_request_level = json!({ "code": 0, "req": {} });
+
+        assert_eq!(
+            validate_business_response(&top_level, "search", true).unwrap_err().stage(),
+            "search.business"
+        );
+        assert!(validate_business_response(&request_level, "search", true).is_err());
+        assert!(validate_business_response(&missing_top_level, "search", true).is_err());
+        assert!(validate_business_response(&missing_request_level, "search", true).is_err());
+    }
+
+    #[test]
+    fn qq_lyrics_success_does_not_require_search_request_code() {
+        let lyrics = json!({ "code": 0, "lyric": "" });
+
+        validate_business_response(&lyrics, "lyrics", false).unwrap();
     }
 }

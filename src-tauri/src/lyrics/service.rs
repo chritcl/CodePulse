@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use super::cache::LyricsCacheRepository;
 use super::matcher::{build_track_identity, build_track_key};
-use super::providers::{production_providers, LyricsProvider};
+use super::providers::{production_providers_from_arc, LyricsProvider};
+use super::service_cache::{read_cache, write_cache_in_background, LyricsCache};
 use super::types::{
     LyricsErrorCode, LyricsResponse, LyricsSource, LyricsStatus, LyricsTrackRequest,
     ProviderLyrics, TrackIdentity,
@@ -16,19 +17,19 @@ const CACHE_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 /// 统一歌词查询服务
 pub struct LyricsService {
-    _client: reqwest::Client,
+    _client: Arc<reqwest::Client>,
     providers: Vec<Arc<dyn LyricsProvider>>,
-    cache: LyricsCacheRepository,
+    cache: Arc<dyn LyricsCache>,
     deadline: Duration,
 }
 
 impl LyricsService {
     pub fn new(cache_dir: PathBuf) -> Result<Self, reqwest::Error> {
-        let client = build_http_client()?;
+        let client = Arc::new(build_http_client()?);
         Ok(Self {
-            providers: production_providers(&client),
+            providers: production_providers_from_arc(client.clone()),
             _client: client,
-            cache: LyricsCacheRepository::new(cache_dir, CACHE_TTL),
+            cache: Arc::new(LyricsCacheRepository::new(cache_dir, CACHE_TTL)),
             deadline: QUERY_DEADLINE,
         })
     }
@@ -38,12 +39,29 @@ impl LyricsService {
         cache: LyricsCacheRepository,
         deadline: Duration,
     ) -> Result<Self, reqwest::Error> {
+        Self::with_cache(providers, Arc::new(cache), deadline)
+    }
+
+    fn with_cache(
+        providers: Vec<Arc<dyn LyricsProvider>>,
+        cache: Arc<dyn LyricsCache>,
+        deadline: Duration,
+    ) -> Result<Self, reqwest::Error> {
         Ok(Self {
-            _client: build_http_client()?,
+            _client: Arc::new(build_http_client()?),
             providers,
             cache,
             deadline,
         })
+    }
+
+    #[cfg(test)]
+    fn with_cache_for_test(
+        providers: Vec<Arc<dyn LyricsProvider>>,
+        cache: Arc<dyn LyricsCache>,
+        deadline: Duration,
+    ) -> Result<Self, reqwest::Error> {
+        Self::with_cache(providers, cache, deadline)
     }
 
     pub async fn get_lyrics(&self, request: LyricsTrackRequest) -> LyricsResponse {
@@ -52,13 +70,19 @@ impl LyricsService {
         }
         let identity = build_track_identity(&request);
         let track_key = build_track_key(&identity);
-        match tokio::time::timeout(
-            self.deadline,
-            self.resolve(request, identity, track_key.clone()),
+        let deadline = tokio::time::Instant::now() + self.deadline;
+        let cached = tokio::time::timeout_at(
+            deadline,
+            read_cache(self.cache.clone(), identity.clone(), track_key.clone()),
         )
-        .await
-        {
-            Ok(response) => response,
+        .await;
+        match cached {
+            Ok(Ok(Some(response))) => response,
+            Ok(Ok(None)) => self.resolve(request, identity, track_key, deadline).await,
+            Ok(Err(error)) => {
+                eprintln!("[NSD] 读取歌词缓存失败: {error}");
+                error_response(track_key, LyricsErrorCode::Cache, false)
+            }
             Err(_) => error_response(track_key, LyricsErrorCode::Timeout, true),
         }
     }
@@ -68,68 +92,48 @@ impl LyricsService {
         request: LyricsTrackRequest,
         identity: TrackIdentity,
         track_key: String,
+        deadline: tokio::time::Instant,
     ) -> LyricsResponse {
-        match self.read_cache(identity.clone(), track_key.clone()).await {
-            Ok(Some(response)) => return response,
-            Ok(None) => {}
-            Err(error) => {
-                eprintln!("[NSD] 读取歌词缓存失败: {error}");
-                return error_response(track_key, LyricsErrorCode::Cache, false);
-            }
+        let collected = self.collect_providers(&request, deadline).await;
+        if let Some(lyrics) = collected.best {
+            write_cache_in_background(
+                self.cache.clone(),
+                identity,
+                track_key.clone(),
+                lyrics.clone(),
+            );
+            return ready_response(track_key, lyrics);
         }
-        let (best, had_error) = self.collect_providers(&request).await;
-        let Some(lyrics) = best else {
-            return missing_response(track_key, had_error);
-        };
-        self.write_cache(identity, track_key.clone(), lyrics.clone()).await;
-        ready_response(track_key, lyrics)
-    }
-
-    async fn read_cache(
-        &self,
-        identity: TrackIdentity,
-        track_key: String,
-    ) -> Result<Option<LyricsResponse>, String> {
-        let cache = self.cache.clone();
-        tokio::task::spawn_blocking(move || cache.try_read(&identity, &track_key))
-            .await
-            .map_err(|error| error.to_string())?
-            .map_err(|error| error.to_string())
-    }
-
-    async fn write_cache(
-        &self,
-        identity: TrackIdentity,
-        track_key: String,
-        lyrics: ProviderLyrics,
-    ) {
-        let cache = self.cache.clone();
-        let result =
-            tokio::task::spawn_blocking(move || cache.write(&identity, &track_key, &lyrics)).await;
-        match result {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => eprintln!("[NSD] 保存歌词缓存失败: {error}"),
-            Err(error) => eprintln!("[NSD] 歌词缓存任务失败: {error}"),
+        if collected.timed_out {
+            error_response(track_key, LyricsErrorCode::Timeout, true)
+        } else {
+            missing_response(track_key, collected.had_error)
         }
     }
 
     async fn collect_providers(
         &self,
         request: &LyricsTrackRequest,
-    ) -> (Option<ProviderLyrics>, bool) {
+        deadline: tokio::time::Instant,
+    ) -> ProviderCollection {
         let mut best: Option<ProviderLyrics> = None;
         let mut had_error = false;
         for provider in self.ordered_providers(request) {
-            match provider.fetch(request).await {
-                Ok(Some(candidate)) => keep_best(&mut best, candidate),
-                Ok(None) => {}
-                Err(error) => {
+            match tokio::time::timeout_at(deadline, provider.fetch(request)).await {
+                Ok(Ok(Some(candidate))) => keep_best(&mut best, candidate),
+                Ok(Ok(None)) => {}
+                Ok(Err(error)) => {
                     eprintln!("[NSD] {error}");
                     had_error = true;
                 }
+                Err(_) => return ProviderCollection::timed_out(best, had_error),
             }
         }
-        (best, had_error)
+        ProviderCollection {
+            best,
+            had_error,
+            timed_out: false,
+        }
     }
 
     fn ordered_providers(&self, request: &LyricsTrackRequest) -> Vec<Arc<dyn LyricsProvider>> {
@@ -138,10 +142,21 @@ impl LyricsService {
         providers.sort_by_key(|provider| usize::from(Some(provider.name()) != preferred));
         providers
     }
+}
 
-    #[cfg(test)]
-    fn client_handle(&self) -> &reqwest::Client {
-        &self._client
+struct ProviderCollection {
+    best: Option<ProviderLyrics>,
+    had_error: bool,
+    timed_out: bool,
+}
+
+impl ProviderCollection {
+    fn timed_out(best: Option<ProviderLyrics>, had_error: bool) -> Self {
+        Self {
+            best,
+            had_error,
+            timed_out: true,
+        }
     }
 }
 
@@ -219,3 +234,7 @@ fn error_response(
 #[cfg(test)]
 #[path = "service_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "service_regression_tests.rs"]
+mod regression_tests;

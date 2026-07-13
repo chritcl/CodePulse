@@ -18,6 +18,11 @@ const USER_AGENT: &str = "NetSpeedDynamic/2.3.8 (https://github.com/GEORGEWWWU/N
 pub trait LyricsProvider: Send + Sync {
     fn name(&self) -> &'static str;
 
+    #[cfg(test)]
+    fn client_identity(&self) -> Option<usize> {
+        None
+    }
+
     async fn fetch(
         &self,
         request: &LyricsTrackRequest,
@@ -25,10 +30,12 @@ pub trait LyricsProvider: Send + Sync {
 }
 
 /// 创建共享同一 HTTP 客户端的生产歌词源
-pub fn production_providers(client: &reqwest::Client) -> Vec<Arc<dyn LyricsProvider>> {
+pub(crate) fn production_providers_from_arc(
+    client: Arc<reqwest::Client>,
+) -> Vec<Arc<dyn LyricsProvider>> {
     vec![
         Arc::new(QqMusicProvider::new(client.clone())),
-        Arc::new(NeteaseProvider::new(client.clone())),
+        Arc::new(NeteaseProvider::new(client)),
     ]
 }
 
@@ -52,4 +59,19 @@ pub(super) fn pick_best_candidate(
             (candidate, score)
         })
         .max_by(|left, right| left.1.total_cmp(&right.1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn production_providers_share_the_same_client_allocation() {
+        let client = Arc::new(reqwest::Client::new());
+        let identity = Arc::as_ptr(&client) as usize;
+
+        let providers = production_providers_from_arc(client);
+
+        assert!(providers.iter().all(|provider| provider.client_identity() == Some(identity)));
+    }
 }

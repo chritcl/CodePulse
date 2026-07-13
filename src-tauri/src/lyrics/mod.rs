@@ -5,6 +5,7 @@ pub mod parser;
 mod provider_http;
 pub mod providers;
 pub mod service;
+mod service_cache;
 pub mod types;
 
 pub use service::LyricsService;
