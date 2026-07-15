@@ -15,6 +15,7 @@ export interface UseMusicPlaybackSessionOptions {
   getPlayback?: () => Promise<MusicPlaybackState | null>;
   setPlayer?: (player: string) => Promise<void>;
   controlMedia?: (action: MediaAction) => Promise<void>;
+  seekMedia?: (positionMs: number) => Promise<boolean>;
 }
 
 interface TargetContext extends MusicPlaybackRuntimeContext {
@@ -27,6 +28,7 @@ export const useMusicPlaybackSession = (options: UseMusicPlaybackSessionOptions)
   const getPlayback = options.getPlayback ?? mediaCommands.getMusicPlaybackState;
   const setPlayer = options.setPlayer ?? mediaCommands.setTargetPlayer;
   const controlMedia = options.controlMedia ?? mediaCommands.controlSystemMedia;
+  const seekMedia = options.seekMedia ?? mediaCommands.seekSystemMedia;
   const targets = createMusicTargetCoordinator(setPlayer);
   const runtime = createMusicPlaybackRuntime({ timeline: options.timeline, getPlayback });
   let targetContext: TargetContext | null = null;
@@ -104,6 +106,20 @@ export const useMusicPlaybackSession = (options: UseMusicPlaybackSessionOptions)
     await runtime.forceFresh(context);
   };
 
+  const seek = async (positionMs: number): Promise<boolean> => {
+    const context = targetContext;
+    if (!context || !isCurrent(context)) return false;
+
+    let succeeded = false;
+    const executed = await targets.enqueueOperation(context.selection, async () => {
+      succeeded = await seekMedia(positionMs);
+    });
+    if (!executed || !succeeded || !isCurrent(context)) return false;
+
+    await runtime.forceFresh(context);
+    return isCurrent(context);
+  };
+
   if (getCurrentScope()) onScopeDispose(stop);
   return {
     playback: runtime.playback,
@@ -113,5 +129,6 @@ export const useMusicPlaybackSession = (options: UseMusicPlaybackSessionOptions)
     setTargetPlayer,
     syncNow,
     control,
+    seek,
   };
 };

@@ -40,6 +40,16 @@
       />
     </transition>
     <transition name="fade">
+      <MusicProgressControl
+        v-if="isMusicExpanded && musicProgressVisible"
+        :position-ms="positionMs"
+        :duration-ms="durationMs"
+        :is-pending="isSeekPending"
+        :failure-id="seekFailureId"
+        @seek-to="$emit('seek-to', $event)"
+      />
+    </transition>
+    <transition name="fade">
       <div v-show="isMusicExpanded" class="music-controls">
         <button class="ctl-btn" aria-label="上一首" @click.stop="$emit('prev-track')">
           <svg viewBox="0 0 24 24" fill="currentColor">
@@ -68,6 +78,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import type { TrackLyricsStatus } from '@/composables/useTrackLyrics';
 import MusicLyricsPanel from './MusicLyricsPanel.vue';
+import MusicProgressControl from './MusicProgressControl.vue';
 
 interface Props {
   isPlaying: boolean;
@@ -79,6 +90,11 @@ interface Props {
   currentLyricText: string;
   nextLyricText: string;
   isMusicExpanded: boolean;
+  musicProgressVisible: boolean;
+  positionMs: number | null;
+  durationMs?: number;
+  isSeekPending: boolean;
+  seekFailureId: number;
 }
 
 const props = defineProps<Props>();
@@ -88,6 +104,7 @@ defineEmits<{
   'toggle-play': [];
   'prev-track': [];
   'next-track': [];
+  'seek-to': [positionMs: number];
 }>();
 
 const maskBoxRef = ref<HTMLElement | null>(null);
@@ -117,184 +134,4 @@ watch([compactDisplayText, () => props.isMusicExpanded], () => nextTick(calculat
 onMounted(() => nextTick(calculateScroll));
 </script>
 
-<style scoped>
-.music-ctl-box {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 180px;
-  width: 100%;
-  cursor: pointer;
-}
-
-.music-top-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.music-ctl-box.expanded {
-  gap: 6px;
-}
-
-.music-ctl-box.expanded .music-top-row {
-  gap: 8px;
-}
-
-.album-cover {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  overflow: hidden;
-  flex-shrink: 0;
-  position: relative;
-}
-
-.album-cover.is-playing {
-  animation: rotate 8s linear infinite;
-}
-
-.music-ctl-box.expanded .album-cover {
-  width: 30px;
-  height: 30px;
-}
-
-.cover-inner {
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  background-size: cover;
-}
-
-.music-info-mask-box {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  mask-image: linear-gradient(to right, #000000 78%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to right, #000000 78%, transparent 100%);
-}
-
-.music-info-text {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: all 0.3s ease;
-}
-
-.music-info-text.single-line {
-  font-size: 12px;
-  font-weight: 500;
-  color: currentColor;
-  overflow: visible;
-  text-overflow: clip;
-}
-
-.scroll-inner {
-  display: inline-block;
-  width: max-content;
-  white-space: nowrap;
-  backface-visibility: hidden;
-  transform: translateZ(0);
-}
-
-.scroll-inner.is-scrolling {
-  animation: scroll-ping-pong var(--scroll-duration) linear infinite alternate;
-}
-
-.music-info-text.double-line {
-  display: none;
-}
-
-.music-info-text.double-line .song-title {
-  font-weight: 600;
-  font-size: 12px;
-}
-
-.music-info-text.double-line .song-artist {
-  opacity: 0.6;
-  font-size: 10px;
-  margin-top: 2px;
-}
-
-.music-ctl-box.expanded .music-info-text.single-line {
-  display: none;
-}
-
-.music-ctl-box.expanded .music-info-text.double-line {
-  display: block;
-}
-
-.music-controls {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  padding: 4px 0;
-}
-
-.music-ctl-box.expanded .music-controls {
-  padding: 0;
-}
-
-.ctl-btn {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  border: none;
-  background: rgba(255, 255, 255, 0.1);
-  color: currentColor;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  transition: all 0.2s ease;
-  padding: 0;
-}
-
-.ctl-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-.ctl-btn svg {
-  width: 14px;
-  height: 14px;
-}
-
-.ctl-btn.play-btn {
-  width: 32px;
-  height: 32px;
-}
-
-.ctl-btn.play-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-
-@keyframes rotate {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes scroll-ping-pong {
-  0%,
-  20% {
-    transform: translateX(0);
-  }
-
-  80%,
-  100% {
-    transform: translateX(calc(-1 * var(--scroll-dist)));
-  }
-}
-</style>
+<style scoped src="./MusicContent.css"></style>

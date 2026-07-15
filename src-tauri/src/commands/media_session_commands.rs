@@ -3,7 +3,9 @@
  *
  * 包含目标播放器、SMTC 会话、播放状态和媒体控制。
  */
-use super::media_timeline::{now_ms, read_timeline_state};
+use super::media_timeline::{
+    now_ms, read_timeline_state, resolve_seek_availability, resolve_seek_position_ticks,
+};
 use serde::Serialize;
 use std::sync::Mutex;
 use windows::Media::Control::{
@@ -24,6 +26,7 @@ pub struct MusicPlaybackState {
     pub source_app_id: String,
     pub player: String,
     pub is_playing: bool,
+    pub can_seek: bool,
     pub duration_ms: Option<u64>,
     pub position_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -93,6 +96,15 @@ fn is_session_playing(session: &GlobalSystemMediaTransportControlsSession) -> bo
         })
 }
 
+fn is_session_seekable(session: &GlobalSystemMediaTransportControlsSession) -> bool {
+    session
+        .GetPlaybackInfo()
+        .ok()
+        .and_then(|info| info.Controls().ok())
+        .and_then(|controls| controls.IsPlaybackPositionEnabled().ok())
+        .unwrap_or(false)
+}
+
 /// 获取音乐信息
 ///
 /// 返回 (歌名, 歌手, 是否正在播放)。
@@ -125,6 +137,7 @@ pub async fn get_music_playback_state() -> Result<Option<MusicPlaybackState>, St
         None => return Ok(None),
     };
     let is_playing = is_session_playing(&session);
+    let seek_capability = is_session_seekable(&session);
     let properties = session
         .TryGetMediaPropertiesAsync()
         .map_err(|error| error.to_string())?
@@ -135,6 +148,7 @@ pub async fn get_music_playback_state() -> Result<Option<MusicPlaybackState>, St
         return Ok(None);
     }
     let timeline = read_timeline_state(&session).unwrap_or_default();
+    let can_seek = resolve_seek_availability(seek_capability, &timeline);
     let snapshot_taken_at_ms = now_ms();
 
     Ok(Some(MusicPlaybackState {
@@ -144,6 +158,7 @@ pub async fn get_music_playback_state() -> Result<Option<MusicPlaybackState>, St
         source_app_id,
         player: get_active_target_player(),
         is_playing,
+        can_seek,
         duration_ms: timeline.duration_ms,
         position_ms: timeline.position_ms,
         timeline_updated_at_ms: timeline.timeline_updated_at_ms,
@@ -171,6 +186,23 @@ pub async fn control_system_media(action: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 跳转系统媒体播放位置
+#[tauri::command]
+pub async fn seek_system_media(position_ms: u64) -> Result<bool, String> {
+    let Some(session) = get_target_media_session() else {
+        return Ok(false);
+    };
+    let Some(position_ticks) = resolve_seek_position_ticks(&session, position_ms) else {
+        return Ok(false);
+    };
+
+    session
+        .TryChangePlaybackPositionAsync(position_ticks)
+        .map_err(|error| error.to_string())?
+        .get()
+        .map_err(|error| error.to_string())
+}
+
 fn non_empty_string(value: String) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -192,6 +224,7 @@ mod timeline_serialization_tests {
             source_app_id: "cloudmusic".to_string(),
             player: "netease".to_string(),
             is_playing: timeline_updated_at_ms.is_some(),
+            can_seek: true,
             duration_ms: timeline_updated_at_ms.map(|_| 10_000),
             position_ms: timeline_updated_at_ms.map(|_| 2_000),
             timeline_updated_at_ms,
@@ -205,6 +238,7 @@ mod timeline_serialization_tests {
 
         assert_eq!(json["timelineUpdatedAtMs"], 42_000);
         assert_eq!(json["snapshotTakenAtMs"], 43_000);
+        assert_eq!(json["canSeek"], true);
         assert!(json.get("timelineSampledAtMs").is_none());
     }
 

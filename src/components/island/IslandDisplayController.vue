@@ -63,9 +63,15 @@
         :current-lyric-text="music.currentLyricText"
         :next-lyric-text="music.nextLyricText"
         :is-music-expanded="isDetail"
+        :music-progress-visible="music.progressVisible"
+        :position-ms="music.positionMs"
+        :duration-ms="music.durationMs"
+        :is-seek-pending="music.seekPending"
+        :seek-failure-id="music.seekFailureId"
         @toggle-play="$emit('toggle-play')"
         @prev-track="$emit('prev-track')"
         @next-track="$emit('next-track')"
+        @seek-to="$emit('seek-to', $event)"
       />
 
       <template v-else-if="display === 'agent'">
@@ -149,6 +155,11 @@ interface MusicDisplayState {
   lyricsStatus: TrackLyricsStatus;
   currentLyricText: string;
   nextLyricText: string;
+  progressVisible: boolean;
+  positionMs: number | null;
+  durationMs?: number;
+  seekPending: boolean;
+  seekFailureId: number;
 }
 
 interface NotificationDisplayState {
@@ -181,6 +192,7 @@ defineEmits<{
   'toggle-play': [];
   'prev-track': [];
   'next-track': [];
+  'seek-to': [positionMs: number];
 }>();
 
 const isDetail = computed(() => props.mode === 'detail');

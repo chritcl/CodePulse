@@ -12,6 +12,11 @@ const baseProps = {
   currentLyricText: '故事的小黄花',
   nextLyricText: '从出生那年就飘着',
   isMusicExpanded: false,
+  musicProgressVisible: true,
+  positionMs: 10_000,
+  durationMs: 269_000,
+  isSeekPending: false,
+  seekFailureId: 0,
 };
 
 describe('MusicContent', () => {
@@ -94,6 +99,31 @@ describe('MusicContent', () => {
     expect(wrapper.find('.current-lyric').text()).toContain('故事的小黄花');
     expect(wrapper.find('.next-lyric').text()).toContain('从出生那年就飘着');
     expect(wrapper.findAll('.ctl-btn')).toHaveLength(3);
+  });
+
+  it('仅在展开态且进度可用时显示进度控制', async () => {
+    const wrapper = mount(MusicContent, { props: baseProps });
+
+    expect(wrapper.find('.music-progress-control').exists()).toBe(false);
+
+    await wrapper.setProps({ isMusicExpanded: true });
+    expect(wrapper.find('.music-progress-control').exists()).toBe(true);
+
+    await wrapper.setProps({ musicProgressVisible: false });
+    expect(wrapper.find('.music-progress-control').exists()).toBe(false);
+  });
+
+  it('操作进度条不会请求展开音乐面板', async () => {
+    const wrapper = mount(MusicContent, {
+      props: {
+        ...baseProps,
+        isMusicExpanded: true,
+      },
+    });
+
+    await wrapper.get('.music-progress-control').trigger('click');
+
+    expect(wrapper.emitted('expand-music')).toBeUndefined();
   });
 
   it('播放控制按钮提供无障碍名称', () => {

@@ -28,6 +28,11 @@ const baseProps = {
     lyricsStatus: 'idle' as const,
     currentLyricText: '',
     nextLyricText: '',
+    progressVisible: true,
+    positionMs: 10_000,
+    durationMs: 269_000,
+    seekPending: false,
+    seekFailureId: 0,
   },
   notification: {
     icon: '/icon.png',
@@ -113,5 +118,22 @@ describe('IslandDisplayController', () => {
     await wrapper.find(`[aria-label="${ariaLabel}"]`).trigger('click');
 
     expect(wrapper.emitted(eventName)).toHaveLength(1);
+  });
+
+  it('音乐模块透传跳转播放位置事件', async () => {
+    const wrapper = mount(IslandDisplayController, {
+      props: {
+        ...baseProps,
+        display: 'music',
+        mode: 'detail',
+      },
+    });
+    const slider = wrapper.get<HTMLInputElement>('input[type="range"]');
+
+    slider.element.value = '42000';
+    await slider.trigger('input');
+    await slider.trigger('change');
+
+    expect(wrapper.emitted('seek-to')).toEqual([[42_000]]);
   });
 });

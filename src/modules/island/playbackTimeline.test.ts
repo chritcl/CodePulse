@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MusicPlaybackState } from '@/shared/ipc/contracts';
-import { createPlaybackTimelineClock } from './playbackTimeline';
+import { createPlaybackTimelineClock, isPlaybackProgressAvailable } from './playbackTimeline';
 
 const playback = (patch: Partial<MusicPlaybackState> = {}): MusicPlaybackState => ({
   title: '晴天',
@@ -9,6 +9,7 @@ const playback = (patch: Partial<MusicPlaybackState> = {}): MusicPlaybackState =
   sourceAppId: 'qqmusic',
   player: 'qqmusic',
   isPlaying: true,
+  canSeek: true,
   durationMs: 269_000,
   positionMs: 10_000,
   timelineUpdatedAtMs: 1_000,
@@ -130,5 +131,22 @@ describe('createPlaybackTimelineClock', () => {
     clock.reset();
 
     expect(clock.getPosition(2_100)).toBeNull();
+  });
+});
+
+describe('isPlaybackProgressAvailable', () => {
+  it('会话就绪且播放器提供完整跳转信息时可显示进度条', () => {
+    expect(isPlaybackProgressAvailable(playback(), 10_000, true)).toBe(true);
+  });
+
+  it.each([
+    [playback({ canSeek: false }), 10_000, true],
+    [playback({ durationMs: undefined }), 10_000, true],
+    [playback({ durationMs: 0 }), 10_000, true],
+    [playback(), null, true],
+    [playback(), 10_000, false],
+    [null, 10_000, true],
+  ] as const)('跳转条件不完整时隐藏进度条', (snapshot, positionMs, sessionReady) => {
+    expect(isPlaybackProgressAvailable(snapshot, positionMs, sessionReady)).toBe(false);
   });
 });

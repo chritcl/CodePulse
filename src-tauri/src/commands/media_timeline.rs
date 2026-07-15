@@ -34,6 +34,25 @@ pub(super) fn read_timeline_state(
     ))
 }
 
+pub(super) fn resolve_seek_position_ticks(
+    session: &GlobalSystemMediaTransportControlsSession,
+    position_ms: u64,
+) -> Option<i64> {
+    let timeline = session.GetTimelineProperties().ok()?;
+    let start_ticks = timeline.StartTime().ok()?.Duration;
+    let end_ticks = timeline.EndTime().ok()?.Duration;
+    build_seek_position_ticks(start_ticks, end_ticks, position_ms)
+}
+
+pub(super) fn resolve_seek_availability(
+    capability_enabled: bool,
+    timeline: &TimelineSnapshot,
+) -> bool {
+    capability_enabled
+        || (timeline.duration_ms.is_some_and(|duration| duration > 0)
+            && timeline.position_ms.is_some())
+}
+
 fn build_timeline_snapshot(
     start_ms: Option<u64>,
     end_ms: Option<u64>,
@@ -52,6 +71,23 @@ fn build_timeline_snapshot(
         position_ms,
         timeline_updated_at_ms,
     }
+}
+
+fn build_seek_position_ticks(start_ticks: i64, end_ticks: i64, position_ms: u64) -> Option<i64> {
+    const TICKS_PER_MILLISECOND: u64 = 10_000;
+
+    if start_ticks < 0 || end_ticks <= start_ticks {
+        return None;
+    }
+
+    let max_relative_ticks = end_ticks.checked_sub(start_ticks)?;
+    let requested_ticks = position_ms
+        .checked_mul(TICKS_PER_MILLISECOND)
+        .and_then(|ticks| i64::try_from(ticks).ok())
+        .unwrap_or(max_relative_ticks)
+        .min(max_relative_ticks);
+
+    start_ticks.checked_add(requested_ticks)
 }
 
 fn timespan_to_ms(value: TimeSpan) -> Option<u64> {
@@ -108,5 +144,38 @@ mod timeline_tests {
 
         assert_eq!(snapshot.position_ms, Some(1_000));
         assert_eq!(snapshot.duration_ms, None);
+    }
+
+    #[test]
+    fn converts_relative_seek_position_to_timeline_ticks() {
+        assert_eq!(
+            build_seek_position_ticks(5_000_000, 105_000_000, 2_000),
+            Some(25_000_000)
+        );
+    }
+
+    #[test]
+    fn clamps_seek_position_to_timeline_end() {
+        assert_eq!(
+            build_seek_position_ticks(5_000_000, 105_000_000, 20_000),
+            Some(105_000_000)
+        );
+        assert_eq!(
+            build_seek_position_ticks(5_000_000, 105_000_000, u64::MAX),
+            Some(105_000_000)
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_seek_timeline() {
+        assert_eq!(build_seek_position_ticks(5_000_000, 5_000_000, 2_000), None);
+        assert_eq!(build_seek_position_ticks(-1, 105_000_000, 2_000), None);
+    }
+
+    #[test]
+    fn valid_timeline_allows_seek_when_capability_flag_is_incorrect() {
+        let timeline = build_timeline_snapshot(Some(0), Some(10_000), Some(2_000), None);
+
+        assert!(resolve_seek_availability(false, &timeline));
     }
 }

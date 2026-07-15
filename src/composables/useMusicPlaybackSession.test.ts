@@ -21,6 +21,7 @@ const playback = (patch: Partial<MusicPlaybackState> = {}): MusicPlaybackState =
   sourceAppId: 'qqmusic',
   player: 'qqmusic',
   isPlaying: true,
+  canSeek: true,
   durationMs: 269_000,
   positionMs: 10_000,
   timelineUpdatedAtMs: 1_000,
@@ -575,6 +576,73 @@ describe('useMusicPlaybackSession', () => {
     afterControl.resolve(controlledSnapshot);
     await controlPromise;
     expect(session.playback.value).toEqual(controlledSnapshot);
+  });
+
+  it('跳转成功后立即刷新播放快照', async () => {
+    const timeline = createTimeline();
+    const seekMedia = vi.fn().mockResolvedValue(true);
+    const getPlayback = vi
+      .fn<() => Promise<MusicPlaybackState | null>>()
+      .mockResolvedValueOnce(playback())
+      .mockResolvedValueOnce(playback({ positionMs: 42_000 }));
+    const session = createSession({ timeline, getPlayback, seekMedia });
+
+    await session.start('qqmusic');
+    const succeeded = await session.seek(42_000);
+
+    expect(succeeded).toBe(true);
+    expect(seekMedia).toHaveBeenCalledWith(42_000);
+    expect(getPlayback).toHaveBeenCalledTimes(2);
+    expect(session.playback.value?.positionMs).toBe(42_000);
+  });
+
+  it('播放器拒绝跳转时保留当前快照且不额外刷新', async () => {
+    const timeline = createTimeline();
+    const snapshot = playback({ positionMs: 10_000 });
+    const seekMedia = vi.fn().mockResolvedValue(false);
+    const getPlayback = vi.fn().mockResolvedValue(snapshot);
+    const session = createSession({ timeline, getPlayback, seekMedia });
+
+    await session.start('qqmusic');
+    const succeeded = await session.seek(42_000);
+
+    expect(succeeded).toBe(false);
+    expect(getPlayback).toHaveBeenCalledTimes(1);
+    expect(session.playback.value).toEqual(snapshot);
+  });
+
+  it('跳转执行期间切换目标会等待旧操作结束并让跳转返回失败', async () => {
+    const timeline = createTimeline();
+    const seekDone = deferred<boolean>();
+    const events: string[] = [];
+    const setPlayer = vi.fn(async (player: string) => {
+      events.push(`写入:${player}`);
+    });
+    const seekMedia = vi.fn(async () => {
+      events.push('跳转:开始');
+      const succeeded = await seekDone.promise;
+      events.push('跳转:结束');
+      return succeeded;
+    });
+    const getPlayback = vi
+      .fn<() => Promise<MusicPlaybackState | null>>()
+      .mockResolvedValueOnce(playback())
+      .mockResolvedValueOnce(playback({ player: 'netease', title: '切换后歌曲' }));
+    const session = createSession({ timeline, setPlayer, seekMedia, getPlayback });
+
+    await session.start('qqmusic');
+    const seeking = session.seek(42_000);
+    await flushPromises();
+    const switching = session.setTargetPlayer('netease');
+    await flushPromises();
+
+    expect(setPlayer).toHaveBeenCalledTimes(1);
+    seekDone.resolve(true);
+    await switching;
+
+    await expect(seeking).resolves.toBe(false);
+    expect(events).toEqual(['写入:qqmusic', '跳转:开始', '跳转:结束', '写入:netease']);
+    expect(session.playback.value?.player).toBe('netease');
   });
 
   it('播放控制失败时保持快照且不触发同步', async () => {

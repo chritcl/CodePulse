@@ -42,6 +42,10 @@ export const mediaCommands = {
   getMusicPlaybackState: (): Promise<MusicPlaybackState | null> =>
     invoke('get_music_playback_state'),
 
+  /** 跳转到指定播放位置 */
+  seekSystemMedia: (positionMs: number): Promise<boolean> =>
+    invoke('seek_system_media', { positionMs }),
+
   /** 获取歌曲封面 */
   getRandomCoverUrl: (songName: string, artistName: string): Promise<string> =>
     invoke('get_random_cover_url', { songName, artistName }),

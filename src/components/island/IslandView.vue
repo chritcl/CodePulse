@@ -58,6 +58,11 @@
         lyricsStatus,
         currentLyricText,
         nextLyricText,
+        progressVisible: musicProgressVisible,
+        positionMs: playbackPositionMs,
+        durationMs: musicDurationMs,
+        seekPending: isMusicSeekPending,
+        seekFailureId: musicSeekFailureId,
       }"
       :notification="{
         icon: currentMsgIcon,
@@ -74,6 +79,7 @@
       @toggle-play="togglePlay"
       @prev-track="prevTrack"
       @next-track="nextTrack"
+      @seek-to="seekMusic"
     />
 
     <template v-if="islandLayout.expandedKind === activeDisplay" #detail>
@@ -101,6 +107,11 @@
           lyricsStatus,
           currentLyricText,
           nextLyricText,
+          progressVisible: musicProgressVisible,
+          positionMs: playbackPositionMs,
+          durationMs: musicDurationMs,
+          seekPending: isMusicSeekPending,
+          seekFailureId: musicSeekFailureId,
         }"
         :notification="{
           icon: currentMsgIcon,
@@ -117,6 +128,7 @@
         @toggle-play="togglePlay"
         @prev-track="prevTrack"
         @next-track="nextTrack"
+        @seek-to="seekMusic"
       />
     </template>
   </IslandShell>
@@ -150,6 +162,7 @@ import {
   readTargetPlayer,
 } from '@/modules/island/musicPlatform';
 import { buildPlaybackSessionIdentity } from '@/modules/island/lyrics';
+import { isPlaybackProgressAvailable } from '@/modules/island/playbackTimeline';
 import {
   createMusicPresentationIdentityTracker,
   initializeMusicActivity,
@@ -255,6 +268,17 @@ const currentTrackInfo = computed(() => `${currentSongName.value} - ${currentArt
 const lyricsStatus = trackLyrics.status;
 const currentLyricText = trackLyrics.currentLyricText;
 const nextLyricText = trackLyrics.nextLyricText;
+const playbackPositionMs = playbackTimeline.positionMs;
+const musicDurationMs = computed(() => musicSession.playback.value?.durationMs);
+const isMusicSeekPending = ref(false);
+const musicSeekFailureId = ref(0);
+const musicProgressVisible = computed(() =>
+  isPlaybackProgressAvailable(
+    musicSession.playback.value,
+    playbackPositionMs.value,
+    musicSession.status.value === 'ready'
+  )
+);
 const musicBoxKey = ref(0);
 const expandedKind = ref<IslandDisplayKind | null>(null);
 const isMusicExpanded = computed(() => expandedKind.value === 'music');
@@ -394,6 +418,7 @@ const islandLayout = computed(() =>
     expandedKind: expandedKind.value,
     rotationEnabled: isRotationEnabled.value,
     rotationIndex: currentRotIndex.value,
+    musicProgressVisible: musicProgressVisible.value,
   })
 );
 
@@ -713,6 +738,24 @@ const controlMusic = async (action: 'play_pause' | 'prev' | 'next') => {
 const togglePlay = () => controlMusic('play_pause');
 const prevTrack = () => controlMusic('prev');
 const nextTrack = () => controlMusic('next');
+
+/** 跳转音乐播放位置 */
+const seekMusic = async (positionMs: number) => {
+  if (disposed || isMusicSeekPending.value || !musicProgressVisible.value) return;
+
+  isMusicSeekPending.value = true;
+  try {
+    const succeeded = await musicSession.seek(positionMs);
+    if (!disposed && !succeeded) musicSeekFailureId.value += 1;
+  } catch (error) {
+    if (!disposed) {
+      musicSeekFailureId.value += 1;
+      console.error('跳转播放位置失败:', error);
+    }
+  } finally {
+    if (!disposed) isMusicSeekPending.value = false;
+  }
+};
 
 /** 获取卫星按钮元素 */
 const getSatelliteButtonFromEvent = (kind: IslandDisplayKind, event: MouseEvent) => {

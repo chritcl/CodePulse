@@ -105,6 +105,7 @@ export interface MusicPlaybackState {
   sourceAppId: string;
   player: string;
   isPlaying: boolean;
+  canSeek: boolean;
   durationMs?: number;
   positionMs?: number;
   timelineUpdatedAtMs?: number;

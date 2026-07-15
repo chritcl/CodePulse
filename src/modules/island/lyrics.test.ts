@@ -14,6 +14,7 @@ const playback = (patch: Partial<MusicPlaybackState> = {}): MusicPlaybackState =
   sourceAppId: 'qqmusic',
   player: 'qqmusic',
   isPlaying: true,
+  canSeek: true,
   durationMs: 269_000,
   positionMs: 12_000,
   timelineUpdatedAtMs: 1_000,

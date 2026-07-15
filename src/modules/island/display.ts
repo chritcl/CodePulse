@@ -64,6 +64,7 @@ export interface IslandLayoutInput {
   rotationIndex?: number;
   rotationKinds?: IslandDisplayKind[];
   maxSatellites?: number;
+  musicProgressVisible?: boolean;
 }
 
 export interface IslandLayoutState {
@@ -230,7 +231,8 @@ const getSatelliteWidth = (satelliteCount: number, overflowCount: number) => {
 const resolveSize = (
   expandedKind: IslandDisplayKind | null,
   satellites: IslandSatelliteItem[],
-  overflowCount: number
+  overflowCount: number,
+  musicProgressVisible: boolean
 ): IslandLayoutSize => {
   const compactWidth = BASE_SIZE.width + getSatelliteWidth(satellites.length, overflowCount);
 
@@ -242,10 +244,12 @@ const resolveSize = (
   }
 
   const detailSize = DETAIL_SIZES[expandedKind] ?? DEFAULT_DETAIL_SIZE;
+  const detailHeight =
+    expandedKind === 'music' && musicProgressVisible ? 156 : detailSize.detailHeight;
 
   return {
     width: Math.max(compactWidth, detailSize.width),
-    height: BASE_SIZE.height + DETAIL_PANEL_GAP + detailSize.detailHeight,
+    height: BASE_SIZE.height + DETAIL_PANEL_GAP + detailHeight,
   };
 };
 
@@ -315,7 +319,12 @@ export function resolveIslandLayout(input: IslandLayoutInput): IslandLayoutState
     overflowCount,
     expandedKind: safeExpandedKind,
     reason,
-    size: resolveSize(safeExpandedKind, satellites, overflowCount),
+    size: resolveSize(
+      safeExpandedKind,
+      satellites,
+      overflowCount,
+      Boolean(input.musicProgressVisible)
+    ),
   };
 }
 

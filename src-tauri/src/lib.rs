@@ -39,6 +39,7 @@ pub fn run() {
             fetch_netease_music_info,
             get_music_playback_state,
             control_system_media,
+            seek_system_media,
             get_random_cover_url,
             get_lyrics_for_track,
             get_audio_spectrum,

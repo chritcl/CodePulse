@@ -12,6 +12,24 @@ export interface PlaybackTimelineClock {
   reset(): void;
 }
 
+export const isPlaybackProgressAvailable = (
+  snapshot: MusicPlaybackState | null,
+  positionMs: number | null,
+  sessionReady: boolean
+): boolean => {
+  const durationMs = snapshot?.durationMs;
+  return (
+    sessionReady &&
+    snapshot?.canSeek === true &&
+    typeof durationMs === 'number' &&
+    Number.isFinite(durationMs) &&
+    durationMs > 0 &&
+    positionMs !== null &&
+    Number.isFinite(positionMs) &&
+    positionMs >= 0
+  );
+};
+
 const SEEK_THRESHOLD_MS = 1_500;
 const CORRECTION_FACTOR = 0.25;
 

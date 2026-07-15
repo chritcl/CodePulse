@@ -210,6 +210,21 @@ describe('resolveIslandLayout', () => {
     expect(layout.size).toEqual({ width: 420, height: 182 });
   });
 
+  it('音乐进度条可见时增加详情高度', () => {
+    const layout = resolveIslandLayout({
+      modules: [
+        moduleOf({ kind: 'network', active: true }),
+        moduleOf({ kind: 'music', active: true, status: 'running' }),
+      ],
+      stableMainKind: 'music',
+      expandedKind: 'music',
+      musicProgressVisible: true,
+      now,
+    });
+
+    expect(layout.size).toEqual({ width: 420, height: 206 });
+  });
+
   it('展开态宽度取详情宽度和紧凑行宽的较大值', () => {
     const layout = resolveIslandLayout({
       modules: [

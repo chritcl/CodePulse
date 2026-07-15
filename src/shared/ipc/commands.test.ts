@@ -40,4 +40,14 @@ describe('媒体 IPC 命令封装', () => {
       artistName: '周杰伦',
     });
   });
+
+  it('通过统一命令封装跳转播放位置', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(true);
+
+    await mediaCommands.seekSystemMedia(42_000);
+
+    expect(invoke).toHaveBeenCalledWith('seek_system_media', {
+      positionMs: 42_000,
+    });
+  });
 });
