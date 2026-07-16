@@ -4,7 +4,7 @@
 
 **目标：** 在 04B 命令与生命周期已审核通过后，实现设置卡、手动启用全局 Hooks 的两阶段引导、预览确认、空闲常驻/命令摘要显示偏好，并完成自动化与 Windows 原生 App/CLI 真实验收。
 
-**架构：** `useCodexIntegration` 分别维护静态 inspection 与唯一动态 listeningStatus，只编排 04B inspect/preview/apply/self-check 和权威 listening event；设置卡不读写文件；前端偏好只进入 localStorage 与跨窗口事件；Widget 使用阶段三统一投影 `toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)`。自动 E2E 使用 TempDir/loopback/ManualClock 覆盖跨 Runtime revision/generation、Integration Transaction 四阶段恢复、标准 Fixture 脱敏语义比较与 Discovery owner，真实验收单独记录 GUI Bridge 无控制台闪烁。
+**架构：** `useCodexIntegration` 分别维护静态 inspection 与唯一动态 listeningStatus，只编排 04B inspect/preview/apply/self-check 和权威 listening event；设置卡不读写文件；前端偏好只进入 localStorage 与跨窗口事件；Widget 使用阶段三统一投影 `toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)`。自动 E2E 使用 TempDir/loopback/ManualClock 覆盖跨 Runtime revision/generation、Integration Transaction 四阶段逐文件恢复、action-specific invariant、标准 Fixture 统一 AST loader/反向规范化语义比较与 Discovery owner，真实验收单独记录 GUI Bridge 无控制台闪烁。
 
 **技术栈：** Vue 3 Composition API、Pinia/localStorage、Tauri JS API、Vitest、`@vue/test-utils`、Rust TempDir/ManualClock、PowerShell、pnpm 10.33.2。
 
@@ -20,7 +20,7 @@
 - 本地 hooks=false 且存在安全 CodePulse marker 时，UI 在手动启用说明之外提供“预览卸载 CodePulse Hook”；不得提供安装、修复或自动启用。
 - 真实验收记录只在执行本计划时创建于 `docs/superpowers/verifications/2026-07-16-codex-status-island-e2e.md`。
 - CLI 环境阻塞必须如实记录并阻止“正式兼容已通过”声明。
-- 自动 E2E 的路径对象只读取 `integration_transaction_file`；范围脚本断言 `CodexIntegrationPaths` 不存在第二个含 `transaction` 的字段、startup 只调用 `recover_interrupted_codex_integration_transaction()`，并确认只有 `paths.rs` 拼接 `codex-integration-transaction.json`。
+- 自动 E2E 的路径对象只读取 `integration_transaction_file`；事务 staging 路径由 transactionId+target filename 推导，不扩张 `CodexIntegrationPaths`。范围脚本断言路径对象不存在第二个含 `transaction` 的字段、startup 只调用 `recover_interrupted_codex_integration_transaction()`，并确认只有 `paths.rs` 拼接 `codex-integration-transaction.json`。
 - 本计划完成后停止，不自动开始后续功能。
 
 ---
@@ -351,7 +351,7 @@ export interface CodexDisplayPreferences {
 
 ## 任务 4：建立自动化 E2E、PE 与范围门禁
 
-**独立交付物：** TempDir/loopback/ManualClock 全链路可重复验证设计十四项场景、Feature alias/disabled action matrix、跨 Runtime revision/generation、Integration Transaction 四阶段恢复、标准 Fixture 脱敏语义、Discovery owner 竞态、墙钟回拨与完整 PE metadata，不触碰真实用户配置。
+**独立交付物：** TempDir/loopback/ManualClock 全链路可重复验证设计十四项场景、Feature alias/disabled action matrix、跨 Runtime revision/generation、Integration Transaction ID-first/四阶段逐文件恢复、action-specific invariant、标准 Fixture AST 语义、Discovery owner 竞态、墙钟回拨与完整 PE metadata，不触碰真实用户配置。
 
 **Files:**
 
@@ -386,14 +386,19 @@ export interface CodexDisplayPreferences {
 
   Integration Transaction E2E 至少逐项覆盖：
 
-  - BridgeApplied 崩溃恢复：配置保持原摘要，恢复旧 Bridge/记录；首次 Install 不留孤立新 Bridge，Repair 恢复旧 Bridge/记录；
-  - ConfigApplied 崩溃恢复：下次启动重新执行 Exact；结构 Exact则提升 StructureCommitted并保留，Marker 非 Exact且两侧未外改则先配置后 Bridge双回滚；
+  - 调用顺序：transactionId 在 `prepare_config_apply`/`prepare_bridge_install` 前分配；两个 prepare 收到同一 ID，且 Prepared Journal 原子持久化前稳定配置/Bridge/记录无变化、无 staging；
+  - Prepared Journal 写入前崩溃：目标不变且无不可追踪 staging；Prepared 写入后只创建一部分 backup/temp时崩溃：只清理 Journal 列出的本 transactionId 文件，另一个 ID 的 temp/backup 同时存在也不得删除；
+  - BridgeApplied 混合恢复：Bridge=Target/Record=Original 只恢复 Bridge；Bridge=Original/Record=Target 只恢复 Record；首次 Install Bridge=Target/Record=ExpectedAbsent 删除新 Bridge，最终两者均不存在；
+  - ConfigApplied 混合恢复：Config=Target、Bridge=Target、Record=Original 时先回滚 Config，再逐文件恢复 Bridge/记录；反向混合同理；不得把部分结构提升为 StructureCommitted；
+  - ConfigApplied 完整目标：Install/Repair 只有 Marker=Exact、Bridge/记录=Target且 PE/hash/piped valid 才返回 InstalledOrRepaired 并提升 StructureCommitted；invariant失败且三者未外改则先配置后逐文件回滚；
+  - action-aware rollback：Repair 前 Hook 一直引用稳定路径时仍恢复旧 EXE/旧记录且不返回引用冲突；Install 前 Bridge 不存在但配置仍引用稳定路径时禁止删除新 EXE；
+  - Uninstall 部分删除：Marker=Absent且无引用时，Bridge absent+Record present继续删除记录，Bridge present+Record absent继续删除 Bridge；只有两者 absent才返回 Uninstalled/StructureCommitted，Marker absent但 Bridge仍存在不得提交；
   - StructureCommitted 清理恢复：只清理 backup/temp/Journal，不回滚正确结构；
-  - ConfigApplied 后用户并发修改配置或 Bridge：不覆盖用户字节、不删除仍被引用 Bridge、返回 Conflict并保留诊断；
+  - ConfigApplied 后用户并发修改配置或 Bridge：Bridge=ExternalModification+Record=Target 返回 Conflict，不覆盖用户字节、不删除仍被引用 Bridge并保留诊断；
   - 每个故障注入点后读取 Hook 与稳定 Bridge，断言永远不出现 Hook 指向缺失 Bridge；
   - StructureCommitted 后 self-check 超时/失败：Hook/Bridge 保留、phase partial/service_error；cleanup 失败仅 warning；首次 install验证失败停止临时 Runtime/发布空快照/删 own discovery；Repair失败保持原合法 Runtime/任务。
 
-  标准 Fixture E2E：分别从空 JSON/TOML 配置执行实际 Install，再读取实际安装结果；只把 Bridge 绝对路径替换回 `__CODEPULSE_BRIDGE_PATH__`，对 CodePulse matcher 组做规范化语义比较，必须分别等于 `codepulse-hooks-exact.json`/`.toml`。Repair modified 后重复相同比较；用户已有 Handler 的规范 AST 必须前后深度相等。测试不得内嵌第二套八事件期望。
+  标准 Fixture E2E：分别用 `C:\Users\Test User\AppData\Local\CodePulse\bin\codepulse-codex-bridge.exe`、`C:\Users\测试用户\AppData\Local\CodePulse\bin\codepulse-codex-bridge.exe` 和含单引号的 `C:\Users\O'Connor\AppData\Local\CodePulse\bin\codepulse-codex-bridge.exe` 稳定 Bridge 路径，从空 JSON/TOML 配置执行实际 Install，再读取实际安装结果。JSON 解析为 `serde_json::Value`，TOML 解析为 `toml_edit::DocumentMut`；调用 04A 同一 `normalize_codepulse_hook_commands_for_exact()`，只在 AST command value 中反向规范化具体路径，再与 `codepulse-hooks-exact.json`/`.toml` 母版 AST 比较。分别断言 JSON/TOML 可解析、command 语义正确、JSON serializer 正确处理反斜杠、TOML 单引号不破坏文档、无 placeholder残留。Repair modified 后重复相同比较；用户已有 Handler 的规范 AST 必须前后深度相等。禁止 `actual_text.replace(actual_path, ...)`，测试不得内嵌第二套八事件期望或第二个 loader。
 
   `DiscoveryOwner` 竞态：Runtime A 写 owner A，Runtime B 原子替换 owner B，A 的 stop/drop/RunEvent::Exit 调用 `remove_discovery_if_owned()` 返回 `ReplacedByNewRuntime` 且不删除 B；相同 PID不同 token、损坏文件均不盲删。PE 覆盖无签名、x64/ARM64 反配、Optional Header 太短、非法 Magic、Console/未知 Subsystem、不支持 triple 和旧 target误复制；x64/ARM64+WindowsGui 通过。正常/超时退出仍只启动一次 shutdown。
 
@@ -410,7 +415,7 @@ export interface CodexDisplayPreferences {
 
 - [ ] **步骤 3：实现临时目录/内存 harness**
 
-  Bridge 使用库入口和真实 `std::process::Command` piped 进程，HTTP 用真实 loopback，Actor 用 ManualClock，SnapshotStore 由 Manager fixture 只构造一次并跨两个 fake Runtime 共用，配置用 TempDir，publisher/installer/runtime generation/owner/Integration Journal 调用序列可断言。Fixture 通过 04A 同一 loader读取，不复制内容。除 loopback 不使用真实网络/Home；每例结束 TempDir 删除，仓库无 discovery/Integration Journal/事件文件。
+  Bridge 使用库入口和真实 `std::process::Command` piped 进程，HTTP 用真实 loopback，Actor 用 ManualClock，SnapshotStore 由 Manager fixture 只构造一次并跨两个 fake Runtime 共用，配置用 TempDir，publisher/installer/runtime generation/owner/Integration Journal 调用序列可断言。Fixture 注入、目标序列化与 Exact 反向规范化全部调用 04A 同一 AST loader，不复制内容、不做原始文本 replace。除 loopback 不使用真实网络/Home；每例结束 TempDir 删除，仓库无 discovery/Integration Journal/事件文件。
 
   运行：
 
@@ -424,7 +429,7 @@ export interface CodexDisplayPreferences {
 
 - [ ] **步骤 4：实现并运行范围脚本**
 
-  `verify-codex-status-scope.ps1` 必须在以下条件失败：package-lock/yarn.lock；生产 WSL/wsl.exe；授权 allow/deny/open-session/pause/terminate API；Bridge 缺少 `windows_subsystem = "windows"`、历史写入/重试/stdout 非 `{}`；PE 校验缺 Machine 或 WindowsGui Subsystem；IslandView 出现聚合生命周期/Stop classifier；Inspection DTO 出现动态 hookState/phase；CodePulse 前端或 planner 自动写 Hooks feature/删除 `codex_hooks`；显示偏好调用 runtime；Codex 模块在 paths.rs 外拼接 CodePulse/runtime/bin或 `codex-integration-transaction.json`；`CodexIntegrationPaths` 出现第二个含 `transaction` 的字段，或 startup 调用的恢复接口不是 `recover_interrupted_codex_integration_transaction()`；Manager 构造不显式接收 Store或 setup 另 manage第二份 Store；标准 Fixture 缺任一事件/command Windows override/timeout=2，或出现 matcher/statusMessage/async；Inspection/Planner/Repair/E2E 存在第二套手写八事件模板；Discovery 存在无 owner 删除；验收路径不唯一。
+  `verify-codex-status-scope.ps1` 必须在以下条件失败：package-lock/yarn.lock；生产 WSL/wsl.exe；授权 allow/deny/open-session/pause/terminate API；Bridge 缺少 `windows_subsystem = "windows"`、历史写入/重试/stdout 非 `{}`；PE 校验缺 Machine 或 WindowsGui Subsystem；IslandView 出现聚合生命周期/Stop classifier；Inspection DTO 出现动态 hookState/phase；CodePulse 前端或 planner 自动写 Hooks feature/删除 `codex_hooks`；显示偏好调用 runtime；Codex 模块在 paths.rs 外拼接 CodePulse/runtime/bin或 `codex-integration-transaction.json`；`CodexIntegrationPaths` 出现第二个含 `transaction` 的字段，或 startup 调用的恢复接口不是 `recover_interrupted_codex_integration_transaction()`；transactionId 在 transaction prepare 后分配、Prepared 前创建目标 staging、temp/backup 不能由 Journal/transactionId归属；Manager 构造不显式接收 Store或 setup 另 manage第二份 Store；标准 Fixture 缺任一事件/command Windows override/timeout=2，或出现 matcher/statusMessage/async；Fixture loader/Exact/E2E 对 raw JSON/TOML 调用 path/placeholder replace，JSON 未经 serde_json AST、TOML 未经 toml_edit AST，Inspection/Planner/Repair/E2E 存在第二套 loader或手写八事件模板；StructureCommitted 仍一律要求 Marker Exact，或 Uninstall 未要求 Marker Absent+无引用+Bridge/记录 absent；Discovery 存在无 owner 删除；验收路径不唯一。
 
   运行：
 
@@ -509,7 +514,7 @@ export interface CodexDisplayPreferences {
 
 - [ ] **步骤 3：用设置页安装并验证真实 Hook 信任**
 
-  在 preview 确认八事件、稳定 Bridge 和警告后 apply；立即读取实际安装结果，把 Bridge 绝对路径脱敏回 `__CODEPULSE_BRIDGE_PATH__`，确认 CodePulse matcher 组与对应标准 JSON/TOML Fixture 语义相等且用户其他 Handler 深度相等。状态先为 awaiting_trust。启动新 Codex App 任务，在官方 UI 信任 CodePulse command Hook 并提交只读请求；第一条属于当前 Runtime generation 的真实事件后才变 running，来源包含 App。不得把 token 或 generation 诊断细节写入验收文档。
+  在 preview 确认八事件、稳定 Bridge 和警告后 apply；立即读取实际安装结果，按表示方式解析成 JSON/TOML AST，调用 04A 同一 `normalize_codepulse_hook_commands_for_exact()` 只规范化 CodePulse command value，再确认 matcher 组与对应标准 Fixture AST 语义相等且用户其他 Handler 深度相等。禁止在真实配置原始文本上替换 Bridge 路径。状态先为 awaiting_trust。启动新 Codex App 任务，在官方 UI 信任 CodePulse command Hook并提交只读请求；第一条属于当前 Runtime generation 的真实事件后才变 running，来源包含 App。不得把 token 或 generation 诊断细节写入验收文档。
 
   运行：
 
@@ -601,8 +606,8 @@ export interface CodexDisplayPreferences {
 - 只有 `codex_hooks` 时显示固定弃用提示并按有效值工作；双键同值显示重复 warning；双键冲突或非布尔时显示配置冲突且不渲染 install/repair/uninstall 按钮。
 - local disabled+marker present 同时显示手动启用说明与安全卸载入口；install/repair/自动启用不可用，managed disabled 全只读。
 - idlePersistent 与 showCommandSummary 只控制展示；Widget/设置页使用同一权威 CodexListeningStatus。
-- 自动 E2E 覆盖十四项设计场景、occurredAt/墙钟回拨、dormant 空快照、跨 Runtime revision/generation、disabled uninstall、统一 Integration Transaction 四阶段故障、Discovery owner 竞态、退出和 PE Machine+WindowsGui。
-- JSON/TOML 实际 Install 与 Repair 结果经 Bridge 路径脱敏后分别语义等于唯一标准 Fixture，用户已有 Handler 前后深度相等，E2E 不内嵌第二套八事件模板。
+- 自动 E2E 覆盖十四项设计场景、occurredAt/墙钟回拨、dormant 空快照、跨 Runtime revision/generation、disabled uninstall、transactionId 先分配/Prepared 前零 staging、Prepared 部分 staging ownership、Bridge/记录混合状态逐文件恢复、Install/Repair/Uninstall action-specific invariant、Discovery owner 竞态、退出和 PE Machine+WindowsGui。
+- JSON/TOML 实际 Install 与 Repair 结果用 04A 同一 AST loader反向规范化后分别语义等于唯一标准 Fixture；空格、中文、单引号路径可解析且命令语义正确，JSON 反斜杠/TOML 单引号由 serializer 安全处理。用户已有 Handler 前后深度相等；E2E 不做原始文本 replace，不内嵌第二套 loader或八事件模板。
 - 范围脚本阻止 WSL、控制 Codex、历史补偿、自动改 Hooks feature、路径分叉和错误验收路径。
 - Codex App 真实 Hook 信任与卸载重装通过；多 Hook 全程无可见控制台闪烁且管道协议正常；独立 CLI 通过或明确记录环境阻塞，不冒充正式兼容通过。
 - 全部完成后停止，不自动开展下一版功能。

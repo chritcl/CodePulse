@@ -4,7 +4,7 @@
 
 **目标：** 只读检查 Codex Home、`features.hooks`/弃用 `features.codex_hooks`、企业策略、Hook 表示、CodePulse marker 与 Bridge 状态，以标准 JSON/TOML Fixture 为唯一 Exact 母版，输出不含动态 phase 的静态 Inspection；再结合 generation-aware Runtime facts 单独派生唯一 ListeningStatus/runtime 启动决策，并生成不写盘的 install/repair/uninstall 计划和安全预览。
 
-**架构：** `inspection.rs` 只读取 `CodexIntegrationPaths` 指向的文件并产生结构化事实；`status.rs` 用 inspection 与 runtime facts 纯派生 `CodexListeningStatus`；`plan.rs` 对完整解析树做语义增删并产生 `PreparedCodexHookChange`。本批次不引入 writer、installer、Tauri apply 或 Vue UI。
+**架构：** `inspection.rs` 只读取 `CodexIntegrationPaths` 指向的文件并产生结构化事实；唯一 Fixture loader 先把 JSON/TOML 母版解析为 `serde_json::Value`/`toml_edit::DocumentMut`，再只修改 CodePulse command AST 节点，Exact 也在 AST 中反向规范化；`status.rs` 用 inspection 与 runtime facts 纯派生 `CodexListeningStatus`；`plan.rs` 对完整解析树做语义增删并产生 `PreparedCodexHookChange`。本批次不引入 writer、installer、Tauri apply 或 Vue UI。
 
 **技术栈：** Rust 2021、serde_json、toml_edit 0.25、sha2、tempfile；不新增前端依赖。
 
@@ -19,6 +19,7 @@
 - `features.codex_hooks` 只读兼容且永不改写；两个 Feature 键冲突或非布尔时 install/repair/uninstall 全部 ConfigConflict且 Runtime RemainStopped。
 - 2026-07-16 官方 Hooks 文档确认事件→matcher 组→handler 三层、基础 `command` 必需且 `commandWindows` 为 Windows override、TOML 标准字段 `command_windows`、timeout 单位秒/缺省 600、非托管 command Hook 按定义哈希信任；Matcher 仅部分事件生效，省略可匹配全部，UserPromptSubmit/Stop 不支持。官方未明确 managed requirements 接受弃用别名，因此企业文件只识别标准 `[features].hooks` 与 `allow_managed_hooks_only`。04A 实施第一步必须重新核对同一官方 Hooks/Config Reference；任一层级、字段、Matcher、Feature alias、timeout、信任或 managed 规则发生变化时，先停止并同步路线图、04A/04B/04C 与两份标准 Fixture，不能直接按旧计划写源码。
 - 不创建自建 Dispatcher；planner 在 Codex 原生多 Hook 表示上逐项保留用户原 Hook，只增删带 CodePulse marker 的条目。
+- Fixture 路径替换禁止作用于原始 JSON/TOML 文本；JSON 反斜杠只交给 `serde_json` serializer，TOML 引号/反斜杠只交给 `toml_edit`。Inspection Exact、Planner Install/Repair、序列化快照和 04C E2E 必须调用同一个 loader/AST 反向规范化函数。
 - `modified` 允许后续 runtime 启动但 ListeningStatus phase 必须 partial，planner 只能通过显式 Repair 处理；Inspection 本身不保存 phase。
 - 每个任务完成后可单独 review；本计划门禁完成后停止，不自动进入 04B。
 
@@ -98,6 +99,27 @@ pub fn inspect_codex_environment(
 pub(crate) fn inspect_codex_hooks_feature(
     config: &toml_edit::DocumentMut,
 ) -> CodexHooksFeatureInspection;
+
+pub fn build_codepulse_hook_command(
+    bridge_path: &Path,
+) -> Result<String, CodexIntegrationError>;
+
+pub enum CodePulseHookFixtureRepresentation { HooksJson, ConfigToml }
+
+pub enum CodePulseHookFixtureAst {
+    Json(serde_json::Value),
+    Toml(toml_edit::DocumentMut),
+}
+
+pub fn load_codepulse_hook_fixture(
+    representation: CodePulseHookFixtureRepresentation,
+    bridge_path: &Path,
+) -> Result<CodePulseHookFixtureAst, CodexIntegrationError>;
+
+pub fn normalize_codepulse_hook_commands_for_exact(
+    representation: CodePulseHookFixtureRepresentation,
+    actual: CodePulseHookFixtureAst,
+) -> Result<CodePulseHookFixtureAst, CodexIntegrationError>;
 ```
 
 公开结构必须精确保持上述静态字段，不得加入 `hook_state`、`phase`、service state、port、lastEventAt、sources、runtime generation 或 authenticated generation。公开 `issues` 映射为稳定中文短句；内部测试必须直接断言 `CodexHooksFeatureInspection` 的两个原始 Option、effectiveState 与 issueCodes。Rust serde/04C TypeScript fixture 都要断言 JSON 中不存在动态字段。
@@ -269,7 +291,16 @@ command_windows = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
 timeout = 2
 ```
 
-`__CODEPULSE_BRIDGE_PATH__` 是这两份文件唯一允许的占位符；loader 必须把其全部精确出现替换为 `paths.installed_bridge` 的绝对路径，替换后不得残留任何占位符。基础 `command` 与 Windows override 都必须存在，因为实施日官方文档把 Windows 字段定义为 override。八个事件都省略 matcher以接收全部发生；尤其 UserPromptSubmit/Stop 不得写会被忽略的无意义 matcher。Fixture 禁止 statusMessage、async、prompt/agent handler，也不得包含用户其他 Hook；它只定义 CodePulse 要插入/比较的 matcher 组。
+`__CODEPULSE_BRIDGE_PATH__` 是这两份文件唯一允许的占位符，但 loader 禁止在 `include_str!` 返回的原始文本上调用 `replace`。完整步骤固定为：
+
+```text
+JSON: include_str! → serde_json parse（from_str）为 Value → 只定位八个 CodePulse handler 的 command/commandWindows → 写入 AST string value → serde_json 序列化目标字节
+TOML: include_str! → toml_edit 解析 DocumentMut → 只定位八个 CodePulse handler 的 command/command_windows → 写入 Value → toml_edit 输出目标字节
+```
+
+`build_codepulse_hook_command(bridge_path)` 先要求绝对路径且拒绝 NUL/换行，再返回精确语义 `"<absolute bridge path>" --codepulse-hook-v1`；JSON 反斜杠由 `serde_json` serializer 转义，禁止手工拼 JSON escape；TOML 的反斜杠、双引号和合法目录单引号由 `toml_edit` value serializer 处理，禁止把路径插入单引号原始文本。loader 写值后重新遍历 AST，断言所有 CodePulse command 字段语义等于构造函数结果且不再含 placeholder。
+
+Exact 反向规范化固定为：先把真实配置解析为对应 AST，识别安全 CodePulse handler，再只把这些 handler 的 command 字段 AST value 改成模板的占位符命令语义值，最后与 `include_str!` 解析出的母版 AST 比较。禁止 `actual_text.replace(actual_path, "__CODEPULSE_BRIDGE_PATH__")` 或任何原始文本路径替换。基础 `command` 与 Windows override 都必须存在，因为实施日官方文档把 Windows 字段定义为 override。八个事件都省略 matcher以接收全部发生；尤其 UserPromptSubmit/Stop 不得写会被忽略的无意义 matcher。Fixture 禁止 statusMessage、async、prompt/agent handler，也不得包含用户其他 Hook；它只定义 CodePulse 要插入/比较的 matcher 组。
 
 - [ ] **步骤 1：先写 inspection 零副作用失败测试**
 
@@ -300,6 +331,16 @@ timeout = 2
 
   标准 JSON Fixture 和替换稳定路径后的标准 TOML Fixture都得到 managedEntry=Exact；八事件任一缺失、timeout!=2、出现 statusMessage、出现 async=true、UserPromptSubmit/Stop 带 matcher、路径或命令层级不同都为 Modified。Bridge 参数缺少 `--codepulse-hook-v1` 时不得识别为安全 CodePulse marker；重复母版为 Duplicate；无法完整解析时 markerPresence=Ambiguous。Bridge 覆盖 missing/current/outdated/modified，并断言所有路径都来自同一个 paths 对象。序列化完整 inspection 后断言没有 hookState/phase/serviceState/runtimeGeneration/authenticatedGeneration。
 
+  Fixture loader 路径矩阵必须分别使用：
+
+  ```text
+  C:\Users\Test User\AppData\Local\CodePulse\bin\codepulse-codex-bridge.exe
+  C:\Users\测试用户\AppData\Local\CodePulse\bin\codepulse-codex-bridge.exe
+  C:\Users\O'Connor\AppData\Local\CodePulse\bin\codepulse-codex-bridge.exe
+  ```
+
+  对每条路径和 JSON/TOML 两种表示分别断言：loader 输出仍可解析；`command` 与 Windows override 的 AST string 语义精确等于 `build_codepulse_hook_command()`；JSON 原始输出中的反斜杠由 serializer 正确转义且重新解析后还原；TOML 单引号目录不破坏文档；输出 AST 不残留 `__CODEPULSE_BRIDGE_PATH__`；Exact 反向规范化后等于母版 AST。加入源码门禁，原始 Fixture loader/Exact 代码不得出现 `raw.replace`、`actual_text.replace` 或等价文本路径替换。
+
   运行：
 
   ```powershell
@@ -312,7 +353,9 @@ timeout = 2
 
 - [ ] **步骤 3：实现完整解析和只读事实提取**
 
-  JSON 用 `serde_json::Value` 完整解析并保留未知字段；TOML 用 `toml_edit::DocumentMut` 只读遍历，同时接受 `command_windows`/`commandWindows`，但 Planner 标准输出只写 `command_windows`。Feature parser 同时读取 `hooks`/`codex_hooks` 原始值并按固定矩阵生成内部事实，任何写路径都不得触碰两键。CodePulse handler 先要求 command 类型、基础 command/Windows override、稳定 Bridge 参数 `--codepulse-hook-v1` 才识别为安全 marker，再与加载后的对应标准 Fixture 比较完整三层结构、事件集合、matcher 缺失规则、timeout 与禁止字段；Exact 不得只比较 Bridge 路径。`issues` 只包含稳定代码与中文短句，不含配置正文、token、完整命令或用户路径正文。只有旧别名的公开提示固定为“检测到旧版 codex_hooks 配置，请在 Codex 中改用 hooks。”
+  JSON 用 `serde_json::Value` 完整解析并保留未知字段；TOML 用 `toml_edit::DocumentMut` 只读遍历，同时接受 `command_windows`/`commandWindows`，但 Planner 标准输出只写 `command_windows`。`build_codepulse_hook_command()` 集中构造完整命令。JSON Fixture loader 先解析母版 Value，再只设置 CodePulse handler 的 `command`/`commandWindows` AST string；TOML loader 先解析 `DocumentMut`，再只设置 `command`/`command_windows` Value；需要目标字节时分别由 `serde_json`/`toml_edit` 序列化，禁止原始文本 replace或手工 escape。
+
+  Feature parser 同时读取 `hooks`/`codex_hooks` 原始值并按固定矩阵生成内部事实，任何写路径都不得触碰两键。CodePulse handler 先要求 command 类型、基础 command/Windows override、稳定 Bridge 参数 `--codepulse-hook-v1` 才识别为安全 marker。Exact 把真实配置解析为 AST，识别安全 handler后只在 AST 中把具体 command 值反向规范化为母版占位符语义，再比较完整三层结构、事件集合、matcher 缺失规则、timeout 与禁止字段；不得只比较 Bridge 路径。`issues` 只包含稳定代码与中文短句，不含配置正文、token、完整命令或用户路径正文。只有旧别名的公开提示固定为“检测到旧版 codex_hooks 配置，请在 Codex 中改用 hooks。”
 
   运行：
 
@@ -473,7 +516,7 @@ pub fn derive_startup_runtime_decision(
 - Create: `src-tauri/src/codex/integration/plan.rs`
 - Create: `src-tauri/src/codex/integration/plan_tests.rs`
 
-**消费接口：** 任务 1 inspection、`codepulse-hooks-exact.json`/`.toml` 唯一母版、`paths.installed_bridge`、任务 2 runtime decision；不消费 writer/installer/runtime manager。Planner 和 Inspection 必须调用同一个 Fixture loader/语义规范化函数，禁止各自手写八事件模板。
+**消费接口：** 任务 1 inspection、`build_codepulse_hook_command()`、`load_codepulse_hook_fixture()`、`normalize_codepulse_hook_commands_for_exact()`、`codepulse-hooks-exact.json`/`.toml` 唯一母版、`paths.installed_bridge`、任务 2 runtime decision；不消费 writer/installer/runtime manager。Planner 和 Inspection 必须调用同一个 Fixture AST loader/反向规范化函数，禁止各自手写八事件模板或原始文本替换器。
 
 **产生接口：**
 
@@ -523,7 +566,7 @@ pub fn prepare_codex_hook_change(
 
 - [ ] **步骤 1：先写 JSON/TOML 语义保留失败测试**
 
-  标准 JSON Fixture → Inspection=Exact；标准 TOML Fixture → Inspection=Exact。Planner 从空配置 Install 后，提取 CodePulse matcher 组并脱敏 Bridge 绝对路径，语义结构必须等于对应标准 Fixture；Repair modified 配置后同样等于母版。JSON/TOML 都覆盖重复 install no-op、repair 缺项/旧路径/重复 marker、uninstall 精确删除 marker handler；TOML 另断言非 hooks 注释、键顺序、字符串和数组文本保持。两种表示都用预先保存的用户 handler AST 深度相等断言 Install/Repair 后用户节点不变，卸载不恢复备份。
+  标准 JSON Fixture → Inspection=Exact；标准 TOML Fixture → Inspection=Exact。Planner 从空配置 Install 后，提取 CodePulse matcher 组并通过任务 1 的 AST 反向规范化函数把具体 command value 改回占位符语义，结果必须等于对应标准 Fixture AST；Repair modified 配置后同样等于母版。JSON/TOML 都覆盖重复 install no-op、repair 缺项/旧路径/重复 marker、uninstall 精确删除 marker handler；TOML 另断言非 hooks 注释、键顺序、字符串和数组文本保持。两种表示都用预先保存的用户 handler AST 深度相等断言 Install/Repair 后用户节点不变，卸载不恢复备份。空格、中文和单引号路径必须重复跑 Install/Repair/Exact，证明三条路径使用同一 loader且目标字节可重新解析。
 
   负例逐项覆盖：八事件任一缺失 → Modified；timeout!=2 → Modified；参数缺少 `--codepulse-hook-v1` → 不识别为安全 Marker；出现 statusMessage → Modified；出现 async=true → Modified；UserPromptSubmit/Stop 写 matcher → 不等于母版；JSON/TOML 事件集合不同 → 测试失败。序列化快照直接来自两份母版的规范化 AST，不允许测试内再造第二套期望结构。
 
@@ -569,7 +612,7 @@ pub fn prepare_codex_hook_change(
 
 - [ ] **步骤 4：实现纯文档变换与确定摘要**
 
-  JSON 规范化为 2 空格 UTF-8 without BOM 并在 warnings 说明空白变化；TOML 只用 toml_edit 节点增删。Install/Repair 从唯一 Fixture loader 取得 CodePulse matcher 组并只替换 `__CODEPULSE_BRIDGE_PATH__` 的全部精确出现；不得复制事件常量数组或 handler builder。`expectedDigest` 覆盖 hooks.json、config.toml、requirements、`paths.integration_transaction_file` 的路径/存在性、打包/稳定 Bridge 与安装记录的路径、存在性和原始 SHA-256；`previewDigest` 覆盖 action、representation、expectedDigest、目标 path/hash、bridgeAction、changes/warnings 的规范 JSON。
+  JSON 规范化为 2 空格 UTF-8 without BOM 并在 warnings 说明空白变化；TOML 只用 toml_edit 节点增删。Install/Repair 只能从任务 1 唯一 Fixture loader 取得已经在 AST 中注入命令的 CodePulse matcher 组：JSON 使用 Value clone/merge后由 `serde_json` 序列化，TOML 使用 `toml_edit` Item/Value clone/merge后输出；不得对 `include_str!` 原始文本做 placeholder/path replace，不得复制事件常量数组或 handler builder。Exact/Repair/E2E 调用同一个反向规范化函数。`expectedDigest` 覆盖 hooks.json、config.toml、requirements、`paths.integration_transaction_file` 的路径/存在性、打包/稳定 Bridge 与安装记录的路径、存在性和原始 SHA-256；`previewDigest` 覆盖 action、representation、expectedDigest、目标 path/hash、bridgeAction、changes/warnings 的规范 JSON。
 
   运行：
 
@@ -594,11 +637,13 @@ pub fn prepare_codex_hook_change(
   cargo clippy -p netspeed-dynamic --all-targets --all-features -- -D warnings
   Pop-Location
   rg -n "MoveFileExW|apply_codex_hook_change|CodexStatusSettingsCard|ensure_started\(" src-tauri/src/codex/integration src
+  rg -n "build_codepulse_hook_command|serde_json.*Value|toml_edit::DocumentMut|normalize_codepulse_hook_commands_for_exact" src-tauri/src/codex/integration
+  rg -n "raw.*replace|actual_text.*replace|include_str!.*replace" src-tauri/src/codex/integration
   git diff --check
   git diff --name-only
   ```
 
-  预期：TempDir inspection/planner 全部通过；范围搜索无 writer/installer/Tauri apply/Vue/runtime 调用；真实用户配置无写入。随后停止等待 04A review。
+  预期：TempDir inspection/planner 全部通过；AST 构造/规范化函数有命中，原始文本 replace 搜索无命中；范围搜索无 writer/installer/Tauri apply/Vue/runtime 调用；真实用户配置无写入。随后停止等待 04A review。
 
   建议提交信息：
 
@@ -610,7 +655,7 @@ pub fn prepare_codex_hook_change(
 
 - inspection 对用户与企业配置只读，路径全部来自 CodexIntegrationPaths；JSON 不含动态 hookState/phase。
 - `features.hooks`/`features.codex_hooks` 原始事实、弃用/重复 Issue、同值/冲突/非布尔、representation、marker、Bridge、generation-aware ListeningStatus 和 runtime startup decision 有完整 TempDir 表格测试；冲突三动作无 Prepared change。
-- `codepulse-hooks-exact.json` 与 `.toml` 完整定义相同八事件、command+Windows override、timeout=2、无 matcher/statusMessage/async；Inspection Exact、Planner Install、Repair、序列化快照、Duplicate/Modified 测试共用同一 loader，没有第二套模板。
+- `codepulse-hooks-exact.json` 与 `.toml` 完整定义相同八事件、command+Windows override、timeout=2、无 matcher/statusMessage/async；JSON 用 `serde_json` AST、TOML 用 `toml_edit` AST 注入 command，Exact 在 AST 中反向规范化。空格、中文、单引号路径均可解析且语义正确；Inspection Exact、Planner Install、Repair、序列化快照、Duplicate/Modified 与 04C E2E 共用同一 loader，没有原始文本 replace或第二套模板。
 - exact/modified/partial+marker 与停止条件精确；idlePersistent 不参与。
 - 本地 disabled 的 install/repair 返回 HooksDisabled；安全 marker 的 uninstall 可生成精确删除计划；managed disabled 和 ambiguous conflict 全部只读。
 - 用户其他 Hook 语义保留；modified 只能显式 Repair；无 writer、installer、Tauri apply 或 Vue UI。
