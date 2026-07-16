@@ -4,7 +4,7 @@
 
 **目标：** 把阶段四拆为三个可独立拒绝、验收和回滚的审核批次，在不破坏用户 Hook、不自动开启全局 Hooks 的前提下完成只读检查、配置写入、Bridge 安装、设置页和真实端验收。
 
-**架构：** 04A 只读文件并产生 Feature 标准键/弃用别名事实、标准 JSON/TOML Fixture、静态 inspection、generation-aware listening 派生和 planner 结果；04B 才负责统一 Integration Transaction Journal、两个内部事务句柄、跨进程恢复、完整 PE installer、Tauri commands、唯一 SnapshotStore 清空和 generation/owner-aware runtime 生命周期；04C 只消费公开命令与唯一动态 `CodexListeningStatus` 完成 UI、显示偏好和 E2E。三个批次严格串行，每个批次完成后停止等待 review。
+**架构：** 04A 只读文件并产生 Feature 标准键/弃用别名事实、绑定稳定 Bridge 路径的 CodePulse-owned Fixture投影、静态 inspection、generation-aware listening 派生和 planner 结果；04B 才负责统一 Integration Transaction Journal、Prepared后逐文件CAS/完整staging屏障、每次MoveFileExW前后校验、精确孤立Journal恢复、安全retry、完整PE installer、Tauri commands、唯一SnapshotStore清空和generation/owner-aware runtime生命周期；04C只消费公开命令与唯一动态`CodexListeningStatus`完成UI、显示偏好和E2E。三个批次严格串行，每个批次完成后停止等待review。
 
 **技术栈：** Rust、serde_json、toml_edit 0.25、sha2、Windows `MoveFileExW`、Tauri 2.11.5、Vue 3、Pinia/localStorage、Vitest、PowerShell；不新增前端生产依赖。
 
@@ -18,13 +18,14 @@
 - 企业托管禁用时只显示组织策略说明，不修改 `%ProgramData%\OpenAI\Codex\requirements.toml`。
 - 本地 `features.codex_hooks` 作为已弃用别名只读识别且永不自动改写；与 `features.hooks` 同值时发弃用/重复 Issue，冲突或非布尔时三种 action 全部 ConfigConflict 且 Runtime 保持停止。官方 2026-07-16 文档未明确 managed requirements 接受旧别名，企业文件只按标准 `[features].hooks` 与 `allow_managed_hooks_only` 判定。
 - `idlePersistent` 只影响 running 且无任务的展示，不能调用 runtime start/stop。
-- 配置变更必须预览、expectedDigest/previewDigest 双重防并发；apply 固定先分配 transactionId，再纯准备 Config/Bridge，持久化 Prepared 后才创建本 transactionId 的备份/同目录临时文件、重新解析和原子替换。
-- Integration Journal 固定为 `paths.integration_transaction_file` 指向的 `%LOCALAPPDATA%\CodePulse\runtime\codex-integration-transaction.json`，只有 `paths.rs` 可以拼接稳定文件名；Journal 原子写 temp 固定由该路径和 transactionId 推导为 `.<journal-filename>.codepulse-<transactionId>.tmp`。首次写入和每次阶段推进都执行同目录 temp→write→flush→close→重读解析→MoveFileExW；恢复只清理文件名与已解析内容 transactionId 一致的这一精确 temp，不扫描其他 `.codepulse-*`。
-- CodePulse Hook 的唯一标准母版是 04A 创建的 `codepulse-hooks-exact.json`/`.toml`；JSON 只能通过 `serde_json` AST 修改 command value，TOML 只能通过 `toml_edit::DocumentMut` 修改 Value，Exact 也在 AST 中反向规范化。Inspection、Planner、Repair、快照测试与 04C E2E 只能消费同一 loader，不能各自手写第二套八事件结构或执行原始文本路径替换。
+- 配置变更必须预览、expectedDigest/previewDigest 双重防并发；apply 固定先分配 transactionId，再纯准备 Config/Bridge并持久化Prepared。Prepared成功后、任何staging前必须重新CAS Config/Bridge/Record；backup/temp摘要与当前Prepared Journal ID全部通过屏障后才允许第一处替换，每个MoveFileExW前后还要重校验对应Original/Target。
+- Integration Journal 固定为 `paths.integration_transaction_file` 指向的 `%LOCALAPPDATA%\CodePulse\runtime\codex-integration-transaction.json`，只有 `paths.rs` 可以拼接稳定文件名；Journal 原子写 temp 固定由该路径和 transactionId 推导为 `.<journal-filename>.codepulse-<transactionId>.tmp`。首次写入和每次阶段推进都执行同目录 temp→write→flush→close→重读解析→MoveFileExW。稳定Journal存在时只处理其权威ID；稳定Journal不存在时只枚举精确`.<journal-filename>.codepulse-<32hex>.tmp`并清理满足Prepared-only/目标仍原始/同ID无目标staging的候选，异常保留并`OrphanTransactionConflict`。禁止扫描普通`*.codepulse-*.tmp|bak`。
+- CodePulse Hook 的唯一标准母版是 04A 创建的 `codepulse-hooks-exact.json`/`.toml`；JSON 只能通过 `serde_json` AST 修改 command value，TOML 只能通过 `toml_edit::DocumentMut` 修改 Value。Exact规范化显式接收`paths.installed_bridge`，只有基础command与Windows override都精确等于expected command、无附加参数且matcher结构标准的独立group才进入CodePulse-owned projection；用户独立Hook不进入projection，混合group为Modified。Inspection、Planner、Repair、快照测试与04C E2E只能消费同一loader，不能各自手写第二套八事件结构或执行原始文本路径替换。
 - Bridge 安装前必须校验 DOS Header、`e_lfanew`、`PE\0\0`、目标 triple 对应的 COFF Machine、Optional Header Magic/长度和 `IMAGE_SUBSYSTEM_WINDOWS_GUI = 2`；Console Subsystem 必须拒绝。
 - Runtime stop/uninstall/首次 install 失败必须通过进程级 SnapshotStore 发布更高 revision 空快照；dormant 快照查询不能依赖 Actor。
 - 每个 Runtime 使用新的非零 generation、token、Actor/reporter 与 DiscoveryOwner；旧 generation 的事件和清理不得污染新 Runtime。
 - 第一版排除 WSL；自动事件不能冒充 Codex App/CLI 的真实 Hook 信任验收。
+- Transaction Conflict只允许“重新尝试安全恢复”；重试复用operation mutex与统一恢复，不强制覆盖/删除Journal、不忽略摘要、不采用外改字节为新Original、不修改Feature键。
 
 ## 固定跨批次接口
 
@@ -161,10 +162,21 @@ pub enum TransactionArtifactState {
     ExternalModification,
 }
 
+pub fn verify_artifact_matches_expected_original(
+    expectation: TransactionArtifactExpectation<'_>,
+    path: &Path,
+) -> Result<TransactionArtifactState, CodexIntegrationError>;
+
 pub enum CodexIntegrationCommitInvariant {
     InstalledOrRepaired,
     Uninstalled,
 }
+
+pub fn normalize_codepulse_hook_commands_for_exact(
+    representation: CodePulseHookFixtureRepresentation,
+    actual: CodePulseHookFixtureAst,
+    expected_bridge_path: &Path,
+) -> Result<CodePulseHookFixtureAst, CodexIntegrationError>;
 
 pub fn prepare_config_apply(
     paths: &CodexIntegrationPaths,
@@ -198,11 +210,13 @@ pub fn recover_interrupted_codex_integration_transaction(
 
 `CodexIntegrationInspection` 只保存重新 inspection 才变化的静态事实；它没有 hookState/phase。`derive_codex_listening_status(&inspection, &runtime_facts)` 是唯一动态派生，且只有 `authenticated_generation == runtime_generation != None` 才能 running。04C 的 settings/composable/Widget 只从 `CodexListeningStatus` 读取动态状态。
 
-本地 disabled 的动作矩阵固定为 install=HooksDisabled、repair=HooksDisabled、有安全 marker 的 uninstall=允许；managed disabled 三种 action 全部 ManagedDisabled；Feature alias conflict、representation conflict 与 ambiguous 禁止自动卸载。只有旧别名时按别名有效值运行并显示弃用提示；双键同值增加 `DeprecatedCodexHooksAlias` 与 `DuplicateHooksFeatureKeys`；双键冲突或非布尔进入 ConfigConflict。Install/Repair 在重新 inspection 与双摘要后先分配唯一 transactionId，再调用 `prepare_config_apply(..., transactionId)` 与 `prepare_bridge_install(..., transactionId)`；两个 prepare 只能在内存中构造目标材料、验证 PE/hash/piped 契约并计算确定性 staging 路径。完整 Prepared Journal 原子持久化成功后才能创建 backup/temp 和 apply。两个 handle 共享同一 transactionId并由同一 Journal 推进 Prepared→BridgeApplied→ConfigApplied→StructureCommitted；两个 `commit()` 只终结进程内资源，StructureCommitted 才是跨进程提交点，之后 self-check 失败保留正确结构。
+本地 disabled 的动作矩阵固定为 install=HooksDisabled、repair=HooksDisabled、有安全 marker 的 uninstall=允许；managed disabled 三种 action 全部 ManagedDisabled；Feature alias conflict、representation conflict 与 ambiguous 禁止自动卸载。只有旧别名时按别名有效值运行并显示弃用提示；双键同值增加 `DeprecatedCodexHooksAlias` 与 `DuplicateHooksFeatureKeys`；双键冲突或非布尔进入 ConfigConflict。Install/Repair 在重新 inspection 与双摘要后先分配唯一 transactionId，再调用 `prepare_config_apply(..., transactionId)` 与 `prepare_bridge_install(..., transactionId)`；两个 prepare 只能在内存中构造目标材料、验证 PE/hash/piped 契约并计算确定性 staging 路径。完整 Prepared Journal 原子持久化成功后，必须重新读取三目标并由`verify_artifact_matches_expected_original()`确认均为Original/ExpectedAbsent，才创建backup/temp。所有backup/temp重读摘要与当前Prepared Journal ID形成all-staging-ready屏障后才能apply。两个 handle 共享同一transactionId并由同一Journal推进Prepared→BridgeApplied→ConfigApplied→StructureCommitted；两个`commit()`只终结进程内资源，StructureCommitted才是跨进程提交点，之后self-check失败保留正确结构。
 
-Install/Repair 的正式 19 步顺序固定为：1 重新静态 Inspection；2 重新计算 expectedDigest/previewDigest；3 分配唯一 transactionId；4 先 `prepare_config_apply`、再 `prepare_bridge_install`，纯计算 Config/Bridge目标材料；5 验证 Bridge PE/hash/piped 契约；6 构造完整 Prepared Journal；7 原子持久化 Prepared Journal；8 创建本 transactionId backup/temp；9 应用 Bridge/记录；10 推进 BridgeApplied；11 必要时启动临时 Runtime；12 应用 Config；13 推进 ConfigApplied；14 执行 action-specific post-write invariant；15 推进 StructureCommitted；16 终结进程内句柄并清理；17 发布 ListeningStatus；18 运行完整 self-check；19 返回结果。任何计划不得再写成 prepare handle 后分配 transactionId。
+Install/Repair 的正式 19 步顺序固定为：1 重新静态 Inspection；2 重新计算 expectedDigest/previewDigest；3 分配唯一 transactionId；4 先 `prepare_config_apply`、再 `prepare_bridge_install`，纯计算 Config/Bridge目标材料；5 验证 Bridge PE/hash/piped 契约；6 构造完整 Prepared Journal；7 原子持久化 Prepared Journal；8 三目标pre-apply CAS通过后创建本transactionId backup/temp并完成originalDigest/targetDigest/all-staging-ready屏障；9 每个MoveFileExW前CAS、后验targetDigest，依次应用Bridge/记录；10 推进BridgeApplied；11 必要时启动临时Runtime；12 确认Bridge/Record为本事务Target，Config MoveFileExW前CAS、后验targetDigest并应用Config；13 推进ConfigApplied；14 执行action-specific post-write invariant；15 推进StructureCommitted；16 终结进程内句柄并清理；17 发布ListeningStatus；18 运行完整self-check；19 返回结果。任何计划不得再写成prepare handle后分配transactionId，也不得复用expectedDigest时期的旧读取结果执行覆盖。
 
-`target_bridge_exists`/`target_record_exists` 是支持 Uninstall 的附加存在性事实；为 false 时 target digest 固定为 SHA-256(empty bytes)，存在性位区分缺失与零字节文件。配置/Bridge/记录分别按 existedBefore、originalDigest、targetExists、targetDigest、当前存在性与当前 digest 分类成 `Original|Target|ExpectedAbsent|ExternalModification`。Prepared 时目标仍为 Original/ExpectedAbsent，无论本 transactionId 的 staging 不存在、部分存在还是全部存在，都只删除 Journal 明确拥有的 temp/backup 和 Journal，不扫描其他 `.codepulse-*` 文件；Prepared 前崩溃不得留下 staging。BridgeApplied 且配置仍为原状态时，Bridge/记录均原状态只清理并返回 `CleanedPreparedTransaction`；均 Target 逐文件回滚；一个 Target、一个 Original/ExpectedAbsent 是合法崩溃窗口，只回滚 Target 文件；任一 ExternalModification 则 Conflict。ConfigApplied 且配置 Target时，Bridge/记录均 Target 才执行 action-specific invariant；混合已知状态先回滚 Config，再逐文件恢复 Bridge/记录；ExternalModification 不覆盖。阶段落盘滞后按实际逐文件状态进入下一安全分支。
+`target_bridge_exists`/`target_record_exists` 是支持 Uninstall 的附加存在性事实；为 false 时 target digest 固定为 SHA-256(empty bytes)，存在性位区分缺失与零字节文件。配置/Bridge/记录分别按 existedBefore、originalDigest、targetExists、targetDigest、当前存在性与当前 digest 分类成 `Original|Target|ExpectedAbsent|ExternalModification`。每个existedBefore backup都必须由当前原字节生成，create_new/write/flush/close/重读后两次等于originalDigest；existedBefore=false必须backup=None且目标仍缺失。Prepared时目标仍为Original/ExpectedAbsent，无论本transactionId的staging不存在、部分存在还是全部存在，都只删除Journal明确拥有的temp/backup和Journal，不扫描其他`.codepulse-*`文件；Prepared前崩溃不得留下staging。BridgeApplied且配置仍为原状态时，Bridge/记录均原状态只清理并返回`CleanedPreparedTransaction`；均Target逐文件回滚；一个Target、一个Original/ExpectedAbsent是合法双文件中间崩溃，只回滚Target文件；任一ExternalModification则Conflict。ConfigApplied且配置Target时，Bridge/记录均Target才执行action-specific invariant；混合已知状态先回滚Config，再逐文件恢复Bridge/记录；ExternalModification不覆盖。阶段落盘滞后按实际逐文件状态进入下一安全分支。
+
+稳定Journal存在时，恢复以其transactionId为唯一权威ID，只处理该ID的Journal temp、三目标staging与backup，其他ID文件仅诊断。稳定Journal不存在时只枚举`.<journal-filename>.codepulse-<32hex>.tmp`：候选必须完整反序列化、文件名ID=内容ID、stage=Prepared、三目标仍Original/ExpectedAbsent且同ID无目标staging/backup，才作为Prepared-only孤立temp删除；一个或多个合法候选都可清理。损坏、ID不符、stage非Prepared、目标变化或同ID staging存在时保留并`OrphanTransactionConflict`，Runtime不启动、目标不改。此算法依赖单实例插件；未来移除单实例前必须先加进程间事务锁。
 
 回滚按 action 区分：Install 的 Bridge 原先不存在，只有确认配置不再引用稳定路径才能删除新 EXE；Repair 的 Bridge 原先存在，必须把备份旧字节恢复到同一路径并恢复旧记录，稳定路径仍被 Hook 引用不构成冲突，引用检查只防删除；Uninstall 不经过 BridgeApplied，使用 Prepared→ConfigApplied(marker absent)→stop/clear→delete Bridge/record→StructureCommitted，部分删除时继续删除剩余文件，外部修改或配置重新引用稳定路径时 Conflict并保留 Bridge。
 
@@ -231,7 +245,20 @@ pub async fn apply_codex_hook_change(
     preview_digest: String,
     runtime: tauri::State<'_, CodexRuntimeManager>,
 ) -> Result<CodexHookChangeResult, String>;
+
+pub struct CodexIntegrationRecoveryResult {
+    pub outcome: CodexIntegrationRecoveryOutcome,
+    pub inspection: CodexIntegrationInspection,
+    pub listening_status: CodexListeningStatus,
+}
+
+#[tauri::command]
+pub async fn retry_codex_integration_recovery(
+    runtime: tauri::State<'_, CodexRuntimeManager>,
+) -> Result<CodexIntegrationRecoveryResult, String>;
 ```
+
+retry与apply共用integration operation mutex。不存在稳定Journal且不存在孤立Journal temp时返回`NoPendingTransaction`；否则只重跑`recover_interrupted_codex_integration_transaction()`，不强制删Journal、不忽略摘要、不采用用户新字节为Original、不改Feature键。成功后重新静态Inspection、执行Runtime启停决策并发布最新ListeningStatus；仍有外改时继续`IntegrationTransactionConflict`/`OrphanTransactionConflict`且保持字节、Journal和备份。用户手工把文件恢复为Journal已知Original/Target/ExpectedAbsent后可再次重试，无需重装CodePulse。
 
 Widget 投影固定使用：
 
@@ -252,9 +279,9 @@ toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)
 
 | 批次 | 详细计划 | 独立交付物 | 禁止范围 |
 |---|---|---|---|
-| 04A | `docs/superpowers/plans/2026-07-16-codex-status-island-04a-inspection-planner.md` | TempDir 只读静态 inspection、Feature alias 事实、标准 JSON/TOML Fixture 与 AST loader、generation runtime facts、独立 listening 派生、action matrix 与纯计划 | 不写盘、不安装 Bridge、不注册 apply 命令、不修改 Vue |
-| 04B | `docs/superpowers/plans/2026-07-16-codex-status-island-04b-writer-installer.md` | 统一 Integration Journal、ID-first 纯 prepare、逐文件四阶段恢复、action-specific invariant、完整 PE installer、三命令、Store/generation/owner-aware 启停 | 不实现设置页；disabled 只开放安全 uninstall |
-| 04C | `docs/superpowers/plans/2026-07-16-codex-status-island-04c-settings-e2e.md` | 静态/动态分离设置卡、alias 提示/冲突 UI、disabled marker 卸载、显示偏好、事务混合恢复/AST Fixture 语义自动与真实 E2E | 不新增配置写入逻辑、不宣称环境阻塞的 CLI 已通过 |
+| 04A | `docs/superpowers/plans/2026-07-16-codex-status-island-04a-inspection-planner.md` | TempDir 只读静态 inspection、Feature alias 事实、绑定稳定Bridge路径的标准JSON/TOML Fixture CodePulse-owned projection、generation runtime facts、独立listening派生、action matrix与纯计划 | 不写盘、不安装 Bridge、不注册 apply 命令、不修改 Vue |
+| 04B | `docs/superpowers/plans/2026-07-16-codex-status-island-04b-writer-installer.md` | 统一Integration Journal、ID-first纯prepare、Prepared后CAS/完整staging屏障、逐MoveFileExW校验、精确孤立temp恢复、action-specific invariant、完整PE installer、四命令与安全retry、Store/generation/owner-aware启停 | 不实现设置页；disabled只开放安全uninstall；无force/discard入口 |
+| 04C | `docs/superpowers/plans/2026-07-16-codex-status-island-04c-settings-e2e.md` | 静态/动态分离设置卡、alias提示/Conflict安全重试、disabled marker卸载、显示偏好、CAS/孤立Journal/事务混合恢复与路径绑定projection自动/真实E2E | 不新增配置写入逻辑、不宣称环境阻塞的CLI已通过 |
 
 ## 审核批次 04A
 
@@ -275,7 +302,7 @@ toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)
   Pop-Location
   ```
 
-  预期：TempDir 静态 inspection、Feature 标准键/弃用别名事实、冲突禁用、标准 JSON/TOML Fixture 的 AST 注入/反向规范化与路径矩阵、generation listening 派生、local disabled 安全 uninstall 与 planner 测试全部通过；inspection JSON 无动态字段；没有 writer、installer、Tauri apply 或 Vue 文件。
+  预期：TempDir静态inspection、Feature标准键/弃用别名事实、冲突禁用、标准JSON/TOML Fixture的AST注入、显式expected_bridge_path、CodePulse-owned projection与路径矩阵、独立用户group不影响Exact/混合group Repair保留用户handler、generation listening派生、local disabled安全uninstall与planner测试全部通过；inspection JSON无动态字段；没有writer、installer、Tauri apply或Vue文件。
 
 - [ ] **步骤 2：停下来审核 04A**
 
@@ -294,7 +321,7 @@ toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)
 
 - Execute plan: `docs/superpowers/plans/2026-07-16-codex-status-island-04b-writer-installer.md`
 - Consume from 04A: `CodexIntegrationInspection`、`PreparedCodexHookChange`、`derive_startup_runtime_decision()`
-- Produce for 04C: inspect/preview/apply Tauri commands 与权威 listening status
+- Produce for 04C: inspect/preview/apply/retry Tauri commands 与权威 listening status
 
 - [ ] **步骤 1：在 04A 已批准后执行 04B 计划**
 
@@ -309,7 +336,7 @@ toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)
   Pop-Location
   ```
 
-  预期：transactionId 在 Config/Bridge prepare 前分配、Prepared 前零 staging、temp/backup 可归属；Integration Journal 四阶段和 Bridge/记录混合状态逐文件恢复、Install/Repair/Uninstall rollback 与 action-specific invariant、篡改保护、PE Machine+GUI、SnapshotStore/generation/owner 生命周期通过；local disabled uninstall 不安装 Bridge或启动 HTTP。
+  预期：transactionId在Config/Bridge prepare前分配、Prepared前零staging；Prepared后staging前三文件CAS、backup originalDigest/target temp完整性与all-staging-ready通过；每个MoveFileExW前后校验与并发外改回滚通过；稳定/孤立Journal精确恢复、Integration Journal四阶段和Bridge/记录混合状态逐文件恢复、Install/Repair/Uninstall rollback与action-specific invariant、Conflict安全retry/NoPendingTransaction、篡改保护、PE Machine+GUI、SnapshotStore/generation/owner生命周期通过；local disabled uninstall不安装Bridge或启动HTTP。
 
 - [ ] **步骤 2：停下来审核 04B**
 
@@ -362,12 +389,13 @@ toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)
 - 04A、04B、04C 依序完成且每批次后都有独立 review 结论。
 - HooksDisabled 阻止 install/repair；local disabled 且存在可安全解析 marker 时只允许 Prepared uninstall，不写 Bridge、不启动 HTTP；managed disabled 与 ambiguous conflict 不产生任何写计划。
 - `features.codex_hooks` 仅只读兼容并显示弃用提示；同值双键发 Duplicate warning，冲突/非布尔时 Runtime 停止且 install/repair/uninstall 均 ConfigConflict；CodePulse 永不改写 Feature 键或企业文件。
-- `codepulse-hooks-exact.json` 与 `.toml` 是唯一标准结构，完整八事件、command+Windows override、timeout=2、无 matcher/statusMessage/async；JSON/TOML 分别通过 serde_json/toml_edit AST 注入与反向规范化，空格/中文/单引号路径可解析；Inspection、Planner、Repair、快照与 E2E 共用同一 loader。
+- `codepulse-hooks-exact.json` 与 `.toml` 是唯一标准结构，完整八事件、command+Windows override、timeout=2、无 matcher/statusMessage/async；JSON/TOML分别通过serde_json/toml_edit AST注入。Exact显式绑定`paths.installed_bridge`，只提取双command精确匹配、无额外参数且matcher合法的CodePulse-owned projection；wrong-path不可能Exact，用户独立Hook不进入projection，混合group Repair后用户handler保留且CodePulse group独立。Inspection、Planner、Repair、快照与E2E共用同一loader。
 - 静态 inspection 的 managedEntry=exact/modified/duplicate 或带安全 marker 且表示可解析时按决策启动；absent/disabled/managed disabled/ambiguous conflict 不常驻；partial 等动态 phase 只由 listening status 派生。
 - Runtime stop/uninstall/无旧合法 Runtime 的 install 失败按固定顺序发布更高 revision 空快照；重新安装后的任务 revision 继续递增，旧 Vue 任务被清除。
 - 每个新 Runtime generation 清空认证事实，旧 reporter/关闭回调被忽略；重新安装在第一条真实新 Hook 前保持 awaiting_trust/partial。
 - Discovery 的 shutdown/invalidate/serve/drop/stop/Exit 全部比较 version/PID/token/startedAt；旧 Runtime 不误删新文件。
-- Integration Journal 的正式顺序是 allocate ID→prepare Config/Bridge→persist Prepared→create owned staging→apply；Prepared 前崩溃零 staging，Prepared 后部分 staging 只清本 transactionId；BridgeApplied/ConfigApplied 的 Bridge/记录 Original/Target 混合状态逐文件恢复。Install/Repair/Uninstall 使用各自 rollback 与 StructureCommitted invariant；提交后 self-check 失败保留正确结构，恢复只清理且 cleanup 失败只 warning。
+- Integration Journal的正式顺序是allocate ID→prepare Config/Bridge→persist Prepared→pre-apply CAS→verified owned staging/all-staging-ready→apply。Prepared前崩溃零staging；Prepared后任一目标变化不创建新staging且不覆盖。每个backup两次匹配originalDigest，每个MoveFileExW前CAS、后验targetDigest；BridgeApplied/ConfigApplied的Bridge/记录Original/Target混合状态逐文件恢复。Install/Repair/Uninstall使用各自rollback与StructureCommitted invariant；提交后self-check失败保留正确结构，恢复只清理且cleanup失败只warning。
+- 稳定Journal存在时只处理其权威ID；无稳定Journal时仅合法Prepared-only孤立Journal temp可清理，异常temp保留并OrphanTransactionConflict、Runtime停止。Conflict UI只提供“重新尝试安全恢复”；retry共用operation mutex、无事务返回NoPendingTransaction、成功后重新Inspection/Runtime决策/ListeningStatus，不存在force overwrite/discard/ignore功能。
 - 用户其他 Hook 在 install/repair/uninstall 后语义保持；卸载不恢复整份旧备份。
 - idlePersistent 不启动服务，也不把未安装、禁用、冲突或服务错误伪装为已就绪。
 - Bridge crate root 与打包/安装同时验证 Windows GUI Subsystem 和目标 PE Machine；旧 target、错架构或 Console Subsystem 不能通过门禁，真实多 Hook 验收无控制台闪烁。
