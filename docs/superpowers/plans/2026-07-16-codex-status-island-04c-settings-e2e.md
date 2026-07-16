@@ -4,7 +4,7 @@
 
 **目标：** 在 04B 命令与生命周期已审核通过后，实现设置卡、手动启用全局 Hooks 的两阶段引导、预览确认、空闲常驻/命令摘要显示偏好，并完成自动化与 Windows 原生 App/CLI 真实验收。
 
-**架构：** `useCodexIntegration` 分别维护静态 inspection 与唯一动态 listeningStatus，只编排 04B inspect/preview/apply/self-check 和权威 listening event；设置卡不读写文件；前端偏好只进入 localStorage 与跨窗口事件；Widget 使用阶段三统一投影 `toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)`。自动 E2E 使用 TempDir/loopback/ManualClock 覆盖跨 Runtime revision/generation、双事务与 Discovery owner，真实验收单独记录 GUI Bridge 无控制台闪烁。
+**架构：** `useCodexIntegration` 分别维护静态 inspection 与唯一动态 listeningStatus，只编排 04B inspect/preview/apply/self-check 和权威 listening event；设置卡不读写文件；前端偏好只进入 localStorage 与跨窗口事件；Widget 使用阶段三统一投影 `toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)`。自动 E2E 使用 TempDir/loopback/ManualClock 覆盖跨 Runtime revision/generation、Integration Transaction 四阶段恢复、标准 Fixture 脱敏语义比较与 Discovery owner，真实验收单独记录 GUI Bridge 无控制台闪烁。
 
 **技术栈：** Vue 3 Composition API、Pinia/localStorage、Tauri JS API、Vitest、`@vue/test-utils`、Rust TempDir/ManualClock、PowerShell、pnpm 10.33.2。
 
@@ -16,9 +16,11 @@
 - “启用全局 Hooks”和“安装 CodePulse Hook”是两个明确确认项，不能合并成一次 apply。
 - idlePersistent 只影响 running+无任务的显示，不能 invoke install、repair、ensure_started 或 self-check。
 - Inspection 只含静态配置/Bridge 事实，不含 hookState/phase；listening event 不能修改 inspection。
+- 只有 `codex_hooks` 时显示固定弃用提示并按 effectiveState 呈现 enabled/disabled 行为；两个 Feature 键冲突或非布尔时显示配置冲突且无安装、修复、卸载按钮，CodePulse 不改写两键。
 - 本地 hooks=false 且存在安全 CodePulse marker 时，UI 在手动启用说明之外提供“预览卸载 CodePulse Hook”；不得提供安装、修复或自动启用。
 - 真实验收记录只在执行本计划时创建于 `docs/superpowers/verifications/2026-07-16-codex-status-island-e2e.md`。
 - CLI 环境阻塞必须如实记录并阻止“正式兼容已通过”声明。
+- 自动 E2E 的路径对象只读取 `integration_transaction_file`；范围脚本断言 `CodexIntegrationPaths` 不存在第二个含 `transaction` 的字段、startup 只调用 `recover_interrupted_codex_integration_transaction()`，并确认只有 `paths.rs` 拼接 `codex-integration-transaction.json`。
 - 本计划完成后停止，不自动开始后续功能。
 
 ---
@@ -42,7 +44,11 @@
 
 ```ts
 export type CodexHookAction = 'install' | 'repair' | 'uninstall'
-export type CodexHooksFeature = 'enabled' | 'disabled' | 'managed_disabled'
+export type CodexHooksFeature =
+  | 'enabled'
+  | 'disabled'
+  | 'managed_disabled'
+  | 'config_conflict'
 export type CodePulseMarkerPresence = 'absent' | 'present' | 'ambiguous'
 
 export interface CodexIntegrationInspection {
@@ -91,7 +97,7 @@ export function useCodexIntegration(): {
 
 - [ ] **步骤 1：先写 IPC wrapper 与类型失败测试**
 
-  断言 inspect/preview/apply wrapper 的 snake_case 命令与 camelCase 参数；apply 精确发送 action、expectedDigest、previewDigest；完整 static inspection fixture 用 `satisfies` 固定 hooksFeature/markerPresence，并断言 JSON 不存在 hookState/phase/serviceState；result fixture 同时包含独立 listeningStatus 与 selfCheck；公开 payload 不含 target bytes、token、完整配置或事务正文。
+  断言 inspect/preview/apply wrapper 的 snake_case 命令与 camelCase 参数；apply 精确发送 action、expectedDigest、previewDigest；完整 static inspection fixture 用 `satisfies` 固定 hooksFeature/markerPresence，包括 `config_conflict`，并断言 JSON 不存在 hookState/phase/serviceState；issues fixture 覆盖旧别名弃用、重复键与值冲突中文提示；result fixture 同时包含独立 listeningStatus 与 selfCheck；公开 payload 不含 target bytes、token、完整配置或 Journal正文。
 
   运行：
 
@@ -117,7 +123,7 @@ export function useCodexIntegration(): {
 
 - [ ] **步骤 3：实现最小 IPC 与 generation 隔离**
 
-  所有类型从 shared ipc 单一导出；composable 用前端 requestGeneration/disposed 防旧请求，scope dispose 清 listener；requestGeneration 不得和后端 runtimeGeneration 混用。inspection/listeningStatus 使用两个独立 Ref；listening event 不写 inspection。HooksDisabled/ManagedDisabled/ConfigConflict 只转换为稳定 errorCode，不触发其他命令。正常运行只来自 listeningStatus.phase=running。
+  所有类型从 shared ipc 单一导出；composable 用前端 requestGeneration/disposed 防旧请求，scope dispose 清 listener；requestGeneration 不得和后端 runtimeGeneration 混用。inspection/listeningStatus 使用两个独立 Ref；listening event 不写 inspection。HooksDisabled/ManagedDisabled/ConfigConflict（包括 Feature alias conflict）只转换为稳定 errorCode，不触发其他命令。正常运行只来自 listeningStatus.phase=running。
 
   运行：
 
@@ -184,6 +190,8 @@ export function useCodexIntegration(): {
 
   managed_disabled 时显示“由组织策略管理”，不显示修改企业文件、安装、修复或卸载按钮；config_conflict 只显示检测结果和安全说明。
 
+  增加 Feature alias UI 矩阵：只有 `codex_hooks=true` 时显示“检测到旧版 codex_hooks 配置，请在 Codex 中改用 hooks。”并继续显示 enabled 对应安装/修复/卸载行为；只有 `codex_hooks=false` 时显示同一弃用提示并走 disabled 手动引导/安全卸载行为；两个键同值时除弃用提示外显示 Duplicate warning但按共同值工作；两个键冲突或任一非布尔时显示“Codex 配置冲突”，明确要求用户手动删除旧别名或统一两个值，安装/修复/卸载按钮全部不存在，点击与键盘均不能触发 preview/apply。
+
   运行：
 
   ```powershell
@@ -206,7 +214,7 @@ export function useCodexIntegration(): {
 
 - [ ] **步骤 4：实现设置卡**
 
-  卡片只调用 composable；不读写文件、不调用 runtime manager。动态状态文案只看 listeningStatus，action 可见性只看 inspection 静态事实；不得比较两个 phase。`featureConfigPath` 只展示，复制功能若实现也只复制路径。local disabled+safe marker 的卸载仍走 preview/confirm；样式保留在 scoped CSS，不重构控制台布局。两个确认项在视觉和交互上分区，用户手动操作后必须点击“重新检测环境”。
+  卡片只调用 composable；不读写文件、不调用 runtime manager。动态状态文案只看 listeningStatus，action 可见性只看 inspection 静态事实；不得比较两个 phase。`featureConfigPath` 只展示，复制功能若实现也只复制路径。alias 提示只消费 inspection.issues，不从配置正文重新解析；config_conflict 时统一隐藏三种 action。local disabled+safe marker 的卸载仍走 preview/confirm；样式保留在 scoped CSS，不重构控制台布局。两个确认项在视觉和交互上分区，用户手动操作后必须点击“重新检测环境”。
 
   运行：
 
@@ -343,7 +351,7 @@ export interface CodexDisplayPreferences {
 
 ## 任务 4：建立自动化 E2E、PE 与范围门禁
 
-**独立交付物：** TempDir/loopback/ManualClock 全链路可重复验证设计十四项场景、disabled action matrix、跨 Runtime revision/generation、双事务、Discovery owner 竞态、墙钟回拨与完整 PE metadata，不触碰真实用户配置。
+**独立交付物：** TempDir/loopback/ManualClock 全链路可重复验证设计十四项场景、Feature alias/disabled action matrix、跨 Runtime revision/generation、Integration Transaction 四阶段恢复、标准 Fixture 脱敏语义、Discovery owner 竞态、墙钟回拨与完整 PE metadata，不触碰真实用户配置。
 
 **Files:**
 
@@ -372,11 +380,20 @@ export interface CodexDisplayPreferences {
 
 - [ ] **步骤 2：先写生命周期、事务与 Owner 审查回归失败测试**
 
-  覆盖：editing 事件后墙钟/occurredAt 回拨两小时再收到 running_tests，必须进入 running_tests；较小 occurredAt 的 PermissionRequested 立即 waiting_approval；未安装 Hook/Runtime dormant 时 get snapshot 成功且 tasks=[]、不产生 service_error；HooksDisabled install/repair 无 prepared/Bridge/runtime，safe marker uninstall 允许且不启动 Runtime；手动改 true 重新 inspect 后允许 install/repair preview；exact/modified/safe marker 启动；idlePersistent 不启动。
+  覆盖：editing 事件后墙钟/occurredAt 回拨两小时再收到 running_tests，必须进入 running_tests；较小 occurredAt 的 PermissionRequested 立即 waiting_approval；未安装 Hook/Runtime dormant 时 get snapshot 成功且 tasks=[]、不产生 service_error；HooksDisabled install/repair 无 prepared/Bridge/runtime，safe marker uninstall 允许且不启动 Runtime；只有旧 alias 按有效值工作并带弃用 Issue；双键同值带 Duplicate warning；双键冲突/非布尔使三动作 ConfigConflict、Runtime RemainStopped且无 Prepared/Journal；手动消除冲突重新 inspect 后才恢复动作；exact/modified/safe marker 启动；idlePersistent 不启动。
 
   固定 Runtime 重启序列共用同一个进程级 `CodexSnapshotStore`：安装并运行任务至 revision=20、后端 `runtime_generation=1`/`authenticated_generation=1`/running → 卸载 → stop 发布 revision=21 空快照、UI 清旧任务、not_installed → 重新安装 `runtime_generation=2`/`authenticated_generation=None`/awaiting_trust → generation=1 晚到事件忽略 → 第一条 generation=2 真实事件后 running且任务 revision>21。断言新事件不被旧 revision 拒绝，第一条真实新 Hook 前不直接 running。
 
-  双事务故障矩阵：Bridge 临时安装+writer成功+post-write inspection 失败/marker 非 exact → Config/Bridge 回滚且绝不出现 Hook 指向不存在 Bridge；配置写后用户再次修改 → 不覆盖用户字节，若 marker 仍引用稳定路径则保留 Bridge；marker exact 后 self-check 超时/失败 → Hook/Bridge 保留、phase partial/service_error；Config/Bridge commit cleanup 失败 → 正确结构保留并返回 warning；首次 install 验证失败停止临时 Runtime/发布空快照/删 own discovery；Repair 验证失败保持原合法 Runtime/任务。
+  Integration Transaction E2E 至少逐项覆盖：
+
+  - BridgeApplied 崩溃恢复：配置保持原摘要，恢复旧 Bridge/记录；首次 Install 不留孤立新 Bridge，Repair 恢复旧 Bridge/记录；
+  - ConfigApplied 崩溃恢复：下次启动重新执行 Exact；结构 Exact则提升 StructureCommitted并保留，Marker 非 Exact且两侧未外改则先配置后 Bridge双回滚；
+  - StructureCommitted 清理恢复：只清理 backup/temp/Journal，不回滚正确结构；
+  - ConfigApplied 后用户并发修改配置或 Bridge：不覆盖用户字节、不删除仍被引用 Bridge、返回 Conflict并保留诊断；
+  - 每个故障注入点后读取 Hook 与稳定 Bridge，断言永远不出现 Hook 指向缺失 Bridge；
+  - StructureCommitted 后 self-check 超时/失败：Hook/Bridge 保留、phase partial/service_error；cleanup 失败仅 warning；首次 install验证失败停止临时 Runtime/发布空快照/删 own discovery；Repair失败保持原合法 Runtime/任务。
+
+  标准 Fixture E2E：分别从空 JSON/TOML 配置执行实际 Install，再读取实际安装结果；只把 Bridge 绝对路径替换回 `__CODEPULSE_BRIDGE_PATH__`，对 CodePulse matcher 组做规范化语义比较，必须分别等于 `codepulse-hooks-exact.json`/`.toml`。Repair modified 后重复相同比较；用户已有 Handler 的规范 AST 必须前后深度相等。测试不得内嵌第二套八事件期望。
 
   `DiscoveryOwner` 竞态：Runtime A 写 owner A，Runtime B 原子替换 owner B，A 的 stop/drop/RunEvent::Exit 调用 `remove_discovery_if_owned()` 返回 `ReplacedByNewRuntime` 且不删除 B；相同 PID不同 token、损坏文件均不盲删。PE 覆盖无签名、x64/ARM64 反配、Optional Header 太短、非法 Magic、Console/未知 Subsystem、不支持 triple 和旧 target误复制；x64/ARM64+WindowsGui 通过。正常/超时退出仍只启动一次 shutdown。
 
@@ -393,7 +410,7 @@ export interface CodexDisplayPreferences {
 
 - [ ] **步骤 3：实现临时目录/内存 harness**
 
-  Bridge 使用库入口和真实 `std::process::Command` piped 进程，HTTP 用真实 loopback，Actor 用 ManualClock，SnapshotStore 跨两个 fake Runtime 共用，配置用 TempDir，publisher/installer/runtime generation/owner 调用序列可断言。除 loopback 不使用真实网络/Home；每例结束 TempDir 删除，仓库无 discovery/transaction/事件文件。
+  Bridge 使用库入口和真实 `std::process::Command` piped 进程，HTTP 用真实 loopback，Actor 用 ManualClock，SnapshotStore 由 Manager fixture 只构造一次并跨两个 fake Runtime 共用，配置用 TempDir，publisher/installer/runtime generation/owner/Integration Journal 调用序列可断言。Fixture 通过 04A 同一 loader读取，不复制内容。除 loopback 不使用真实网络/Home；每例结束 TempDir 删除，仓库无 discovery/Integration Journal/事件文件。
 
   运行：
 
@@ -407,7 +424,7 @@ export interface CodexDisplayPreferences {
 
 - [ ] **步骤 4：实现并运行范围脚本**
 
-  `verify-codex-status-scope.ps1` 必须在以下条件失败：package-lock/yarn.lock；生产 WSL/wsl.exe；授权 allow/deny/open-session/pause/terminate API；Bridge 缺少 `windows_subsystem = "windows"`、历史写入/重试/stdout 非 `{}`；PE 校验缺 Machine 或 WindowsGui Subsystem；IslandView 出现聚合生命周期/Stop classifier；Inspection DTO 出现动态 hookState/phase；CodePulse 前端或 planner 自动写 Hooks feature；显示偏好调用 runtime；Codex 模块在 paths.rs 外拼接 CodePulse/runtime/bin；Discovery 存在无 owner 删除；验收路径不唯一。
+  `verify-codex-status-scope.ps1` 必须在以下条件失败：package-lock/yarn.lock；生产 WSL/wsl.exe；授权 allow/deny/open-session/pause/terminate API；Bridge 缺少 `windows_subsystem = "windows"`、历史写入/重试/stdout 非 `{}`；PE 校验缺 Machine 或 WindowsGui Subsystem；IslandView 出现聚合生命周期/Stop classifier；Inspection DTO 出现动态 hookState/phase；CodePulse 前端或 planner 自动写 Hooks feature/删除 `codex_hooks`；显示偏好调用 runtime；Codex 模块在 paths.rs 外拼接 CodePulse/runtime/bin或 `codex-integration-transaction.json`；`CodexIntegrationPaths` 出现第二个含 `transaction` 的字段，或 startup 调用的恢复接口不是 `recover_interrupted_codex_integration_transaction()`；Manager 构造不显式接收 Store或 setup 另 manage第二份 Store；标准 Fixture 缺任一事件/command Windows override/timeout=2，或出现 matcher/statusMessage/async；Inspection/Planner/Repair/E2E 存在第二套手写八事件模板；Discovery 存在无 owner 删除；验收路径不唯一。
 
   运行：
 
@@ -492,7 +509,7 @@ export interface CodexDisplayPreferences {
 
 - [ ] **步骤 3：用设置页安装并验证真实 Hook 信任**
 
-  在 preview 确认八事件、稳定 Bridge 和警告后 apply；状态先为 awaiting_trust。启动新 Codex App 任务，在官方 UI 信任 CodePulse command Hook 并提交只读请求；第一条属于当前 Runtime generation 的真实事件后才变 running，来源包含 App。不得把 token 或 generation 诊断细节写入验收文档。
+  在 preview 确认八事件、稳定 Bridge 和警告后 apply；立即读取实际安装结果，把 Bridge 绝对路径脱敏回 `__CODEPULSE_BRIDGE_PATH__`，确认 CodePulse matcher 组与对应标准 JSON/TOML Fixture 语义相等且用户其他 Handler 深度相等。状态先为 awaiting_trust。启动新 Codex App 任务，在官方 UI 信任 CodePulse command Hook 并提交只读请求；第一条属于当前 Runtime generation 的真实事件后才变 running，来源包含 App。不得把 token 或 generation 诊断细节写入验收文档。
 
   运行：
 
@@ -538,9 +555,10 @@ export interface CodexDisplayPreferences {
   Test-Path -LiteralPath "$env:LOCALAPPDATA\CodePulse\runtime\codex-bridge.json"
   Test-Path -LiteralPath "$env:LOCALAPPDATA\CodePulse\bin\codepulse-codex-bridge.exe"
   Test-Path -LiteralPath "$env:LOCALAPPDATA\CodePulse\bin\codepulse-codex-bridge.install.json"
+  @(Get-ChildItem -LiteralPath "$env:LOCALAPPDATA\CodePulse\runtime" -Filter '*transaction*.json' -File).Count
   ```
 
-  预期：退出/卸载后三项均 False；非 CodePulse Hook 不变。
+  预期：前三项均为 False、事务文件计数为 0；退出/卸载后 discovery、Bridge、安装记录和 Integration Journal 均不存在，非 CodePulse Hook 不变。脚本不拼接 Journal 文件名。
 
 - [ ] **步骤 6：在独立 CLI 环境重复来源与并行门禁**
 
@@ -580,9 +598,11 @@ export interface CodexDisplayPreferences {
 
 - UI 测试覆盖七 phase、HooksDisabled 手动三步引导、managed disabled、preview/confirm/cancel。
 - UI/composable 把静态 inspection 与动态 listeningStatus 分开维护；listening event 可立即 awaiting_trust→running且不重新 inspect。
+- 只有 `codex_hooks` 时显示固定弃用提示并按有效值工作；双键同值显示重复 warning；双键冲突或非布尔时显示配置冲突且不渲染 install/repair/uninstall 按钮。
 - local disabled+marker present 同时显示手动启用说明与安全卸载入口；install/repair/自动启用不可用，managed disabled 全只读。
 - idlePersistent 与 showCommandSummary 只控制展示；Widget/设置页使用同一权威 CodexListeningStatus。
-- 自动 E2E 覆盖十四项设计场景、occurredAt/墙钟回拨、dormant 空快照、跨 Runtime revision/generation、disabled uninstall、双事务故障、Discovery owner 竞态、退出和 PE Machine+WindowsGui。
+- 自动 E2E 覆盖十四项设计场景、occurredAt/墙钟回拨、dormant 空快照、跨 Runtime revision/generation、disabled uninstall、统一 Integration Transaction 四阶段故障、Discovery owner 竞态、退出和 PE Machine+WindowsGui。
+- JSON/TOML 实际 Install 与 Repair 结果经 Bridge 路径脱敏后分别语义等于唯一标准 Fixture，用户已有 Handler 前后深度相等，E2E 不内嵌第二套八事件模板。
 - 范围脚本阻止 WSL、控制 Codex、历史补偿、自动改 Hooks feature、路径分叉和错误验收路径。
 - Codex App 真实 Hook 信任与卸载重装通过；多 Hook 全程无可见控制台闪烁且管道协议正常；独立 CLI 通过或明确记录环境阻塞，不冒充正式兼容通过。
 - 全部完成后停止，不自动开展下一版功能。

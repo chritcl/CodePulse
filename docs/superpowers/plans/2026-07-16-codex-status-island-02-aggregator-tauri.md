@@ -141,7 +141,7 @@ impl CodexSnapshotStore {
 
 所有 serde 输出使用 camelCase/route 所需 snake_case enum。公开 `CodexTaskState` 不含 `cwd`、eventId、原始响应、内部计时字段或子智能体 ID 集合。
 
-`CodexStateDraft` 是 Rust 内部类型，不 serde 到 Vue且没有 revision/version。`CodexSnapshotStore::new()` 固定建立 version=1、revision=0、generatedAt=initial_generated_at、tasks=[]、representativeSessionId=None、attention=None 的 current，并把 next_revision 初始化为 1。`commit()` 与 `clear()` 在 current 写锁内从 AtomicU64 分配严格大于 current.revision 的 revision，再替换 current；`clear()` 始终产生一份新的空快照，不复用旧 revision。Store 从 CodePulse 进程启动到退出只构造一次，不随 Runtime stop/start 销毁。
+`CodexStateDraft` 是 Rust 内部类型，不 serde 到 Vue且没有 revision/version。`CodexSnapshotStore::new()` 固定建立 version=1、revision=0、generatedAt=initial_generated_at、tasks=[]、representativeSessionId=None、attention=None 的 current，并把 next_revision 初始化为 1。`commit()` 与 `clear()` 在 current 写锁内从 AtomicU64 分配严格大于 current.revision 的 revision，再替换 current；`clear()` 始终产生一份新的空快照，不复用旧 revision。Store 从 CodePulse 进程启动到退出只构造一次，不随 Runtime stop/start 销毁；`CodexRuntimeManager` 不得调用 `CodexSnapshotStore::new()`，也不得通过 `Default` 或无参数构造隐式创建第二份 Store。
 
 ```rust
 pub struct StopEvidence<'a> {
@@ -607,7 +607,7 @@ async fn run_codex_self_check(
 
 - [ ] **步骤 1：先写 Actor 并发与发布失败测试**
 
-  用容量 256 的 event channel 并发发送多个 session，同时交错 ClearTask 和显式 `CodexActorCommand::Tick`；断言 publisher 收到的快照全部来自同一个 Store且 revision 单调递增，最终 `store.current()` 与顺序参考模型相同。软提醒只发一次，并且 revision 精确等于产生该提醒的 Store commit revision；不存在 Aggregator revision。每个从已认证 HTTP 队列取出的事件都把 `AggregateEffects.authenticated_activity` 连同 Actor 捕获的 generation 转交 activity reporter 一次，包括被 eventId 去重的重投；自检和 Tick 不得调用。
+  用容量 256 的 event channel 并发发送多个 session，同时交错 ClearTask 和显式 `CodexActorCommand::Tick`；断言 publisher 收到的快照全部来自同一个注入 Store且 revision 单调递增，最终 `store.current()` 与顺序参考模型相同。Actor fixture 必须保存传入的 `Arc<CodexSnapshotStore>` 并用 `Arc::ptr_eq` 证明它与 Manager 的 `runtime.snapshot_store()` 是同一实例。软提醒只发一次，并且 revision 精确等于产生该提醒的 Store commit revision；不存在 Aggregator revision。每个从已认证 HTTP 队列取出的事件都把 `AggregateEffects.authenticated_activity` 连同 Actor 捕获的 generation 转交 activity reporter 一次，包括被 eventId 去重的重投；自检和 Tick 不得调用。
 
   运行：
 
@@ -621,7 +621,7 @@ async fn run_codex_self_check(
 
 - [ ] **步骤 2：先写清除和命令失败测试**
 
-  覆盖：Runtime 运行时只允许清除 failed/interrupted并由 Actor 顺序提交 Store；清除 active/completed/unknown session 返回稳定错误码；清除全部失败不删中断；每个命令返回 Store 提交后的权威快照。新增 dormant 矩阵：not_installed、local disabled、managed disabled、config conflict、Runtime 从未启动与 Runtime 已停止六种状态都让 `get_codex_snapshot()` 成功返回 `store.current()`，初始 revision=0、tasks=[]，且 listening 不变、不产生 service_error；dormant 空快照执行 clear task返回稳定 `UnknownSession`；dormant 执行 clear all 直接返回当前空快照。self-check 精确返回服务/发现文件/队列三项且不发送伪 Codex 事件。
+  覆盖：Runtime 运行时只允许清除 failed/interrupted并由 Actor 顺序提交 Store；清除 active/completed/unknown session 返回稳定错误码；清除全部失败不删中断；每个命令返回 Store 提交后的权威快照。新增 dormant 矩阵：not_installed、local disabled、managed disabled、config conflict、Runtime 从未启动与 Runtime 已停止六种状态都让 `get_codex_snapshot()` 成功返回 `runtime.snapshot_store().current()`，初始 revision=0、tasks=[]，且 listening 不变、不产生 service_error；测试把注入 Store 预置为非默认 revision 后再 dormant 查询，证明命令不从 Actor 或另一份 Store 读取；dormant 空快照执行 clear task返回稳定 `UnknownSession`；dormant 执行 clear all 直接返回当前空快照。self-check 精确返回服务/发现文件/队列三项且不发送伪 Codex 事件。
 
   运行：
 
@@ -651,7 +651,7 @@ async fn run_codex_self_check(
 
 - [ ] **步骤 4：实现 Tauri 命令并注册**
 
-  `commands.rs` 从 `State<CodexRuntimeManager>` 取得进程级 Store 与可选 Actor handle。`get_codex_snapshot()` 始终只读 Store；clear task/all 仅在 Runtime running 时发 Actor 命令，dormant 按固定空快照语义返回，不把 Actor 缺失映射为服务异常。所有外部错误映射为不含路径、token 或正文的稳定中文信息；内部测试额外断言错误代码。`lib.rs` 只新增模块 import 和五个 handler 名称，不调整现有命令顺序或职责。
+  `commands.rs` 只从 `State<CodexRuntimeManager>` 通过 `runtime.snapshot_store()` 取得唯一进程级 Store 与可选 Actor handle，不单独接收 `State<CodexSnapshotStore>`。`get_codex_snapshot()` 始终只读该注入 Store；clear task/all 仅在 Runtime running 时发 Actor 命令，dormant 按固定空快照语义返回，不把 Actor 缺失映射为服务异常。所有外部错误映射为不含路径、token 或正文的稳定中文信息；内部测试额外断言错误代码。`lib.rs` 只新增模块 import 和五个 handler 名称，不调整现有命令顺序或职责。
 
   运行：
 
@@ -748,6 +748,7 @@ impl CodexRuntimeManager {
     pub fn new(
         app: tauri::AppHandle,
         paths: CodexIntegrationPaths,
+        snapshot_store: Arc<CodexSnapshotStore>,
     ) -> Self;
     pub async fn ensure_started(
         &self,
@@ -796,7 +797,16 @@ impl CodexExitCoordinator {
 
 - [ ] **步骤 1：先写按原因启停与路径消费失败测试**
 
-  通过注入 fake server/actor/publisher 覆盖：manager 构造只保存同一个 `CodexIntegrationPaths` 与同一个进程级 Store，不启动 listener；Store 初始 revision=0 且 dormant 可查询。`ensure_started(StartupInspection)` 每次真实创建先分配非零 generation，再把同一个 generation 绑定 event channel/Actor/reporter/HTTP token/DiscoveryOwner；三种 start reason 在已运行时重复调用不创建第二 listener或新 generation；启动失败允许消耗 generation、关闭 actor、current generation 保持 None并进入 service_error。
+  通过注入 fake server/actor/publisher 覆盖：manager 构造只保存同一个 `CodexIntegrationPaths` 与调用方提供的同一个进程级 Store，不启动 listener；Store 初始 revision=0 且 dormant 可查询。构造后必须直接断言：
+
+  ```rust
+  assert!(Arc::ptr_eq(
+      &provided_store,
+      &runtime.snapshot_store(),
+  ));
+  ```
+
+  `ensure_started(StartupInspection)` 每次真实创建先分配非零 generation，再把同一个 generation 绑定 event channel/Actor/reporter/HTTP token/DiscoveryOwner，并把 `runtime.snapshot_store()` 的同一 Arc 传给 Actor；三种 start reason 在已运行时重复调用不创建第二 listener或新 generation；启动失败允许消耗 generation、关闭 actor、current generation 保持 None并进入 service_error。增加完整序列：Manager start → Actor 获得同一 Store → Stop 后该 Store revision 增加 → Restart 后新 Actor 仍持有同一 Arc。
 
   generation 表格必须覆盖：generation=1 收到真实事件 → authenticatedGeneration=1 → running；generation=1 stop → generation=2 start → authenticatedGeneration=None、lastEventAt=None、sources=[]、旧 error/port/fallback 清空 → awaiting_trust；generation=1 Actor 晚到上报或关闭回调且 current=2 → 完全忽略；generation=2 收到真实事件 → authenticatedGeneration=2 → running。running 的必要条件固定为 current generation 非 None 且两个 generation 相等；self-check 不能设置 authenticatedGeneration。
 
@@ -832,7 +842,23 @@ impl CodexExitCoordinator {
 
   `initialize_app()` 使用 `app.path().local_data_dir()?` 取得不带 bundle identifier 的 Windows 本地数据根目录，使用 `app.path().resource_dir()?` 取得资源根目录；Codex Home 按 `CODEX_HOME` 优先、否则 `%USERPROFILE%\.codex`；ProgramData 从 `%ProgramData%` 读取。四个根只传给 `CodexIntegrationPaths::from_local_data_root(...)` 一次，然后把同一个 paths 对象交给 manager。禁止调用会追加 `com.ryen.nsd` 的应用专用本地数据目录 API。
 
-  在 setup 中构造一次 `Arc<CodexSnapshotStore>` 并把持有该 Arc 的 manager 通过 Tauri `manage` 注册；不得在 Runtime start/stop 时 remove/re-manage Store。manager 本阶段不调用 `ensure_started()`，构造 facts 为 runtimeGeneration=None、authenticatedGeneration=None、serviceState=stopped、hookState=unknown、phase=disabled。04B 静态 inspection 才精确派生 not_installed/awaiting_trust/partial/config_conflict/disabled 并决定是否 start。
+  在 setup 中只调用一次 `CodexSnapshotStore::new()`，并显式把该 Arc 注入 manager：
+
+  ```rust
+  let snapshot_store = Arc::new(
+      CodexSnapshotStore::new(initial_generated_at)
+  );
+
+  let runtime = CodexRuntimeManager::new(
+      app_handle.clone(),
+      paths,
+      Arc::clone(&snapshot_store),
+  );
+
+  app.manage(runtime);
+  ```
+
+  不再单独 `manage<CodexSnapshotStore>()`，所有命令经 Manager 的 `snapshot_store()` 取得同一入口；不得在 Runtime start/stop 时 remove/re-manage 或替换 Store。setup fixture 用构造计数器断言整个 setup 只调用一次 `CodexSnapshotStore::new()`。manager 本阶段不调用 `ensure_started()`，构造 facts 为 runtimeGeneration=None、authenticatedGeneration=None、serviceState=stopped、hookState=unknown、phase=disabled。04B 静态 inspection 才精确派生 not_installed/awaiting_trust/partial/config_conflict/disabled 并决定是否 start。
 
   每次 start 先清空 authenticatedGeneration/lastEventAt/sources/errorCode/port/fallback，再分配并捕获 generation；HTTP/Actor 创建成功后设 current generation，失败保持 None。固定端口或 fallback 启动成功为 listening；`record_authenticated_event(reported_generation, source, received_at)` 先比较 current generation，只有相等才记录 authenticatedGeneration/lastEventAt/sources 并允许 active/running；旧 generation 直接返回。模拟 self-check 不能进入 running。任何 mutex guard 都不得跨 publisher 回调或 I/O await。
 
@@ -904,6 +930,7 @@ impl CodexExitCoordinator {
 - 完成精确保留 5 分钟、失败只手动清除、新轮次清旧失败、10/30 分钟中断、授权不超时。
 - 三个事件、五个命令和公开 DTO 命名与总体路线图一致，公开状态不含 cwd/token/原始 Hook 正文。
 - Runtime 在阶段二 setup 后保持 dormant；`get_codex_snapshot()` 仍成功返回 revision=0 空快照，dormant clear 不产生 service_error。只有 `ensure_started(reason)` 能启动，`stop_if_unused(reason)` 能在卸载/失败/inspection 不允许时停止，显示偏好不能启停服务。
+- `CodexRuntimeManager::new(app, paths, snapshot_store)` 显式接收唯一 Store；setup 只构造一次 Store且只 manage Manager，Actor、stop、restart 与 dormant 命令均通过同一 Arc，`Arc::ptr_eq`、构造计数和命令入口测试通过。
 - 同一 Store 中验证 revision=20 → stop/clear=21 空快照 → 新 Runtime 首任务>21；Runtime A stop 后 Runtime B 不从 1 开始。
 - 每个 Runtime 使用新的非零 generation、token、Actor/reporter 和 DiscoveryOwner；新 Runtime 清空认证事实，只有 authenticatedGeneration==runtimeGeneration 才 running；旧 Actor 晚到上报/关闭回调被忽略。
 - 所有 stop 原因按“停止接收 → owner-aware 关闭旧 Runtime → Store.clear/发布空快照 → 发布 listening status”执行；Discovery 删除完整比较 version/PID/token/startedAt，第二个 Runtime 不受第一个清理影响。

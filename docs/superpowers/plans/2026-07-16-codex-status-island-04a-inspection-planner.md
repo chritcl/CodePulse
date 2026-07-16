@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**目标：** 只读检查 Codex Home、企业策略、Hook 表示、CodePulse marker 与 Bridge 状态，输出不含动态 phase 的静态 Inspection；再结合 generation-aware Runtime facts 单独派生唯一 ListeningStatus/runtime 启动决策，并生成不写盘的 install/repair/uninstall 计划和安全预览。
+**目标：** 只读检查 Codex Home、`features.hooks`/弃用 `features.codex_hooks`、企业策略、Hook 表示、CodePulse marker 与 Bridge 状态，以标准 JSON/TOML Fixture 为唯一 Exact 母版，输出不含动态 phase 的静态 Inspection；再结合 generation-aware Runtime facts 单独派生唯一 ListeningStatus/runtime 启动决策，并生成不写盘的 install/repair/uninstall 计划和安全预览。
 
 **架构：** `inspection.rs` 只读取 `CodexIntegrationPaths` 指向的文件并产生结构化事实；`status.rs` 用 inspection 与 runtime facts 纯派生 `CodexListeningStatus`；`plan.rs` 对完整解析树做语义增删并产生 `PreparedCodexHookChange`。本批次不引入 writer、installer、Tauri apply 或 Vue UI。
 
@@ -12,9 +12,12 @@
 
 - 前置门禁：阶段一至三全部通过；阶段四总览已 review。
 - 只消费阶段一 `CodexIntegrationPaths`，禁止重新拼接 CodePulse/runtime/bin。
+- 路径对象字段固定包含 `integration_transaction_file`，04A 只把它纳入 expectedDigest 的路径/存在性输入，不读取、创建或恢复 Journal；只有 `paths.rs` 可以拼接 `codex-integration-transaction.json`。
 - 真实 `%USERPROFILE%\.codex` 与 `%ProgramData%` 只能读；全部自动测试使用 TempDir。
 - `features.hooks=false` 时 install/repair planner 返回 HooksDisabled；marker absent 不产生计划；marker present 且 representation/marker 可安全解析时允许生成只删除 CodePulse marker 的 uninstall 计划。
 - 企业托管禁用时返回 ManagedDisabled；不引导修改企业文件。
+- `features.codex_hooks` 只读兼容且永不改写；两个 Feature 键冲突或非布尔时 install/repair/uninstall 全部 ConfigConflict且 Runtime RemainStopped。
+- 2026-07-16 官方 Hooks 文档确认事件→matcher 组→handler 三层、基础 `command` 必需且 `commandWindows` 为 Windows override、TOML 标准字段 `command_windows`、timeout 单位秒/缺省 600、非托管 command Hook 按定义哈希信任；Matcher 仅部分事件生效，省略可匹配全部，UserPromptSubmit/Stop 不支持。官方未明确 managed requirements 接受弃用别名，因此企业文件只识别标准 `[features].hooks` 与 `allow_managed_hooks_only`。04A 实施第一步必须重新核对同一官方 Hooks/Config Reference；任一层级、字段、Matcher、Feature alias、timeout、信任或 managed 规则发生变化时，先停止并同步路线图、04A/04B/04C 与两份标准 Fixture，不能直接按旧计划写源码。
 - 不创建自建 Dispatcher；planner 在 Codex 原生多 Hook 表示上逐项保留用户原 Hook，只增删带 CodePulse marker 的条目。
 - `modified` 允许后续 runtime 启动但 ListeningStatus phase 必须 partial，planner 只能通过显式 Repair 处理；Inspection 本身不保存 phase。
 - 每个任务完成后可单独 review；本计划门禁完成后停止，不自动进入 04B。
@@ -33,21 +36,38 @@
 - Create: `src-tauri/src/codex/integration/types.rs`
 - Create: `src-tauri/src/codex/integration/inspection.rs`
 - Create: `src-tauri/src/codex/integration/inspection_tests.rs`
+- Create: `src-tauri/src/codex/integration/fixtures/codepulse-hooks-exact.json`
+- Create: `src-tauri/src/codex/integration/fixtures/codepulse-hooks-exact.toml`
 - Create: `src-tauri/src/codex/integration/fixtures/hooks-existing.json`
 - Create: `src-tauri/src/codex/integration/fixtures/config-inline-hooks.toml`
 - Create: `src-tauri/src/codex/integration/fixtures/requirements-hooks-disabled.toml`
 - Modify: `src-tauri/Cargo.lock`（只由 Cargo 生成）
 
-**消费接口：** `CodexIntegrationPaths` 的 12 个字段、`CODEX_PROTOCOL_VERSION`、编译期 `CODEPULSE_TARGET_TRIPLE`、安装包/稳定 EXE SHA-256。
+**消费接口：** `CodexIntegrationPaths` 的 12 个字段（统一事务字段名为 `integration_transaction_file`）、`CODEX_PROTOCOL_VERSION`、编译期 `CODEPULSE_TARGET_TRIPLE`、安装包/稳定 EXE SHA-256。
 
 **产生接口：**
 
 ```rust
 pub enum CodexHookRepresentation { HooksJson, ConfigToml, None, Conflict }
-pub enum CodexHooksFeature { Enabled, Disabled, ManagedDisabled }
+pub enum CodexHooksFeature { Enabled, Disabled, ManagedDisabled, ConfigConflict }
 pub enum ManagedEntryState { Absent, Exact, Modified, Duplicate }
 pub enum CodePulseMarkerPresence { Absent, Present, Ambiguous }
 pub enum BridgeState { Missing, Current, Outdated, Modified }
+
+pub enum CodexIntegrationIssueCode {
+    DeprecatedCodexHooksAlias,
+    DuplicateHooksFeatureKeys,
+    HooksFeatureTypeConflict,
+    HooksFeatureValueConflict,
+    // 其余既有稳定 Issue code 继续集中在此枚举。
+}
+
+pub struct CodexHooksFeatureInspection {
+    pub canonical_value: Option<bool>,
+    pub deprecated_alias_value: Option<bool>,
+    pub effective_state: CodexHooksFeature,
+    pub issue_codes: Vec<CodexIntegrationIssueCode>,
+}
 
 pub struct BridgeInstallRecord {
     pub version: u16,
@@ -74,9 +94,182 @@ pub struct CodexIntegrationInspection {
 pub fn inspect_codex_environment(
     paths: &CodexIntegrationPaths,
 ) -> Result<CodexIntegrationInspection, CodexIntegrationError>;
+
+pub(crate) fn inspect_codex_hooks_feature(
+    config: &toml_edit::DocumentMut,
+) -> CodexHooksFeatureInspection;
 ```
 
-该结构必须精确保持上述静态字段，不得加入 `hook_state`、`phase`、service state、port、lastEventAt、sources、runtime generation 或 authenticated generation。Rust serde/04C TypeScript fixture 都要断言 JSON 中不存在动态字段。
+公开结构必须精确保持上述静态字段，不得加入 `hook_state`、`phase`、service state、port、lastEventAt、sources、runtime generation 或 authenticated generation。公开 `issues` 映射为稳定中文短句；内部测试必须直接断言 `CodexHooksFeatureInspection` 的两个原始 Option、effectiveState 与 issueCodes。Rust serde/04C TypeScript fixture 都要断言 JSON 中不存在动态字段。
+
+### 标准 Hook Fixture（唯一 Exact 母版）
+
+`codepulse-hooks-exact.json` 的完整内容固定为：
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "commandWindows": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "commandWindows": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "commandWindows": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "commandWindows": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "commandWindows": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "commandWindows": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "commandWindows": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "commandWindows": "\"__CODEPULSE_BRIDGE_PATH__\" --codepulse-hook-v1",
+            "timeout": 2
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`codepulse-hooks-exact.toml` 的完整内容固定为：
+
+```toml
+[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+command_windows = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+timeout = 2
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+command_windows = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+timeout = 2
+
+[[hooks.PreToolUse]]
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+command_windows = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+timeout = 2
+
+[[hooks.PermissionRequest]]
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+command_windows = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+timeout = 2
+
+[[hooks.PostToolUse]]
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+command_windows = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+timeout = 2
+
+[[hooks.SubagentStart]]
+[[hooks.SubagentStart.hooks]]
+type = "command"
+command = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+command_windows = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+timeout = 2
+
+[[hooks.SubagentStop]]
+[[hooks.SubagentStop.hooks]]
+type = "command"
+command = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+command_windows = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+timeout = 2
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+command_windows = '"__CODEPULSE_BRIDGE_PATH__" --codepulse-hook-v1'
+timeout = 2
+```
+
+`__CODEPULSE_BRIDGE_PATH__` 是这两份文件唯一允许的占位符；loader 必须把其全部精确出现替换为 `paths.installed_bridge` 的绝对路径，替换后不得残留任何占位符。基础 `command` 与 Windows override 都必须存在，因为实施日官方文档把 Windows 字段定义为 override。八个事件都省略 matcher以接收全部发生；尤其 UserPromptSubmit/Stop 不得写会被忽略的无意义 matcher。Fixture 禁止 statusMessage、async、prompt/agent handler，也不得包含用户其他 Hook；它只定义 CodePulse 要插入/比较的 matcher 组。
 
 - [ ] **步骤 1：先写 inspection 零副作用失败测试**
 
@@ -94,7 +287,18 @@ pub fn inspect_codex_environment(
 
 - [ ] **步骤 2：先写 feature、marker 和 Bridge 状态失败测试**
 
-  覆盖本地默认 enabled、本地 `[features].hooks=false` 为 disabled、企业 requirements 强制 false 或 managed-only 为 managed_disabled；CodePulse 条目按 `--codepulse-hook-v1` marker 区分 absent/exact/modified/duplicate，缺事件、超时不同、路径不同和额外 statusMessage 都是 modified；无法完整解析时 markerPresence=ambiguous。Bridge 覆盖 missing/current/outdated/modified，并断言所有路径都来自同一个 paths 对象。序列化完整 inspection 后断言没有 hookState/phase/serviceState/runtimeGeneration/authenticatedGeneration。
+  Feature 内部事实使用表格测试固定：
+
+  - `hooks` 与 `codex_hooks` 都缺失 → Enabled、两个 Option=None、无 alias Issue；
+  - `hooks=false` → Disabled；
+  - 只有 `codex_hooks=false` → Disabled + `DeprecatedCodexHooksAlias`；
+  - `hooks=true + codex_hooks=true` → Enabled + `DeprecatedCodexHooksAlias` + `DuplicateHooksFeatureKeys`；
+  - `hooks=false + codex_hooks=false` → Disabled + 同两项 Issue；
+  - `hooks=true + codex_hooks=false` 与反向组合 → ConfigConflict + `HooksFeatureValueConflict`；
+  - 标准键或别名为非布尔值 → ConfigConflict + `HooksFeatureTypeConflict`；
+  - 企业 requirements 的 `[features].hooks=false` 或 `allow_managed_hooks_only=true` → ManagedDisabled；企业 `codex_hooks` 不当作有效 managed 键，只产生只读诊断，文件字节不变。
+
+  标准 JSON Fixture 和替换稳定路径后的标准 TOML Fixture都得到 managedEntry=Exact；八事件任一缺失、timeout!=2、出现 statusMessage、出现 async=true、UserPromptSubmit/Stop 带 matcher、路径或命令层级不同都为 Modified。Bridge 参数缺少 `--codepulse-hook-v1` 时不得识别为安全 CodePulse marker；重复母版为 Duplicate；无法完整解析时 markerPresence=Ambiguous。Bridge 覆盖 missing/current/outdated/modified，并断言所有路径都来自同一个 paths 对象。序列化完整 inspection 后断言没有 hookState/phase/serviceState/runtimeGeneration/authenticatedGeneration。
 
   运行：
 
@@ -108,7 +312,7 @@ pub fn inspect_codex_environment(
 
 - [ ] **步骤 3：实现完整解析和只读事实提取**
 
-  JSON 用 `serde_json::Value` 完整解析并保留未知字段；TOML 用 `toml_edit::DocumentMut` 只读遍历，同时接受 `command_windows`/`commandWindows`。用户 CodePulse handler 只按 marker 识别，再比较八事件、绝对稳定路径、timeout=2 和禁止字段。`issues` 只包含稳定代码与中文短句，不含配置正文、token、完整命令或用户路径正文。
+  JSON 用 `serde_json::Value` 完整解析并保留未知字段；TOML 用 `toml_edit::DocumentMut` 只读遍历，同时接受 `command_windows`/`commandWindows`，但 Planner 标准输出只写 `command_windows`。Feature parser 同时读取 `hooks`/`codex_hooks` 原始值并按固定矩阵生成内部事实，任何写路径都不得触碰两键。CodePulse handler 先要求 command 类型、基础 command/Windows override、稳定 Bridge 参数 `--codepulse-hook-v1` 才识别为安全 marker，再与加载后的对应标准 Fixture 比较完整三层结构、事件集合、matcher 缺失规则、timeout 与禁止字段；Exact 不得只比较 Bridge 路径。`issues` 只包含稳定代码与中文短句，不含配置正文、token、完整命令或用户路径正文。只有旧别名的公开提示固定为“检测到旧版 codex_hooks 配置，请在 Codex 中改用 hooks。”
 
   运行：
 
@@ -192,7 +396,7 @@ pub fn derive_startup_runtime_decision(
 
 - [ ] **步骤 1：先写七 phase 派生失败测试**
 
-  表格覆盖：exact + runtimeGeneration=1 + authenticatedGeneration=1 + listening => running；exact + generation=1 + authenticatedGeneration=None => awaiting_trust；generation=1 已认证后 stop、generation=2 启动但 authenticatedGeneration=None => awaiting_trust；旧 generation=1 的认证事实与当前 generation=2 不相等时不得 running；modified、duplicate、Bridge missing/outdated 且 marker present => partial；解析/双表示冲突 => config_conflict；服务启动失败 => service_error；absent => not_installed；本地 disabled 与 managed disabled => disabled。managed disabled 仍由 inspection.hooksFeature 区分，设置页据此显示组织策略。
+  表格覆盖：exact + runtimeGeneration=1 + authenticatedGeneration=1 + listening => running；exact + generation=1 + authenticatedGeneration=None => awaiting_trust；generation=1 已认证后 stop、generation=2 启动但 authenticatedGeneration=None => awaiting_trust；旧 generation=1 的认证事实与当前 generation=2 不相等时不得 running；modified、duplicate、Bridge missing/outdated 且 marker present => partial；Feature alias conflict、Feature 非布尔、解析/双表示冲突 => config_conflict；服务启动失败 => service_error；absent => not_installed；本地 disabled 与 managed disabled => disabled。managed disabled 仍由 inspection.hooksFeature 区分，设置页据此显示组织策略；只有旧别名但无冲突时按 effectiveState 进入 enabled/disabled 对应行为，同时保留弃用 Issue。
 
   再断言同一个 inspection 对象在 runtime facts 从 awaiting_trust 变 running 时保持值/序列化字节不变；只有 `CodexListeningStatus` 改变，证明 UI 不需要重新 inspect。
 
@@ -208,7 +412,7 @@ pub fn derive_startup_runtime_decision(
 
 - [ ] **步骤 2：先写 startup decision 失败测试**
 
-  覆盖 exact => Start(StartupInspection)；modified/duplicate/Bridge 非 Current 且 marker present => Start(StartupInspection)，对应 phase 由独立 listening 派生为 partial；not_installed、disabled、managed disabled、任意 config conflict/ambiguous、已卸载 => RemainStopped(StartupInspectionDisallows)。无法安全识别 marker 的 conflict 不得被派生为 partial。额外传入 idlePersistent=true/false 的 UI fixture，断言函数签名没有该参数且结果不变。
+  覆盖 exact => Start(StartupInspection)；modified/duplicate/Bridge 非 Current 且 marker present => Start(StartupInspection)，对应 phase 由独立 listening 派生为 partial；not_installed、disabled、managed disabled、Feature alias conflict/非布尔、任意 representation conflict/ambiguous、已卸载 => RemainStopped(StartupInspectionDisallows)。无法安全识别 marker 或 Feature 冲突不得被派生为 partial。额外传入 idlePersistent=true/false 的 UI fixture，断言函数签名没有该参数且结果不变。
 
   运行：
 
@@ -222,7 +426,7 @@ pub fn derive_startup_runtime_decision(
 
 - [ ] **步骤 3：实现确定的优先级表**
 
-  派生顺序固定为：服务 Error → service_error；feature Disabled/ManagedDisabled → disabled；representation Conflict/marker Ambiguous → config_conflict；entry Absent → not_installed；entry Modified/Duplicate 或 Bridge 非 Current → partial；entry Exact 且 runtimeGeneration 非 None、authenticatedGeneration 精确等于 runtimeGeneration、service listening → running；其余 Exact → awaiting_trust。self-check 成功不改变 generation 字段，因此不能 running。startup decision 只读 inspection 的 marker/entry/feature/representation/bridge 静态事实，不读取 phase、localStorage，不写文件，不调用 manager。
+  派生顺序固定为：服务 Error → service_error；feature ConfigConflict → config_conflict；feature Disabled/ManagedDisabled → disabled；representation Conflict/marker Ambiguous → config_conflict；entry Absent → not_installed；entry Modified/Duplicate 或 Bridge 非 Current → partial；entry Exact 且 runtimeGeneration 非 None、authenticatedGeneration 精确等于 runtimeGeneration、service listening → running；其余 Exact → awaiting_trust。self-check 成功不改变 generation 字段，因此不能 running。startup decision 只读 inspection 的 marker/entry/feature/representation/bridge 静态事实，不读取 phase、localStorage，不写文件，不调用 manager。
 
   运行：
 
@@ -269,7 +473,7 @@ pub fn derive_startup_runtime_decision(
 - Create: `src-tauri/src/codex/integration/plan.rs`
 - Create: `src-tauri/src/codex/integration/plan_tests.rs`
 
-**消费接口：** 任务 1 inspection、固定八事件、`paths.installed_bridge`、任务 2 runtime decision；不消费 writer/installer/runtime manager。
+**消费接口：** 任务 1 inspection、`codepulse-hooks-exact.json`/`.toml` 唯一母版、`paths.installed_bridge`、任务 2 runtime decision；不消费 writer/installer/runtime manager。Planner 和 Inspection 必须调用同一个 Fixture loader/语义规范化函数，禁止各自手写八事件模板。
 
 **产生接口：**
 
@@ -319,7 +523,9 @@ pub fn prepare_codex_hook_change(
 
 - [ ] **步骤 1：先写 JSON/TOML 语义保留失败测试**
 
-  JSON 覆盖八事件 exact 安装、重复 install no-op、repair 缺项/旧路径/重复 marker、uninstall 精确删除 marker handler；TOML 覆盖同样动作并断言非 hooks 注释、键顺序、字符串和数组文本保持。两种表示都断言用户 handler 深度相等，卸载不恢复备份。
+  标准 JSON Fixture → Inspection=Exact；标准 TOML Fixture → Inspection=Exact。Planner 从空配置 Install 后，提取 CodePulse matcher 组并脱敏 Bridge 绝对路径，语义结构必须等于对应标准 Fixture；Repair modified 配置后同样等于母版。JSON/TOML 都覆盖重复 install no-op、repair 缺项/旧路径/重复 marker、uninstall 精确删除 marker handler；TOML 另断言非 hooks 注释、键顺序、字符串和数组文本保持。两种表示都用预先保存的用户 handler AST 深度相等断言 Install/Repair 后用户节点不变，卸载不恢复备份。
+
+  负例逐项覆盖：八事件任一缺失 → Modified；timeout!=2 → Modified；参数缺少 `--codepulse-hook-v1` → 不识别为安全 Marker；出现 statusMessage → Modified；出现 async=true → Modified；UserPromptSubmit/Stop 写 matcher → 不等于母版；JSON/TOML 事件集合不同 → 测试失败。序列化快照直接来自两份母版的规范化 AST，不允许测试内再造第二套期望结构。
 
   运行：
 
@@ -335,7 +541,7 @@ pub fn prepare_codex_hook_change(
 
   固定覆盖：hooks=false + marker absent + install → HooksDisabled；hooks=false + marker present + repair → HooksDisabled；两者都不创建 PreparedCodexHookChange且文件系统不变。hooks=false + representation 可安全解析 + marker present + managedEntry exact → uninstall 成功产生只删除 CodePulse marker 的计划；modified/duplicate 也必须按 marker 精确删除并保留用户其他 handler；该计划 bridgeAction=Remove，不包含安装/更新 Bridge。hooks=false + marker absent/ambiguous 或 representation conflict → uninstall 分别返回 NoManagedEntry/ConfigConflict。用户手动把 config.toml 改为 hooks=true 后重新 inspect，才允许 install/repair preview。
 
-  ManagedDisabled 对 install/repair/uninstall 都返回 ManagedDisabled，不产生修改计划，不引导写 enterprise 文件。本批次不引用 installer/runtime；uninstall 不启动 HTTP、不安装 Bridge的边界由 04B 命令测试覆盖。
+  ManagedDisabled 对 install/repair/uninstall 都返回 ManagedDisabled，不产生修改计划，不引导写 enterprise 文件。增加 Feature alias conflict（两个键相反、任一键非布尔）矩阵：install/repair/uninstall 全部返回 ConfigConflict，不产生 `PreparedCodexHookChange`，target bytes/preview 均不存在；CodePulse 不猜测键优先级、不改写任何 Feature 键。只有旧别名或双键同值时，按 effectiveState 使用上述 enabled/disabled 矩阵并保留弃用/重复 warning。本批次不引用 installer/runtime；uninstall 不启动 HTTP、不安装 Bridge的边界由 04B 命令测试覆盖。
 
   运行：
 
@@ -363,7 +569,7 @@ pub fn prepare_codex_hook_change(
 
 - [ ] **步骤 4：实现纯文档变换与确定摘要**
 
-  JSON 规范化为 2 空格 UTF-8 without BOM 并在 warnings 说明空白变化；TOML 只用 toml_edit 节点增删。`expectedDigest` 覆盖 hooks.json、config.toml、requirements、打包/稳定 Bridge 与安装记录的路径、存在性和原始 SHA-256；`previewDigest` 覆盖 action、representation、expectedDigest、目标 path/hash、bridgeAction、changes/warnings 的规范 JSON。
+  JSON 规范化为 2 空格 UTF-8 without BOM 并在 warnings 说明空白变化；TOML 只用 toml_edit 节点增删。Install/Repair 从唯一 Fixture loader 取得 CodePulse matcher 组并只替换 `__CODEPULSE_BRIDGE_PATH__` 的全部精确出现；不得复制事件常量数组或 handler builder。`expectedDigest` 覆盖 hooks.json、config.toml、requirements、`paths.integration_transaction_file` 的路径/存在性、打包/稳定 Bridge 与安装记录的路径、存在性和原始 SHA-256；`previewDigest` 覆盖 action、representation、expectedDigest、目标 path/hash、bridgeAction、changes/warnings 的规范 JSON。
 
   运行：
 
@@ -403,7 +609,8 @@ pub fn prepare_codex_hook_change(
 ## 04A 完成门禁
 
 - inspection 对用户与企业配置只读，路径全部来自 CodexIntegrationPaths；JSON 不含动态 hookState/phase。
-- representation、feature、marker、Bridge、generation-aware ListeningStatus 和 runtime startup decision 有完整 TempDir 表格测试。
+- `features.hooks`/`features.codex_hooks` 原始事实、弃用/重复 Issue、同值/冲突/非布尔、representation、marker、Bridge、generation-aware ListeningStatus 和 runtime startup decision 有完整 TempDir 表格测试；冲突三动作无 Prepared change。
+- `codepulse-hooks-exact.json` 与 `.toml` 完整定义相同八事件、command+Windows override、timeout=2、无 matcher/statusMessage/async；Inspection Exact、Planner Install、Repair、序列化快照、Duplicate/Modified 测试共用同一 loader，没有第二套模板。
 - exact/modified/partial+marker 与停止条件精确；idlePersistent 不参与。
 - 本地 disabled 的 install/repair 返回 HooksDisabled；安全 marker 的 uninstall 可生成精确删除计划；managed disabled 和 ambiguous conflict 全部只读。
 - 用户其他 Hook 语义保留；modified 只能显式 Repair；无 writer、installer、Tauri apply 或 Vue UI。

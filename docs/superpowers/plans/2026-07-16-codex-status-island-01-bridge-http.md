@@ -387,7 +387,7 @@ pub struct CodexIntegrationPaths {
     pub codepulse_root: PathBuf,
     pub runtime_dir: PathBuf,
     pub discovery_file: PathBuf,
-    pub transaction_file: PathBuf,
+    pub integration_transaction_file: PathBuf,
     pub bin_dir: PathBuf,
     pub installed_bridge: PathBuf,
     pub install_record: PathBuf,
@@ -449,7 +449,7 @@ impl CodexHttpHandle {
 
 - [ ] **步骤 1：先写路径对象与 runtime 失败测试**
 
-  在 `paths_tests.rs` 用四个互不相关的 TempDir 根构造 `CodexIntegrationPaths`，逐项断言：`codepulse_root = local_data_root/CodePulse`；runtime、发现文件和事务文件都在 `runtime` 下；稳定 Bridge 和安装记录都在 `bin` 下；打包资源只从 `resource_dir/bin` 推导；用户配置只从 `codex_home` 推导；企业要求只从 `program_data/OpenAI/Codex` 推导。传入的本地数据根目录名即使不是 `AppData` 也必须原样生效，所有字段都不得包含 bundle identifier `com.ryen.nsd`。
+  在 `paths_tests.rs` 用四个互不相关的 TempDir 根构造 `CodexIntegrationPaths`，逐项断言：`codepulse_root = local_data_root/CodePulse`；runtime、发现文件和统一 Integration Transaction 文件都在 `runtime` 下；`integration_transaction_file` 精确为 `runtime/codex-integration-transaction.json`；稳定 Bridge 和安装记录都在 `bin` 下；打包资源只从 `resource_dir/bin` 推导；用户配置只从 `codex_home` 推导；企业要求只从 `program_data/OpenAI/Codex` 推导。传入的本地数据根目录名即使不是 `AppData` 也必须原样生效，所有字段都不得包含 bundle identifier `com.ryen.nsd`。
 
   在 `runtime_tests.rs` 使用同一个路径对象和可注入的 `RuntimeFacts { pid, started_at }` 覆盖：令牌恰好 32 随机字节/64 hex；发现文件精确写入 `paths.discovery_file`；handle/guard 保存由该文件完整转换的 `DiscoveryOwner`；临时文件与目标同目录；写入完成后没有临时残留；覆盖旧文件；模拟替换失败保留旧文件；handle 正常 shutdown 删除自己文件；服务任务错误退出也只删除自己文件；固定端口占用时得到非 47653 的回环端口；非 `AddrInUse` 绑定错误不降级。
 
@@ -490,14 +490,14 @@ impl CodexHttpHandle {
   <local_data_root>\CodePulse\bin\codepulse-codex-bridge.exe
   <local_data_root>\CodePulse\bin\codepulse-codex-bridge.install.json
   <local_data_root>\CodePulse\runtime\codex-bridge.json
-  <local_data_root>\CodePulse\runtime\codex-config-transaction.json
+  <local_data_root>\CodePulse\runtime\codex-integration-transaction.json
   <resource_dir>\bin\codepulse-codex-bridge.exe
   <codex_home>\hooks.json
   <codex_home>\config.toml
   <program_data>\OpenAI\Codex\requirements.toml
   ```
 
-  HTTP runtime、阶段二 manager、04A inspection/planner、04B writer/installer/commands/self-check 必须持有或借用该对象，不得接收裸 `runtime_dir`、`bin_dir` 后再次拼接。本任务不调用 Tauri path API；把根目录解析留给 Tauri 组装层。
+  HTTP runtime、阶段二 manager、04A inspection/planner、04B writer/installer/startup/commands/self-check 与 04C E2E/范围脚本必须持有或借用该对象，不得接收裸 `runtime_dir`、`bin_dir` 后再次拼接。只有 `paths.rs` 可以拼接 `codex-integration-transaction.json`；其他模块只读取 `paths.integration_transaction_file`。本任务不调用 Tauri path API；把根目录解析留给 Tauri 组装层。
 
   运行：
 
