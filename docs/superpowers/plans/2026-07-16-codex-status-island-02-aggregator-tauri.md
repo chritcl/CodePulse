@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**目标：** 把阶段一的无状态事件流聚合为权威任务快照，实现优先级、去重、乱序过滤、平滑显示、完成/失败/中断生命周期，并让 HTTP 服务可靠跟随 Tauri 启动和退出。
+**目标：** 把阶段一的无状态事件流聚合为权威任务快照，实现优先级、去重、跨轮次迟到过滤、平滑显示、完成/失败/中断生命周期，并提供由 inspection 显式驱动、可安全退出的 Tauri runtime；本阶段不在应用启动时自行开启 HTTP。
 
-**架构：** `CodexAggregator<C: Clock>` 是不依赖 Tokio/Tauri 的纯状态对象；`ClockReading` 同时提供只用于公开时间戳的 Unix 墙上毫秒和只用于状态转换的进程内单调毫秒；一个 Actor 独占聚合器与阶段一 Receiver，通过一秒 Tick 驱动所有时间规则；可注入 publisher 把完整快照和边沿提醒映射为 Tauri 事件。`CodexRuntimeManager` 统一持有 HTTP handle、Actor handle、监听状态和关闭流程。
+**架构：** `CodexAggregator<C: Clock>` 是不依赖 Tokio/Tauri 的纯状态对象；`ClockReading` 同时提供只用于公开时间戳的 Unix 墙上毫秒和只用于状态转换的进程内单调毫秒；一个 Actor 按实际接收顺序独占处理聚合器与阶段一 Receiver；可注入 publisher 把完整快照和边沿提醒映射为 Tauri 事件。`CodexRuntimeManager` 持有同一个 `CodexIntegrationPaths`、HTTP/Actor 任务与监听状态，只响应 `ensure_started(reason)`、`stop_if_unused(reason)` 和应用退出；04B 才把 startup inspection 结果接入这些接口。
 
 **技术栈：** Rust 2021、Tokio mpsc/oneshot/interval、serde、Tauri 2、阶段一 `codex-protocol` 与 HTTP runtime；不新增生产依赖。
 
@@ -12,7 +12,7 @@
 
 **本阶段消费：** `CodexEventReceiver`、`CodexBridgeEvent`、`start_codex_http()`、`CodexHttpHandle`。
 
-**本阶段产生：** `CodexStateSnapshot`、`CodexListeningStatus`、`CodexSelfCheckResult`、五个 Tauri 命令、三个 Tauri 事件、跟随应用生命周期的 `CodexRuntimeManager`。阶段三只能消费这些公开契约，不能读取聚合器内部记录。
+**本阶段产生：** `CodexStateSnapshot`、`CodexListeningStatus`、`CodexSelfCheckResult`、五个 Tauri 命令、三个 Tauri 事件、按原因幂等启停的 `CodexRuntimeManager` 与同步退出/异步关闭协调器。阶段三只能消费这些公开契约，不能读取聚合器内部记录。
 
 ---
 
@@ -206,8 +206,6 @@ pub fn classify_stop(evidence: StopEvidence<'_>) -> StopOutcome;
 
   ```text
   定义 Codex 状态模型与保守终态判定
-
-  Co-Authored-By: Claude <noreply@anthropic.com>
   ```
 
 ---
@@ -250,7 +248,7 @@ impl<C: Clock> CodexAggregator<C> {
 }
 ```
 
-内部 `CodexTaskRecord` 允许保存 `cwd`、`last_received_monotonic_ms`、`last_event_occurred_at`、当前/待提交普通阶段、`visible_since_monotonic_ms`、`completed_monotonic_ms`、`attention_expires_monotonic_ms`、`HashSet<agentId>` 和提醒周期标记；这些字段不得序列化到 Vue。公开的 `startedAt`、`lastActivityAt`、`completedAt`、`expiresAt`、`generatedAt` 取同一次 `ClockReading.wall_time_ms`，内部期限和排序只取 `monotonic_ms`。
+内部 `CodexTaskRecord` 允许保存 `cwd`、`last_received_monotonic_ms`、当前/待提交普通阶段、`visible_since_monotonic_ms`、`completed_monotonic_ms`、`attention_expires_monotonic_ms`、最近 8 个 retired turnId、按 `toolUseId` 关联的活动工具集合、`HashSet<agentId>` 和提醒周期标记；这些字段不得序列化到 Vue。`occurredAt` 只在共享协议校验非负并可用于诊断/必要展示，不保存为当前轮次淘汰游标。公开的 `startedAt`、`lastActivityAt`、`completedAt`、`expiresAt`、`generatedAt` 取同一次 `ClockReading.wall_time_ms`，内部期限和排序只取 `monotonic_ms`。
 
 - [ ] **步骤 1：先写会话与轮次归并失败测试**
 
@@ -266,9 +264,13 @@ impl<C: Clock> CodexAggregator<C> {
 
   预期：聚合器不存在，测试失败。
 
-- [ ] **步骤 2：先写去重、乱序和子智能体失败测试**
+- [ ] **步骤 2：先写去重、接收顺序和跨轮次迟到失败测试**
 
-  覆盖：相同 eventId 只处理一次；去重集合上限 2048 且淘汰最旧 ID；同轮 `occurredAt` 较旧事件丢弃；相同时间戳按队列到达顺序处理；PreToolUse 先于同 turnId UserPromptSubmit 到达时先建立“Codex 任务”临时轮次，迟到 prompt 只补摘要且阶段仍为工具阶段；当前 turn 不同、事件较新且 turnId 未退休时建立新临时轮次；新 TurnStarted 可正式确认临时轮次或替换当前轮；最近 8 个退休 turnId 的晚到 Tool/Stop 全部丢弃；第 9 个退休 ID 被有界淘汰；SubagentStart 重复不加二；未知 SubagentStop 不减到负数；新轮次清空 agent ID 集合。
+  覆盖：相同 eventId 只处理一次；去重集合上限 2048 且淘汰最旧 ID；同一当前 turn 内无论 `occurredAt` 增大、相等或减小都严格按 Actor 实际接收顺序处理；PreToolUse 先于同 turnId UserPromptSubmit 到达时先建立“Codex 任务”临时轮次，后到 prompt 只补摘要且阶段仍为工具阶段；新 TurnStarted 可正式确认临时轮次或替换当前轮；最近 8 个 retired turnId 的晚到 Tool/Stop 全部丢弃；明确属于旧 session generation 的事件丢弃；第 9 个 retired ID 被有界淘汰。
+
+  `toolUseId` 用例必须覆盖 started/finished 精确关联、重复 finished 不二次改变 operation result、未知 finished 不把阶段倒退；`agentId` 用例覆盖 SubagentStart 重复不加二、未知 SubagentStop 不减到负数、新轮次清空 agent ID 集合。
+
+  增加两个固定回归序列：`ToolStarted(editing, occurredAt=T)` → Windows 墙上时间回拨 2 小时 → `ToolStarted(running_tests, occurredAt=T-2h)`，最终阶段必须为 `running_tests`；当前轮次收到更小 `occurredAt` 的 `PermissionRequested` 必须立即进入 `waiting_approval`。这两个用例分别改变 `ManualClock.wall_time_ms` 和 wire `occurredAt`，且都不得被淘汰。
 
   运行：
 
@@ -296,9 +298,11 @@ impl<C: Clock> CodexAggregator<C> {
 
 - [ ] **步骤 4：实现 Map 所有权与确定性规则**
 
-  使用 `HashMap<sessionId, CodexTaskRecord>`；一个 `VecDeque + HashSet` 实现 2048 ID 去重。每次 `ingest()` 只调用一次 `clock.now()`：`wall_time_ms` 写入公开 `startedAt/lastActivityAt` 并作为本次 `authenticated_activity.received_at`，`monotonic_ms` 写入内部 `last_received_monotonic_ms` 并用于任务排序。重复 eventId 仍返回 authenticated activity，因为它确实是本次进程收到的已认证请求，但不得再次改变任务；wire `occurredAt` 只用于同轮乱序比较，不能控制排序、超时或保留期限。
+  使用 `HashMap<sessionId, CodexTaskRecord>`；一个 `VecDeque + HashSet` 实现 2048 ID 去重。每次 `ingest()` 只调用一次 `clock.now()`：`wall_time_ms` 写入公开 `startedAt/lastActivityAt` 并作为本次 `authenticated_activity.received_at`，`monotonic_ms` 写入内部 `last_received_monotonic_ms` 并用于任务排序。重复 eventId 仍返回 authenticated activity，因为它确实是本次进程收到的已认证请求，但不得再次改变任务。
 
-  新 TurnStarted 是轮次边界；若工具/授权事件先到，同 turnId 可先建立 `turn_boundary_seen=false` 的临时记录，后到 TurnStarted 只补 taskSummary 并设为 true，不覆盖临时记录的首次服务端接收时间或更新后的可见阶段。真正替换轮次时把旧 turnId 放进最多 8 项的 retired deque；退休轮次的任何晚到事件都丢弃。若缺少 `turnId`，仍以收到 TurnStarted 为新轮边界并清空旧终态。SessionStarted 可缓存 session 元数据，但快照只输出活跃任务。所有 snapshot 构造集中在一个函数，按内部单调接收时间排序后再选代表任务；公开 `lastActivityAt` 不参与排序。
+  当前轮次状态严格以 Actor 收到事件的顺序更新；不得比较 wire `occurredAt` 来排序或淘汰。`occurredAt` 只在协议层验证为非负整数，并允许进入不含正文的诊断元数据；它不得控制任务列表/代表任务排序、一秒平滑、完成保留、10/30 分钟中断或 attention 过期。允许丢弃的事件只有重复 eventId、属于 retired turnId 的迟到事件，以及 session generation 明确不兼容的旧事件。
+
+  新 TurnStarted 是轮次边界；若工具/授权事件先到，同 turnId 可先建立 `turn_boundary_seen=false` 的临时记录，后到 TurnStarted 只补 taskSummary 并设为 true，不覆盖临时记录的首次服务端接收时间或更新后的可见阶段。真正替换轮次时把旧 turnId 放进最多 8 项的 retired deque；retired 轮次的任何晚到事件都丢弃。若缺少 `turnId`，仍以收到 TurnStarted 为新轮边界并清空旧终态。`toolUseId` 维护当前轮次工具关联，`agentId` 维护当前轮次子智能体去重。SessionStarted 可缓存 session 元数据，但快照只输出活跃任务。所有 snapshot 构造集中在一个函数，按内部单调接收时间排序后再选代表任务；公开 `lastActivityAt` 和 wire `occurredAt` 都不参与排序。
 
   运行：
 
@@ -330,8 +334,6 @@ impl<C: Clock> CodexAggregator<C> {
 
   ```text
   实现 Codex 多会话顺序聚合
-
-  Co-Authored-By: Claude <noreply@anthropic.com>
   ```
 
 ---
@@ -439,8 +441,6 @@ pub struct CodexSoftInterrupt {
 
   ```text
   完成 Codex 状态平滑与生命周期规则
-
-  Co-Authored-By: Claude <noreply@anthropic.com>
   ```
 
 ---
@@ -633,43 +633,99 @@ async fn run_codex_self_check(
 
   ```text
   接入 Codex 聚合 Actor 与 Tauri 快照接口
-
-  Co-Authored-By: Claude <noreply@anthropic.com>
   ```
 
 ---
 
-## 任务 5：让 HTTP/Actor 跟随 Tauri 启动、退出和异常清理
+## 任务 5：实现 inspection 驱动的 Runtime Manager 与确定的 Tauri 退出桥接
 
-**独立交付物：** 应用启动后异步进入监听；隐藏任一窗口不停止服务；托盘退出和正常 Tauri 退出都等待服务/Actor 清理；启动失败不阻止 CodePulse 其他功能。
+**独立交付物：** Runtime 可按明确原因幂等启动或停止，但应用启动时保持 dormant，等待 04B 的只读 inspection 决策；隐藏窗口不停止服务；托盘退出和正常退出共用“同步阻止退出、异步最多两秒关闭、第二次退出放行”的同一路径。
 
 **Files:**
 
 - Modify: `src-tauri/src/codex/mod.rs`
 - Create: `src-tauri/src/codex/service.rs`
 - Create: `src-tauri/src/codex/service_tests.rs`
+- Create: `src-tauri/src/codex/exit.rs`
+- Create: `src-tauri/src/codex/exit_tests.rs`
 - Modify: `src-tauri/src/lib.rs`（`run()` builder/build/run 区域、`initialize_app()`、`create_system_tray()` 的 quit handler）
 
-**消费接口：** `start_codex_http()`、`CodexHttpHandle::shutdown()`、Actor start/shutdown、publisher、`app.path().local_app_data_dir()`。
+**消费接口：** 阶段一 `CodexIntegrationPaths`、`start_codex_http(paths, event_tx)`、`CodexHttpHandle::{stop_accepting,invalidate_discovery,wait}`、Actor start/shutdown 和 publisher。Tauri API 以仓库锁定的 `tauri 2.11.5` 为准：`PathResolver::local_data_dir() -> Result<PathBuf>` 返回 Windows LocalAppData 根目录；`PathResolver::resource_dir() -> Result<PathBuf>` 返回资源根目录；`App::run(FnMut(&AppHandle, RunEvent))` 提供同步回调；`RunEvent::ExitRequested { code: Option<i32>, api: ExitRequestApi }`；`ExitRequestApi::prevent_exit(&self)`；`AppHandle::exit(&self, i32)` 会再次触发 `ExitRequested` 和 `Exit`。`RunEvent` 与其字段均为 non-exhaustive，匹配必须保留 `..` 和 `_` 分支。
 
 **产生接口：**
 
 ```rust
-pub struct CodexRuntimeManager;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CodexRuntimeStartReason {
+    StartupInspection,
+    InstallSelfCheck,
+    RepairSelfCheck,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CodexRuntimeStopReason {
+    StartupInspectionDisallows,
+    InstallFailed,
+    Uninstalled,
+}
+
+#[derive(Clone)]
+pub struct CodexRuntimeManager {
+    inner: Arc<CodexRuntimeManagerInner>,
+}
 
 impl CodexRuntimeManager {
-    pub fn new(app: tauri::AppHandle) -> Self;
-    pub async fn start(&self) -> Result<(), CodexRuntimeError>;
+    pub fn new(
+        app: tauri::AppHandle,
+        paths: CodexIntegrationPaths,
+    ) -> Self;
+    pub async fn ensure_started(
+        &self,
+        reason: CodexRuntimeStartReason,
+    ) -> Result<(), CodexRuntimeError>;
+    pub async fn stop_if_unused(
+        &self,
+        reason: CodexRuntimeStopReason,
+    ) -> Result<(), CodexRuntimeError>;
     pub async fn shutdown(&self) -> Result<(), CodexRuntimeError>;
     pub async fn listening_status(&self) -> CodexListeningStatus;
+    pub fn cleanup_owned_discovery_file_sync(&self);
+}
+
+pub struct CodexExitCoordinator {
+    shutdown_started: AtomicBool,
+    shutdown_finished: AtomicBool,
+    exit_code: AtomicI32,
+}
+
+pub enum CodexExitRequestDecision {
+    PreventAndStartShutdown { exit_code: i32 },
+    PreventWithoutRestart,
+    AllowExit,
+}
+
+impl CodexExitCoordinator {
+    pub fn new() -> Self;
+    pub fn decide_exit_request(
+        &self,
+        requested_code: Option<i32>,
+    ) -> CodexExitRequestDecision;
+    pub fn mark_shutdown_finished(&self);
+    pub fn handle_exit_requested<R: tauri::Runtime>(
+        self: &Arc<Self>,
+        app_handle: tauri::AppHandle<R>,
+        api: &tauri::ExitRequestApi,
+        requested_code: Option<i32>,
+        runtime: CodexRuntimeManager,
+    );
 }
 ```
 
-`start()`/`shutdown()` 都必须幂等。manager 内部状态机固定为 `Stopped -> Starting -> Running -> Stopping -> Stopped`，错误转 `Error`；不向 Vue 暴露内部枚举。
+`CodexExitCoordinator` 的共享内部状态必须精确包含 `shutdown_started: AtomicBool`、`shutdown_finished: AtomicBool`、`exit_code: AtomicI32`。manager 内部状态机固定为 `Stopped -> Starting -> Running -> Stopping -> Stopped`，错误转 `Error`；`ensure_started()`、`stop_if_unused()`、`shutdown()` 均幂等。显示偏好和任何 Vue 命令都不得调用 start/stop 接口。
 
-- [ ] **步骤 1：先写生命周期失败测试**
+- [ ] **步骤 1：先写按原因启停与路径消费失败测试**
 
-  通过注入 fake server/actor/publisher 覆盖：start 顺序为 event channel → actor → HTTP；重复 start 不创建第二 listener；HTTP 启动失败会关闭 actor、状态变 service_error 且不向上 panic；shutdown 顺序先拒绝新 HTTP、再关闭 event sender/actor；重复 shutdown 成功；shutdown 后发现文件删除；窗口 hide 不调用 shutdown。
+  通过注入 fake server/actor/publisher 覆盖：manager 构造只保存同一个 `CodexIntegrationPaths`，不启动 listener；`ensure_started(StartupInspection)` 顺序为 event channel → actor → HTTP；三种 start reason 重复调用都不创建第二 listener；HTTP 启动失败关闭 actor并进入 service_error；`stop_if_unused(StartupInspectionDisallows|InstallFailed|Uninstalled)` 都按当前所有权幂等停止；停止顺序为拒绝新 HTTP → 删除属于当前 PID/token 的发现文件 → 关闭 HTTP sender → 请求 Actor shutdown → 等待 HTTP task 和 Actor task；窗口 hide 和 `idlePersistent` 变化都不调用启动或停止。
 
   运行：
 
@@ -679,56 +735,58 @@ impl CodexRuntimeManager {
   Pop-Location
   ```
 
-  预期：service manager 尚未实现，测试失败。
+  预期：按原因启停和 phased shutdown 尚不存在，测试编译失败。
 
-- [ ] **步骤 2：先写监听状态转换失败测试**
+- [ ] **步骤 2：先写退出协调器失败测试**
 
-  覆盖：构造时明确为 `serviceState=stopped`、`hookState=unknown`、`phase=disabled`；start 中只把 serviceState 改为 `starting`，用户可见 phase 仍为七种之一；固定端口成功与 fallback 都为 `listening`，fallback 只设置 `usingFallbackPort=true`，不是故障；第一条认证事件记录 `lastEventAt/sources` 并变为 `active/running`；服务错误变为 `error/service_error`；状态每次改变发布完整事件且不暴露 token。阶段四 inspection 才能把 unknown 精确派生为 not_installed、awaiting_trust、partial、conflict 或 disabled。
+  先对 `decide_exit_request()` 写纯状态测试：第一次返回 PreventAndStartShutdown，`requested_code=None` 保存 0、Some(n) 保存 n；第二次在未 finished 时返回 PreventWithoutRestart；`mark_shutdown_finished()` 后返回 AllowExit。再用只在测试中实现的 `ExitCallbackHarness { prevent_count, spawn_count, requested_exit_codes }` 执行与实际回调相同的 decision match，覆盖第一次调用 prevent、shutdown 只 spawn 一次、完成后 request exit、两秒 timeout 后仍 exit、窗口 hide 不触发、托盘 quit 进入同一处理函数。正常退出后 discovery 删除；RunEvent::Exit 同步兜底在文件不存在、内容损坏、PID/token 不属于当前 runtime 时不 panic 且不误删他人文件。
 
   运行：
 
   ```powershell
   Push-Location src-tauri
-  cargo test -p netspeed-dynamic codex::service_tests::status -- --nocapture
+  cargo test -p netspeed-dynamic codex::exit_tests -- --nocapture
   Pop-Location
   ```
 
-  预期：状态转换测试失败。
+  预期：协调器、原子状态和退出适配器不存在，测试失败；测试使用暂停的 Tokio 时间推进两秒，不真实等待。
 
-- [ ] **步骤 3：实现 manager 并接入 `initialize_app()`**
+- [ ] **步骤 3：实现 dormant manager 与监听状态**
 
-  在 `initialize_app()` 中先 `app.manage(CodexRuntimeManager::new(app.handle().clone()))`，再通过 `tauri::async_runtime::spawn` 调用幂等 start；绑定/发现文件失败只更新监听状态并发布 `codex-listening-status-changed`，不能让 `initialize_app()` 返回错误而中止音乐、托盘或窗口。
+  `initialize_app()` 使用 `app.path().local_data_dir()?` 取得不带 bundle identifier 的 Windows 本地数据根目录，使用 `app.path().resource_dir()?` 取得资源根目录；Codex Home 按 `CODEX_HOME` 优先、否则 `%USERPROFILE%\.codex`；ProgramData 从 `%ProgramData%` 读取。四个根只传给 `CodexIntegrationPaths::from_local_data_root(...)` 一次，然后把同一个 paths 对象交给 manager。禁止调用会追加 `com.ryen.nsd` 的应用专用本地数据目录 API。
 
-  manager 的 runtime_dir 固定为 `app.path().local_app_data_dir()?.join("CodePulse").join("runtime")`，与 Bridge 约定完全一致。manager 创建线程安全的 `CodexListeningStatusStore` 并作为 activity reporter 注入 Actor；第一条队列事件把 hookState/phase 改为 active/running，累积去重后的来源集合。状态更新和 runtime parts 使用 Tokio mutex；任何 mutex guard 都不能跨 publisher 回调或长 I/O await。
+  manager 在 setup 中被 `manage`，但本阶段不调用 `ensure_started()`。构造状态为 `serviceState=stopped`、`hookState=unknown`、`phase=disabled`；04B inspection 才精确发布 not_installed/awaiting_trust/partial/config_conflict/disabled 并决定是否 start。固定端口或 fallback 启动成功为 listening；第一条经过认证的真实事件记录 lastEventAt/sources 并把已经安装且等待信任的状态改为 active/running；模拟 self-check 不能进入 running。任何 mutex guard 都不得跨 publisher 回调或 I/O await。
 
   运行：
 
   ```powershell
   Push-Location src-tauri
-  cargo test -p netspeed-dynamic codex::service_tests::start -- --nocapture
-  cargo test -p netspeed-dynamic codex::service_tests::status -- --nocapture
+  cargo test -p netspeed-dynamic codex::service_tests -- --nocapture
   Pop-Location
   ```
 
-  预期：幂等启动、启动失败回收、runtime_dir、监听状态和第一条真实事件转换测试通过；退出路径测试仍保持红色，留给下一步改造 `run()` 和托盘退出。
+  预期：manager 幂等启停、同一路径对象、dormant setup、监听状态和 phased shutdown 测试通过；没有应用启动即监听的行为。
 
-- [ ] **步骤 4：改造 Tauri 退出而不改变窗口关闭语义**
+- [ ] **步骤 4：实现 Tauri 2.11.5 同步回调到异步 shutdown 的桥接**
 
-  把当前直接调用的 `Builder::run(tauri::generate_context!())` 拆为 `Builder::build(tauri::generate_context!())`，再调用 `app.run` 并在回调中匹配 `RunEvent`。在 `RunEvent::ExitRequested` 触发一次带 2 秒上限的 manager shutdown；`RunEvent::Exit` 只做无等待兜底清理。托盘 quit handler 从 `std::process::exit(0)` 改为 `app_handle.exit(0)`，使 ExitRequested 能执行。
+  把 `Builder::run(context)` 拆成 `Builder::build(context)` 与 `App::run(callback)`。第一次收到 `tauri::RunEvent::ExitRequested { code, api, .. }` 时，协调器以 `compare_exchange(false, true, ...)` 只启动一次：先保存 `code.unwrap_or(0)`，调用 `api.prevent_exit()`，再用 `tauri::async_runtime::spawn` 启动关闭任务。关闭任务用 `tokio::time::timeout(Duration::from_secs(2), runtime.shutdown())` 包围完整顺序；成功或超时都设置 `shutdown_finished=true`，最后调用 `app_handle.exit(saved_code)`。
 
-  `register_main_window_close_handler()` 与 `register_widget_window_close_handler()` 保持 `prevent_close() + hide()`，不能在窗口关闭请求中停服务。若 2 秒关闭期限到达，记录安全错误码后允许进程退出；残留发现文件由 Bridge 的 PID/连接校验识别。
+  第二次 ExitRequested 若 finished=true 则不调用 prevent，让 Tauri 真正退出；若 started=true/finished=false，则继续 prevent 且不创建第二个任务。本项目首版不实现第二次强制退出 UI。`RunEvent::Exit` 只调用 `runtime.cleanup_owned_discovery_file_sync()`，不 spawn、不 await、不阻塞。若请求为 Tauri restart code，记录受 Tauri “prevent ignored for restart”语义限制的安全诊断码，不宣称能延迟 restart。
+
+  托盘 handler 必须使用回调参数 `app_handle.exit(0)`；`register_main_window_close_handler()` 与 `register_widget_window_close_handler()` 继续只执行 `prevent_close() + hide()`。
 
   运行：
 
   ```powershell
   Push-Location src-tauri
+  cargo test -p netspeed-dynamic codex::exit_tests -- --nocapture
   cargo test -p netspeed-dynamic codex::service_tests -- --nocapture
   cargo test -p netspeed-dynamic --lib
   Pop-Location
   rg -n "std::process::exit" src-tauri/src/lib.rs
   ```
 
-  预期：生命周期与现有测试全部通过；`lib.rs` 不再直接 `process::exit`。
+  预期：首次 prevent、只启动一次、完成/超时后二次 exit、第二次请求不重复 shutdown、托盘统一路径、窗口 hide 不 shutdown 和 Exit 同步兜底全部通过；`lib.rs` 不再直接调用 process exit。
 
 - [ ] **步骤 5：阶段二全量验证并提交**
 
@@ -744,27 +802,27 @@ impl CodexRuntimeManager {
   cargo fmt --all --check
   cargo clippy --workspace --all-targets --all-features -- -D warnings
   Pop-Location
+  rg -n 'join\("CodePulse"\)|join\("runtime"\)|join\("bin"\)' src-tauri/src/codex --glob '!paths.rs' --glob '!paths_tests.rs'
   git diff --check
   git diff --name-only
   ```
 
-  预期：前端基线、Rust workspace、Clippy 和格式全部通过；变更只在本阶段清单及 Cargo 自动锁文件；没有 UI 或 Hook 配置实现。
+  预期：前端基线、Rust workspace、Clippy、格式、路径唯一性和退出测试全部通过；变更只在本阶段清单及 Cargo 自动锁文件；没有 UI、Hook 配置或自动启动 runtime。
 
   建议提交信息：
 
   ```text
-  管理 Codex 服务的 Tauri 启停生命周期
-
-  Co-Authored-By: Claude <noreply@anthropic.com>
+  管理 Codex Runtime 与 Tauri 安全退出
   ```
 
 ## 阶段二完成门禁
 
 - 聚合器无 Tauri/Tokio 定时器依赖，所有分钟级行为用 ManualClock 瞬时验证；墙上时间正反跳变不会改变平滑、保留、提醒或中断边界。
-- 并发输入只由单 Actor 改状态；2048 去重、turnId 与 occurredAt 乱序规则全部有测试。
+- 并发输入只由单 Actor 按实际接收顺序改状态；2048 eventId 去重、retired turnId、toolUseId 关联和 agentId 去重全部有测试；当前轮次 `occurredAt` 回拨不会丢事件。
 - 中间命令失败不会直接成为最终失败；Stop 证据不明确且最后操作失败时默认完成并标记未解决问题。
 - 普通状态一秒平滑；授权/失败/完成/中断立即生效；提醒不会在同周期重复。
 - 完成精确保留 5 分钟、失败只手动清除、新轮次清旧失败、10/30 分钟中断、授权不超时。
 - 三个事件、五个命令和公开 DTO 命名与总体路线图一致，公开状态不含 cwd/token/原始 Hook 正文。
-- HTTP 和 Actor 跟随应用启动；托盘退出走正常 Tauri 生命周期；隐藏窗口不停止监听。
+- Runtime 在阶段二 setup 后保持 dormant；只有 `ensure_started(reason)` 能启动，`stop_if_unused(reason)` 能在卸载/失败/inspection 不允许时停止，显示偏好不能启停服务。
+- 首次 ExitRequested 同步 prevent 并只 spawn 一次两秒 shutdown；完成或超时后由 `AppHandle::exit(saved_code)` 触发第二次退出；RunEvent::Exit 只做同步发现文件兜底；托盘退出走相同路径，隐藏窗口不触发 shutdown。
 - 以上全部满足后才执行阶段三；不要自动进入阶段三。

@@ -164,8 +164,6 @@ export interface CodexSelfCheckResult {
 
   ```text
   添加 Codex 状态岛前端 IPC 契约
-
-  Co-Authored-By: Claude <noreply@anthropic.com>
   ```
 
 ---
@@ -197,6 +195,8 @@ export interface CodexAgentDisplayState {
   snapshot: CodexStateSnapshot
   listeningStatus: CodexListeningStatus
   representativeTask?: CodexTaskState
+  agentModuleSnapshot: IslandModuleSnapshot
+  idlePersistent: boolean
   now: number
 }
 
@@ -207,6 +207,7 @@ export function applyCodexSnapshot(
 
 export function toAgentModuleSnapshot(
   snapshot: CodexStateSnapshot,
+  listeningStatus: CodexListeningStatus,
   idlePersistent: boolean
 ): IslandModuleSnapshot
 
@@ -228,13 +229,20 @@ export function useCodexAgent(options: UseCodexAgentOptions): {
   `status.test.ts` 覆盖：
 
   - revision 小于或等于当前值时保持当前对象；更大 revision 替换；错误 version 保持当前并返回可诊断错误；
-  - 无任务且 idlePersistent=false => `active=false`；true => paused/“Codex 已就绪”；
+  - 有真实任务时始终按代表任务投影，优先于所有无任务监听状态；
+  - 无任务、phase=running、idlePersistent=false => `active=false`；true => paused/“Codex 已就绪”；
+  - 无任务、phase=awaiting_trust => warning/“等待 Codex 信任”且 interrupt=none，不受 idlePersistent 影响；
+  - 无任务、phase=partial => warning/“Codex 部分可用”，interrupt=none；
+  - 无任务、phase=service_error => error/“Codex 服务异常”，interrupt=none；
+  - 无任务、phase=config_conflict => warning/“Codex 配置冲突”，interrupt=none；
+  - 无任务、phase=not_installed 或 disabled => `active=false`，即使 idlePersistent=true 也不能显示“Codex 已就绪”；
   - analyzing/reading/editing/running_command/running_tests => running/none；
   - waiting_approval 任务 => warning；快照 attention 为同 session 的 waiting_approval 时 strong，直到更高 revision 快照移除该 attention；
   - failed 任务始终 => error；只有快照 attention 为同 session 的 failed 时 strong，下一份无该 attention 的权威快照 => none；
   - completed 任务始终 => success；只有同 session 的 completed attention 时 soft；interrupted 同理为 warning/可选 soft；
   - 投影函数不比较 `expiresAt` 或 `Date.now()`，即使测试传入已过去的 expiresAt，也必须等待后端更高 revision 移除 attention；
-  - `unreadCount = tasks.length`，label 来自后端代表任务阶段，代表 ID 缺失时安全回退 tasks[0]。
+  - `unreadCount = tasks.length`，label 来自后端代表任务阶段，代表 ID 缺失时安全回退 tasks[0]；
+  - 投影是纯函数，不调用任何 Tauri runtime start/stop 命令；切换 idlePersistent 只重算 running+无任务的可见性。
 
   运行：
 
@@ -258,7 +266,7 @@ export function useCodexAgent(options: UseCodexAgentOptions): {
 
 - [ ] **步骤 3：先写 composable 异步竞态和清理失败测试**
 
-  测试顺序固定为“先注册三个 listener，再调用初始 get”。覆盖：初始化 invoke 尚未返回时收到 revision 5，随后旧 revision 3 的 get 结果不能覆盖；事件 revision 倒退被忽略；监听状态事件完整替换；soft interrupt 不单独伪造任务状态；clear 命令返回的新快照立即应用；clear 失败保留旧快照并 reject；scope dispose 调用三个 unlisten；dispose 后迟到 invoke 不回写。
+  测试顺序固定为“先注册三个 listener，再调用初始 get”。覆盖：初始化 invoke 尚未返回时收到 revision 5，随后旧 revision 3 的 get 结果不能覆盖；事件 revision 倒退被忽略；监听状态事件完整替换并立即驱动同一个 `toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)`；任务与监听状态初始化请求任意顺序返回都不覆盖事件新值；soft interrupt 不单独伪造任务状态；clear 命令返回的新快照立即应用；clear 失败保留旧快照并 reject；idlePersistent 变化不会 invoke runtime 命令；scope dispose 调用三个 unlisten；dispose 后迟到 invoke 不回写。
 
   运行：
 
@@ -270,9 +278,9 @@ export function useCodexAgent(options: UseCodexAgentOptions): {
 
 - [ ] **步骤 4：实现纯投影与事件生命周期**
 
-  `applyCodexSnapshot` 以 version/revision 为唯一新旧依据；前端不根据本机时间删除任务或过期 attention。`toAgentModuleSnapshot` 只把后端当前 attention 映射为通用岛 interrupt，并从代表任务 stage 映射 status；attention 缺失时已完成/失败/中断任务仍保留视觉 status，但 interrupt 必须为 none。`useCodexAgent` 使用 generation/disposed 防旧请求回写，采用项目已有事件监听器注册表；`onScopeDispose` 清理 listener，不新增全局 singleton。
+  `applyCodexSnapshot` 以 version/revision 为唯一新旧依据；前端不根据本机时间删除任务或过期 attention。`toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)` 先判断是否有真实任务；有任务时只按后端代表任务和 attention 投影；无任务时严格使用本任务表格，`idlePersistent` 只影响 running。attention 缺失时已完成/失败/中断任务仍保留视觉 status，但 interrupt 必须为 none。`useCodexAgent` 使用 generation/disposed 防旧请求回写，采用项目已有事件监听器注册表；`onScopeDispose` 清理 listener，不新增全局 singleton。
 
-  soft interrupt listener 只触发一个递增的内部 pulse 或立即刷新本地 `now`，确保布局重算；若对应完整快照尚未到达，仍不自行创建 attention。初始化失败返回空快照和 service_error 状态，但不抛出导致 Widget 无法渲染。
+  soft interrupt listener 只触发一个递增的内部 pulse 或立即刷新本地 `now`，确保布局重算；若对应完整快照尚未到达，仍不自行创建 attention。初始化失败返回空快照和 service_error 状态，但不抛出导致 Widget 无法渲染。`CodexAgentDisplayState` 直接携带同一份 listeningStatus、纯投影结果和当前 idlePersistent 值，组件不得另取或另推监听状态。
 
   运行：
 
@@ -300,8 +308,6 @@ export function useCodexAgent(options: UseCodexAgentOptions): {
 
   ```text
   实现 Codex 权威快照前端运行时
-
-  Co-Authored-By: Claude <noreply@anthropic.com>
   ```
 
 ---
@@ -410,8 +416,6 @@ defineEmits<{
 
   ```text
   构建 Codex 状态列表与任务详情组件
-
-  Co-Authored-By: Claude <noreply@anthropic.com>
   ```
 
 ---
@@ -487,8 +491,6 @@ defineEmits<{
 
   ```text
   将 Codex 内容接入灵动岛展示控制器
-
-  Co-Authored-By: Claude <noreply@anthropic.com>
   ```
 
 ---
@@ -508,7 +510,7 @@ defineEmits<{
 
 - [ ] **步骤 1：先写最小接线失败测试**
 
-  mock `useCodexAgent`，断言 `islandModules` 不再包含 `{ kind:'agent', active:false }` 固定值；Agent 成为主岛时两个 Controller 收到相同快照/状态；clear event 调用 composable `clearTask(sessionId)` 一次；清除失败不关闭详情且错误留给组件状态展示。
+  mock `useCodexAgent`，断言 `islandModules` 不再包含 `{ kind:'agent', active:false }` 固定值；Agent 成为主岛时两个 Controller 收到相同 snapshot、同一份 `CodexListeningStatus`、相同 `agentModuleSnapshot` 与 idlePersistent；clear event 调用 composable `clearTask(sessionId)` 一次；清除失败不关闭详情且错误留给组件状态展示。
 
   运行：
 
@@ -527,6 +529,7 @@ defineEmits<{
   - 鼠标离开 999ms 仍展开，1000ms 收缩；鼠标重新进入取消 timer；卸载清 timer；
   - Agent detail 中新 revision 不收缩、不重置已选任务；强打断切到其他模块时现有 watcher 清除 Agent 展开；
   - 等待授权 strong 能切到 Agent；completed soft 受现有 manual focus 保护；
+  - 无任务时 running+常驻显示“Codex 已就绪”，awaiting_trust/partial/service_error/config_conflict 显示各自状态，not_installed/disabled 隐藏；上述状态变化都复用 composable 的同一份 listeningStatus；
   - Agent 任务自动从快照删除时详情组件回列表，若 Agent 变 inactive 则通用布局回网速/其他主岛。
 
   运行：
@@ -539,7 +542,7 @@ defineEmits<{
 
 - [ ] **步骤 3：实施最小 `IslandView` 变更**
 
-  在现有其他 composable 附近初始化一次 `useCodexAgent({ idlePersistent: false })`；阶段四再把 false 换成设置 store ref。`islandModules` 第一项直接使用其 computed snapshot。构造 `codexAgentDisplayState` computed，`now` 使用现有 `layoutNow`，不新增时钟或定时器。
+  在现有其他 composable 附近初始化一次 `useCodexAgent({ idlePersistent: false })`；04C 再把 false 换成设置 store ref。`islandModules` 第一项直接使用其 computed snapshot。构造 `codexAgentDisplayState` computed 时原样带入 composable 的 snapshot、listeningStatus、agentModuleSnapshot 和 idlePersistent；`now` 使用现有 `layoutNow`，不新增时钟或定时器。
 
   两个 Controller 都传 `:agent="codexAgentDisplayState"` 并转发 `@clear-codex-task="clearCodexTask"`。本文件不遍历事件、不判断 Stop、不设置 5/10/30 分钟 timer、不按阶段自行删除卡片；现有 `handleSatelliteSelect`、`handleMainClick`、`handleMouseLeave/Enter` 和 watcher 保持通用。
 
@@ -589,8 +592,6 @@ defineEmits<{
 
   ```text
   接入 Codex 实时状态灵动岛
-
-  Co-Authored-By: Claude <noreply@anthropic.com>
   ```
 
 ## 阶段三完成门禁
@@ -600,5 +601,5 @@ defineEmits<{
 - `IslandView.vue` 只接线，没有聚合、超时、保留、乱序或失败判断。
 - Agent 详情整体尺寸 420×330；布局仍按现有通用优先级和卫星规则运行。
 - 展开详情中的选择在新事件下保持；选中任务消失回列表；主岛切走或鼠标离开一秒按现有机制收缩。
-- 无任务默认隐藏；空闲常驻接口已预留但本阶段传 false，阶段四接入用户设置。
+- 无任务时严格按 listening phase 投影；idlePersistent 只影响 running，not_installed/disabled 始终隐藏，等待信任/部分可用/配置冲突/服务异常不会伪装成已就绪；本阶段传 false，04C 接入用户设置。
 - 全量前端与 Rust 回归通过后才执行阶段四；不要自动进入阶段四。

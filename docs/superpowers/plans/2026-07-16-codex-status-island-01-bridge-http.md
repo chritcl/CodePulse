@@ -10,9 +10,11 @@
 
 **前置条件：** 从总体路线图开始实施；工作树只包含本功能明确授权的改动；阶段零基线 `pnpm run test` 为 206 项通过、`cargo test --lib` 为 62 项通过。若基线数字因已合并的合法提交变化，先记录新数字并确认失败不是本阶段引入。
 
-**本阶段消费：** Codex 官方八种 Hook stdin、`%LOCALAPPDATA%`、Tauri 构建目标三元组。
+**本阶段消费：** Codex 官方八种 Hook stdin、Windows 本地数据根目录、Tauri resource 目录、Codex Home、ProgramData 根目录和 Tauri 构建目标三元组。
 
-**本阶段产生：** `codex_protocol::CodexBridgeEvent`、`CodexDiscovery`、`codex_event_channel()`、`start_codex_http()`、`codepulse-codex-bridge.exe` 资源；阶段二只消费这些公开接口。
+**本阶段产生：** `codex_protocol::CodexBridgeEvent`、`CodexDiscovery`、唯一的 `CodexIntegrationPaths`、`codex_event_channel()`、`start_codex_http()`、经过 PE/COFF Machine 校验的 `codepulse-codex-bridge.exe` 资源；阶段二只消费这些公开接口。
+
+**固定边界：** 不创建自建 Dispatcher；Bridge 单次进程只转换并投递当前 Hook，用户已有 Hook 的编排与完整保留由 04A planner 负责。
 
 ---
 
@@ -118,8 +120,6 @@
 
   ```text
   构建 Codex Bridge 共享协议工作区
-
-  Co-Authored-By: Claude <noreply@anthropic.com>
   ```
 
 ---
@@ -238,8 +238,6 @@ pub fn convert_hook(
 
   ```text
   实现 Codex Hook 最小事件转换
-
-  Co-Authored-By: Claude <noreply@anthropic.com>
   ```
 
 ---
@@ -343,8 +341,6 @@ pub fn run_once(
 
   ```text
   构建静默失败的 Codex Bridge 进程
-
-  Co-Authored-By: Claude <noreply@anthropic.com>
   ```
 
 ---
@@ -358,6 +354,8 @@ pub fn run_once(
 - Modify: `src-tauri/Cargo.toml`（新增 `axum = "0.8"`、`getrandom = "0.4"`、`codex-protocol`；dev 新增 `tempfile = "3"`）
 - Modify: `src-tauri/src/lib.rs`（只声明 `mod codex;`，不在 `setup` 启动服务）
 - Create: `src-tauri/src/codex/mod.rs`
+- Create: `src-tauri/src/codex/paths.rs`
+- Create: `src-tauri/src/codex/paths_tests.rs`
 - Create: `src-tauri/src/codex/intake.rs`
 - Create: `src-tauri/src/codex/runtime.rs`
 - Create: `src-tauri/src/codex/sanitizer.rs`
@@ -366,7 +364,7 @@ pub fn run_once(
 - Create: `src-tauri/src/codex/server_tests.rs`
 - Modify: `src-tauri/Cargo.lock`（仅由 Cargo 生成）
 
-**消费接口：** `CodexBridgeEvent`、`CodexDiscovery`、共享限制与 `validate_event()`。
+**消费接口：** `CodexBridgeEvent`、`CodexDiscovery`、共享限制与 `validate_event()`；调用方传入的 `local_data_root`、`resource_dir`、`codex_home` 和 `program_data` 都是已经解析的绝对 `PathBuf`。
 
 **产生接口：**
 
@@ -376,36 +374,67 @@ pub type CodexEventSender = tokio::sync::mpsc::Sender<CodexBridgeEvent>;
 pub type CodexEventReceiver = tokio::sync::mpsc::Receiver<CodexBridgeEvent>;
 pub fn codex_event_channel() -> (CodexEventSender, CodexEventReceiver);
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexIntegrationPaths {
+    pub codepulse_root: PathBuf,
+    pub runtime_dir: PathBuf,
+    pub discovery_file: PathBuf,
+    pub transaction_file: PathBuf,
+    pub bin_dir: PathBuf,
+    pub installed_bridge: PathBuf,
+    pub install_record: PathBuf,
+    pub packaged_bridge: PathBuf,
+    pub codex_home: PathBuf,
+    pub hooks_json: PathBuf,
+    pub config_toml: PathBuf,
+    pub requirements_toml: PathBuf,
+}
+
+impl CodexIntegrationPaths {
+    pub fn from_local_data_root(
+        local_data_root: PathBuf,
+        resource_dir: PathBuf,
+        codex_home: PathBuf,
+        program_data: PathBuf,
+    ) -> Self;
+}
+
 pub struct CodexHttpHandle {
     pub discovery: CodexDiscovery,
     pub using_fallback_port: bool,
 }
 
 pub async fn start_codex_http(
-    runtime_dir: PathBuf,
+    paths: &CodexIntegrationPaths,
     event_tx: CodexEventSender,
 ) -> Result<CodexHttpHandle, CodexServerError>;
 
 impl CodexHttpHandle {
+    pub fn stop_accepting(&self);
+    pub fn invalidate_discovery(&self) -> Result<(), CodexServerError>;
+    pub async fn wait(self) -> Result<(), CodexServerError>;
     pub async fn shutdown(self) -> Result<(), CodexServerError>;
 }
 ```
 
-实现体可在 handle 中私有保存 oneshot sender 和 join handle；公开结构不暴露 Axum/Tokio 内部类型。阶段二持有 handle 并消费 Receiver。
+实现体可在 handle 中私有保存 acceptance cancel、发现文件所有权和 join handle；公开结构不暴露 Axum/Tokio 内部类型。`shutdown()` 是阶段一测试使用的便利方法，内部依次调用 stop/invalidate/wait；阶段二退出协调器使用三个分步方法满足确定的关闭顺序。
 
-- [ ] **步骤 1：先写 runtime 失败测试**
+- [ ] **步骤 1：先写路径对象与 runtime 失败测试**
 
-  使用 `tempfile::TempDir` 和可注入的 `RuntimeFacts { pid, started_at }` 覆盖：令牌恰好 32 随机字节/64 hex；发现文件内容契约；临时文件与目标同目录；写入完成后没有临时残留；覆盖旧文件；模拟替换失败保留旧文件；handle 正常 shutdown 删除文件；服务任务错误退出也删除；固定端口占用时得到非 47653 的回环端口；非 `AddrInUse` 绑定错误不降级。
+  在 `paths_tests.rs` 用四个互不相关的 TempDir 根构造 `CodexIntegrationPaths`，逐项断言：`codepulse_root = local_data_root/CodePulse`；runtime、发现文件和事务文件都在 `runtime` 下；稳定 Bridge 和安装记录都在 `bin` 下；打包资源只从 `resource_dir/bin` 推导；用户配置只从 `codex_home` 推导；企业要求只从 `program_data/OpenAI/Codex` 推导。传入的本地数据根目录名即使不是 `AppData` 也必须原样生效，所有字段都不得包含 bundle identifier `com.ryen.nsd`。
+
+  在 `runtime_tests.rs` 使用同一个路径对象和可注入的 `RuntimeFacts { pid, started_at }` 覆盖：令牌恰好 32 随机字节/64 hex；发现文件精确写入 `paths.discovery_file`；临时文件与目标同目录；写入完成后没有临时残留；覆盖旧文件；模拟替换失败保留旧文件；handle 正常 shutdown 删除文件；服务任务错误退出也删除；固定端口占用时得到非 47653 的回环端口；非 `AddrInUse` 绑定错误不降级。
 
   运行：
 
   ```powershell
   Push-Location src-tauri
+  cargo test -p netspeed-dynamic codex::paths_tests -- --nocapture
   cargo test -p netspeed-dynamic codex::runtime_tests -- --nocapture
   Pop-Location
   ```
 
-  预期：`runtime` 和服务接口不存在，测试编译失败。
+  预期：`CodexIntegrationPaths`、runtime 和服务接口不存在，测试编译失败；失败只来自本任务的新测试。
 
 - [ ] **步骤 2：先写 HTTP 集成失败测试**
 
@@ -423,23 +452,51 @@ impl CodexHttpHandle {
 
   预期：路由、认证和有界入队尚未实现，测试失败。
 
-- [ ] **步骤 3：实现固定端口、原子发现文件和清理 guard**
+- [ ] **步骤 3：实现唯一的路径对象**
 
-  先绑定 `127.0.0.1:47653`；只有 `io::ErrorKind::AddrInUse` 才绑定 `127.0.0.1:0`。绑定成功后生成 token，再把发现文件写到临时文件、flush、重新读取反序列化验证，最后通过 Windows `MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)` 原子替换。Win32 块写中文安全注释，保证 UTF-16 缓冲区在调用期间存活。
+  `paths.rs` 是整个功能唯一允许拼接 `CodePulse`、`runtime`、`bin` 目录名的模块。构造函数必须精确生成：
 
-  `DiscoveryGuard` 由实际 server task 持有；正常 shutdown、serve 错误和 task drop 都尝试删除发现文件。发现文件写入失败时立即释放 listener 并返回错误，不留下一个 Bridge 无法认证的服务。
+  ```text
+  <local_data_root>\CodePulse\bin\codepulse-codex-bridge.exe
+  <local_data_root>\CodePulse\bin\codepulse-codex-bridge.install.json
+  <local_data_root>\CodePulse\runtime\codex-bridge.json
+  <local_data_root>\CodePulse\runtime\codex-config-transaction.json
+  <resource_dir>\bin\codepulse-codex-bridge.exe
+  <codex_home>\hooks.json
+  <codex_home>\config.toml
+  <program_data>\OpenAI\Codex\requirements.toml
+  ```
+
+  HTTP runtime、阶段二 manager、04A inspection/planner、04B writer/installer/commands/self-check 必须持有或借用该对象，不得接收裸 `runtime_dir`、`bin_dir` 后再次拼接。本任务不调用 Tauri path API；把根目录解析留给 Tauri 组装层。
 
   运行：
 
   ```powershell
   Push-Location src-tauri
+  cargo test -p netspeed-dynamic codex::paths_tests -- --nocapture
+  Pop-Location
+  ```
+
+  预期：所有字段从四个传入根目录精确推导；不存在 bundle identifier 或工作目录依赖。
+
+- [ ] **步骤 4：实现固定端口、原子发现文件和清理 guard**
+
+  先绑定 `127.0.0.1:47653`；只有 `io::ErrorKind::AddrInUse` 才绑定 `127.0.0.1:0`。绑定成功后生成 token，再把发现文件写到临时文件、flush、重新读取反序列化验证，最后通过 Windows `MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)` 原子替换。Win32 块写中文安全注释，保证 UTF-16 缓冲区在调用期间存活。
+
+  `DiscoveryGuard` 由实际 server task 持有，并只使用 `paths.discovery_file`；正常 shutdown、serve 错误和 task drop 都尝试删除发现文件。发现文件写入失败时立即释放 listener 并返回错误，不留下一个 Bridge 无法认证的服务。
+
+  运行：
+
+  ```powershell
+  Push-Location src-tauri
+  cargo test -p netspeed-dynamic codex::paths_tests -- --nocapture
   cargo test -p netspeed-dynamic codex::runtime_tests -- --nocapture
   Pop-Location
   ```
 
   预期：固定/动态端口、发现文件原子替换、写入失败释放 listener 和三类清理路径测试通过；HTTP router 测试仍保持红色，留给下一步实现。
 
-- [ ] **步骤 4：实现认证、限制、二次脱敏和 try_send**
+- [ ] **步骤 5：实现认证、限制、二次脱敏和 try_send**
 
   Axum router 只注册 `POST /v1/codex/events`；先检查 ConnectInfo 回环、Bearer token、Content-Type 和 Content-Length，再用 `DefaultBodyLimit::max(16 * 1024)` 读取 JSON。反序列化后调用 `validate_event()` 和服务端 `sanitize_event()`；后者再次裁剪并移除秘密/路径片段，且不记录正文。
 
@@ -457,7 +514,7 @@ impl CodexHttpHandle {
 
   预期：runtime、HTTP 和现有 62 项基线测试全部通过；新增测试不使用真实睡眠等待端口或超时。
 
-- [ ] **步骤 5：静态检查与提交**
+- [ ] **步骤 6：静态检查与提交**
 
   运行：
 
@@ -467,17 +524,16 @@ impl CodexHttpHandle {
   cargo clippy -p netspeed-dynamic --all-targets --all-features -- -D warnings
   Pop-Location
   rg -n "0\.0\.0\.0|transcript_path|tool_input|tool_response" src-tauri/src/codex
+  rg -n 'join\("CodePulse"\)|join\("runtime"\)|join\("bin"\)' src-tauri/src/codex --glob '!paths.rs' --glob '!paths_tests.rs'
   git diff --check
   ```
 
-  预期：不存在 `0.0.0.0` 绑定；原始 Hook 字段不进入主应用模块；所有检查通过。
+  预期：不存在 `0.0.0.0` 绑定；原始 Hook 字段不进入主应用模块；目录名拼接只在 `paths.rs` 和路径测试中出现；所有检查通过。
 
   建议提交信息：
 
   ```text
   添加 Codex 本地事件接收服务
-
-  Co-Authored-By: Claude <noreply@anthropic.com>
   ```
 
 ---
@@ -490,35 +546,39 @@ impl CodexHttpHandle {
 
 - Modify: `package.json`（`scripts` 区域新增 `build:codex-bridge`；不新增 JS 包）
 - Modify: `src-tauri/tauri.conf.json`（`build.beforeBuildCommand`、`bundle.resources`）
+- Modify: `src-tauri/build.rs`（把 Cargo `TARGET` 固定注入 `CODEPULSE_TARGET_TRIPLE`）
 - Modify: `.gitignore`（忽略 `src-tauri/binaries/codepulse-codex-bridge.exe`）
 - Create: `scripts/build-codex-bridge.ps1`
 - Create: `scripts/verify-codex-bridge-resource.ps1`
+- Create: `scripts/test-codex-bridge-resource-validation.ps1`
 
 **消费接口：** workspace 中 `codepulse-codex-bridge` 二进制；Tauri 的 `TAURI_ENV_TARGET_TRIPLE`。
 
-**产生接口：** 构建期 `src-tauri/binaries/codepulse-codex-bridge.exe`；安装包资源相对路径 `bin/codepulse-codex-bridge.exe`。阶段四只通过 Tauri `resource_dir()` 解析后者，不读取 Cargo target 目录。
+**产生接口：** 构建期 `src-tauri/binaries/codepulse-codex-bridge.exe`；安装包资源相对路径 `bin/codepulse-codex-bridge.exe`；主应用编译期常量 `env!("CODEPULSE_TARGET_TRIPLE")`。04B 只通过 `CodexIntegrationPaths.packaged_bridge` 读取资源，不读取 Cargo target 目录。
 
 - [ ] **步骤 1：先写资源验证失败脚本**
 
-  `verify-codex-bridge-resource.ps1` 必须失败于以下任一条件：暂存 EXE 不存在、前两个字节不是 `MZ`、文件长度为 0、Tauri resources 没有从 `binaries/codepulse-codex-bridge.exe` 映射到 `bin/codepulse-codex-bridge.exe`、`beforeBuildCommand` 未先运行 `pnpm run build:codex-bridge`。
+  `verify-codex-bridge-resource.ps1` 固定参数为 `-ResourcePath <path>`、`-TargetTriple <triple>` 和可选 `-SkipTauriConfigCheck`。脚本必须：读取至少 64 字节 DOS Header；校验 `MZ`；从偏移 `0x3C` 读取 little-endian `e_lfanew`；验证该偏移非负且 `e_lfanew + 6 <= fileLength`；校验四字节 `PE\0\0`；从 `e_lfanew + 4` 读取 little-endian COFF `Machine`。目标映射固定为 `x86_64-pc-windows-msvc -> 0x8664`、`aarch64-pc-windows-msvc -> 0xAA64`，其他 triple 直接失败。未跳过配置检查时，还要验证 resources 映射与 `beforeBuildCommand`。
 
   运行：
 
   ```powershell
-  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-codex-bridge-resource.ps1
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-codex-bridge-resource.ps1 -ResourcePath .\src-tauri\binaries\codepulse-codex-bridge.exe -TargetTriple x86_64-pc-windows-msvc
   ```
 
-  预期：脚本以非 0 退出，并明确报告暂存资源尚不存在或配置尚未接线。
+  预期：脚本以非 0 退出，并明确报告暂存资源尚不存在、PE 签名/Machine 不合法或配置尚未接线；只看见 `MZ` 不得判定通过。
 
 - [ ] **步骤 2：实现目标感知构建脚本和 pnpm 接线**
 
-  `build-codex-bridge.ps1` 使用 `$ErrorActionPreference = 'Stop'`，并用 `Split-Path $PSScriptRoot -Parent` 得到 `$repoRoot`，不依赖调用者当前目录。优先读取 `$env:TAURI_ENV_TARGET_TRIPLE`，为空时从 `rustc -vV` 的 `host:` 行取得 target；不匹配 `*-pc-windows-msvc` 时失败。执行：
+  `build-codex-bridge.ps1` 使用 `$ErrorActionPreference = 'Stop'`，并用 `Split-Path $PSScriptRoot -Parent` 得到 `$repoRoot`，不依赖调用者当前目录。优先读取 `$env:TAURI_ENV_TARGET_TRIPLE`，为空时从 `rustc -vV` 的 `host:` 行取得 target；只接受 `x86_64-pc-windows-msvc` 和 `aarch64-pc-windows-msvc`。执行：
 
   ```powershell
   cargo build --manifest-path "$repoRoot\src-tauri\Cargo.toml" -p codepulse-codex-bridge --release --target $target
   ```
 
-  然后创建 `$repoRoot\src-tauri\binaries`，从 `$repoRoot\src-tauri\target\$target\release\codepulse-codex-bridge.exe` 复制到 `$repoRoot\src-tauri\binaries\codepulse-codex-bridge.exe`。复制后检查 `MZ`、非零长度和最后写入时间不早于本次构建开始时间。
+  构建前删除旧的暂存文件；构建后只能从 `$repoRoot\src-tauri\target\$target\release\codepulse-codex-bridge.exe` 复制到 `$repoRoot\src-tauri\binaries\codepulse-codex-bridge.exe`，随即调用资源验证脚本并传入同一个 `$target`。文件修改时间不再作为架构或目标正确性的证据。
+
+  `src-tauri/build.rs` 在调用 `tauri_build::build()` 前读取 Cargo 提供的 `TARGET`，只接受上述两个 triple，并输出 `cargo:rustc-env=CODEPULSE_TARGET_TRIPLE=<target>`；04B installer 使用同一编译期字符串验证打包资源架构。
 
   `package.json` 新增：
 
@@ -535,15 +595,28 @@ impl CodexHttpHandle {
   Get-Item -LiteralPath .\src-tauri\binaries\codepulse-codex-bridge.exe | Select-Object FullName,Length,LastWriteTimeUtc
   ```
 
-  预期：命令以 0 退出；暂存文件存在、长度大于 0，且构建脚本已经验证其 `MZ` 头、目标 triple 和本次构建时间。
+  预期：命令以 0 退出；暂存文件存在、长度大于 0，且 DOS Header、PE 签名和 COFF Machine 与目标 triple 一致。
 
-- [ ] **步骤 3：运行构建和资源红绿验证**
+- [ ] **步骤 3：运行 PE 架构失败矩阵**
+
+  `test-codex-bridge-resource-validation.ps1` 在独立临时目录生成最小字节 fixture，并逐项启动验证脚本：只有 `MZ` 但 `e_lfanew` 越界；`MZ` 合法但没有 `PE\0\0`；x64 triple 配 ARM64 Machine；ARM64 triple 配 x64 Machine；不支持的 triple；在 x64 与 ARM64 旧 target 目录同时放 EXE 后确认构建路径选择只读取本次 `$target` 目录。每个负例都必须断言子进程退出码非 0，两个匹配架构正例退出码为 0。
+
+  运行：
+
+  ```powershell
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-codex-bridge-resource-validation.ps1
+  ```
+
+  预期：六个错误场景均被拒绝；x64/ARM64 匹配场景通过；旧 target 目录不会被误复制。
+
+- [ ] **步骤 4：运行构建和资源红绿验证**
 
   运行：
 
   ```powershell
   pnpm run build:codex-bridge
-  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-codex-bridge-resource.ps1
+  $target = if ($env:TAURI_ENV_TARGET_TRIPLE) { $env:TAURI_ENV_TARGET_TRIPLE } else { ((rustc -vV | Select-String '^host:').Line -replace '^host:\s*', '') }
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-codex-bridge-resource.ps1 -ResourcePath .\src-tauri\binaries\codepulse-codex-bridge.exe -TargetTriple $target
   pnpm run build
   Push-Location src-tauri
   cargo test --workspace
@@ -552,7 +625,7 @@ impl CodexHttpHandle {
 
   预期：Bridge 发布 EXE 被暂存；验证脚本输出资源映射通过；前端构建和整个 Cargo workspace 测试通过。
 
-- [ ] **步骤 4：执行 Tauri bundle 验收**
+- [ ] **步骤 5：执行 Tauri bundle 验收**
 
   运行：
 
@@ -562,9 +635,9 @@ impl CodexHttpHandle {
   git status --short
   ```
 
-  预期：Tauri bundler 完成至少一个 Windows 安装包；资源缺失不会被 bundler 静默忽略；暂存 EXE 因 `.gitignore` 不出现在 `git status`，源码脚本、配置和 Cargo 锁文件正常出现。
+  预期：Tauri bundler 完成至少一个 Windows 安装包；解包或资源目录检查确认 EXE 的 PE Machine 与当前 `CODEPULSE_TARGET_TRIPLE` 一致；资源缺失或架构错误不会被 bundler 静默忽略；暂存 EXE 因 `.gitignore` 不出现在 `git status`。
 
-- [ ] **步骤 5：阶段一全量验证并提交**
+- [ ] **步骤 6：阶段一全量验证并提交**
 
   运行：
 
@@ -573,6 +646,7 @@ impl CodexHttpHandle {
   pnpm run typecheck
   pnpm run lint
   pnpm run format:check
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-codex-bridge-resource-validation.ps1
   Push-Location src-tauri
   cargo test --workspace
   cargo fmt --all --check
@@ -588,16 +662,16 @@ impl CodexHttpHandle {
 
   ```text
   将 Codex Bridge 纳入 Tauri 安装资源
-
-  Co-Authored-By: Claude <noreply@anthropic.com>
   ```
 
 ## 阶段一完成门禁
 
 - `CodexBridgeEvent` 与发现文件契约只在共享包定义一次。
+- `CodexIntegrationPaths` 是唯一目录构造对象；所有路径从传入根目录推导，功能模块不再自行拼接 CodePulse/runtime/bin。
 - 八种 Hook fixture 与实施日官方文档一致；未知字段安全忽略，未知事件明确拒绝。
 - 所有 Bridge 黑盒失败路径精确输出 `{}`、stderr 为空、退出 0，且没有重试或状态落盘。
 - HTTP 服务只绑定回环地址；固定端口仅在冲突时降级；每次启动 token 不同；发现文件在正常和错误关闭后清理。
 - 16 KiB、认证、协议、字段、队列与日志安全测试通过。
+- 构建脚本和资源验证都校验 DOS Header、PE 签名和 x64/ARM64 COFF Machine；不支持 triple 与错架构资源必定失败。
 - Tauri bundle 构建已消费 Bridge resource；尚未修改用户 Hook，也尚未在 `setup` 启动服务。
 - 以上全部满足后才执行阶段二；不要自动进入阶段二。
