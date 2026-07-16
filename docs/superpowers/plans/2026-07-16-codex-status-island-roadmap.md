@@ -4,7 +4,7 @@
 
 **目标：** 在不控制 Codex、不保存项目内容且不破坏用户现有 Hook 的前提下，为 Windows 原生 Codex CLI 与 Codex App 提供可安装、可升级、可卸载的实时状态灵动岛。
 
-**架构：** 单次运行的 `codepulse-codex-bridge.exe` 把官方 Hook 输入转换为最小事件并投递到仅回环监听的 Rust HTTP 服务；单线程 Actor 以可注入时钟维护全部会话；Tauri 广播权威快照；Vue 只做展示、导航和清除操作。配置修改与 Bridge 稳定路径安装放在最后一阶段，避免配置能力反向依赖尚未稳定的数据链路。
+**架构：** Windows GUI Subsystem 的单次 `codepulse-codex-bridge.exe` 把官方 Hook 输入转换为最小事件并投递到仅回环监听的 Rust HTTP 服务；单线程 Actor 以可注入时钟维护全部会话并产生不带 revision 的 draft，进程级 `CodexSnapshotStore` 分配全局 revision 并保存权威快照；Tauri 只广播 Store 已提交的快照；Vue 只做展示、导航和清除操作。每次 HTTP/Actor Runtime 使用独立 generation、token 与 Discovery owner；配置修改与 Bridge 稳定路径安装放在最后一阶段，并以两个事务句柄锁定结构提交边界。
 
 **技术栈：** Rust 2021、Tokio、Axum 0.8、serde、getrandom 0.4、Windows API、Tauri 2、Vue 3.5、TypeScript 5.6、Pinia 3、Vitest 4、`@vue/test-utils`、`toml_edit` 0.25、PowerShell、pnpm 10.33.2。
 
@@ -18,6 +18,8 @@
 - 不在 `IslandView.vue` 中实现分类、去重、乱序过滤、平滑切换、超时、完成保留或失败判断。
 - Vue 不重新判断超时和失败，只消费 Rust 发布的权威快照与监听状态。
 - CodePulse 未运行时不补偿历史事件；重新启动只接收本次启动后通过当前 token 认证的 Hook。
+- `CodexSnapshotStore` 与 `next_runtime_generation` 从 CodePulse 进程启动存活到进程退出，不随 HTTP/Actor Runtime 停止或重启而重建。
+- Inspection 只描述重新读取文件才会变化的静态事实；设置页、Widget 和 Agent 投影的动态状态唯一来自 `CodexListeningStatus`。
 - 每个阶段按测试先行执行，且必须在自己的验收命令通过后才能进入下一阶段。
 - 不修改与 Codex 状态岛无关的模块；现有音乐、歌词、通知、硬件和网络行为保持不变。
 
@@ -64,14 +66,14 @@
 ## 2. 四阶段依赖顺序
 
 ```text
-阶段一：共享协议 + 唯一路径对象 + Bridge + HTTP 接收器 + 打包资源
-    ↓ 产出 CodexBridgeEvent、CodexIntegrationPaths、发现文件与有界事件入口
-阶段二：聚合器 Actor + dormant Runtime Manager + Tauri 退出/命令/事件
-    ↓ 产出 CodexStateSnapshot、CodexListeningStatus、按原因启停接口与清除命令
+阶段一：共享协议 + 唯一路径对象 + GUI Bridge + HTTP 接收器 + 打包资源
+    ↓ 产出 CodexBridgeEvent、CodexIntegrationPaths、DiscoveryOwner 与有界事件入口
+阶段二：聚合器 Actor + 进程级 SnapshotStore + generation Runtime Manager + Tauri 退出/命令/事件
+    ↓ 产出进程级单调 CodexStateSnapshot、CodexListeningStatus、按原因启停接口与清除命令
 阶段三：Vue Agent 展示 + 多岛布局接入
     ↓ 产出同时消费 snapshot/listeningStatus 的状态岛
 阶段四：Hook 安全接入
-    04A Inspection + Planner（纯只读/纯计划）
+    04A 静态 Inspection + ListeningStatus 派生 + Planner（纯只读/纯计划）
       ↓ 完成后停下来 review
     04B Writer + Installer + Tauri Commands + inspection 驱动 Runtime
       ↓ 完成后停下来 review
@@ -79,7 +81,38 @@
       ↓ 完成后停下来 review
 ```
 
-阶段一不依赖配置写入；可用测试进程直接调用 Bridge。阶段二只消费阶段一事件和路径对象，setup 后保持 dormant，不擅自启动 HTTP。阶段三只消费阶段二公开 DTO。04A 只消费路径/资源元数据并产出 inspection/planner；04B 消费 04A 纯结果完成写入、安装和 runtime 启停；04C 只消费 04B 命令与状态。依赖方向为 `01 → 02 → 03` 和 `01/02/03 → 04A → 04B → 04C`，没有 UI 反向启动 runtime 或配置层反向定义协议的循环。
+阶段一不依赖配置写入；可用测试进程直接调用 Bridge。阶段二只消费阶段一事件、Owner 和路径对象，setup 后创建进程级 SnapshotStore/manager 但保持 HTTP dormant。阶段三只消费阶段二公开 DTO。04A 只消费路径/资源元数据并产出静态 inspection、纯 listening 派生和 planner；04B 消费 04A 纯结果完成配置/Bridge 双事务、runtime 启停、Store 清空和 generation 状态；04C 只消费 04B 命令与状态。依赖方向为 `01 → 02 → 03` 和 `01/02/03 → 04A → 04B → 04C`，没有 UI 反向启动 runtime、Inspection 反向持有动态状态或配置层反向定义协议的循环。
+
+### 2.1 新的跨阶段接口图
+
+```text
+Plan 01
+CodexBridgeEvent + CodexIntegrationPaths + DiscoveryOwner + GUI PE metadata
+        │
+        ▼
+Plan 02（进程级 managed state）
+CodexAggregator ──CodexStateDraft──▶ CodexSnapshotStore ──global revision──▶ CodexStateSnapshot
+        │                                  ▲
+        │ authenticated activity           │ stop/uninstall/failed install: clear()
+        ▼                                  │
+Runtime generation + generation-aware Reporter + owner-aware HTTP/Exit cleanup
+        │                                  │
+        ├──────── CodexRuntimeFacts ────────┘
+        ▼
+04A static CodexIntegrationInspection + derive_codex_listening_status()
+        │                         │
+        │ Prepared Hook change    └──▶ CodexListeningStatus（唯一动态状态）
+        ▼
+04B ConfigApplyTransaction + BridgeInstallTransaction
+        │ exact 前双回滚 / exact 后结构提交
+        ▼
+CodexHookChangeResult { inspection, listeningStatus, selfCheck }
+        │
+        ├──▶ Plan 03/Widget: snapshot + listeningStatus
+        └──▶ 04C/Settings: static inspection + dynamic listeningStatus
+```
+
+图中只有 SnapshotStore 分配公开 revision，只有 ListeningStatus 暴露动态 phase，只有当前 Runtime generation 的真实认证事件可以令 phase=running。
 
 ## 3. 跨阶段准确接口
 
@@ -178,9 +211,30 @@ pub struct CodexDiscovery {
     pub token: String,
     pub started_at: i64,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiscoveryOwner {
+    pub version: u16,
+    pub pid: u32,
+    pub token: String,
+    pub started_at: i64,
+}
+
+pub enum DiscoveryRemovalOutcome {
+    Removed,
+    AlreadyAbsent,
+    ReplacedByNewRuntime,
+}
+
+pub fn remove_discovery_if_owned(
+    path: &Path,
+    owner: &DiscoveryOwner,
+) -> Result<DiscoveryRemovalOutcome, CodexServerError>;
 ```
 
 `token` 为每次 HTTP runtime 启动重新生成的 `32` 个随机字节（256 位）小写十六进制字符串。固定端口 `127.0.0.1:47653` 仅在 `AddrInUse` 时降级到 `127.0.0.1:0`；其他绑定错误直接进入服务异常。
+
+`DiscoveryOwner` 必须由本次写入的完整 `CodexDiscovery` 转换得到，并由 HTTP handle、`DiscoveryGuard`、Runtime generation 和退出兜底共同持有。正常 shutdown、invalidate、serve 错误、task drop、Runtime stop 与 `RunEvent::Exit` 都只能调用 `remove_discovery_if_owned()`；删除前至少完整比较 version/PID/token/startedAt。文件不存在返回 `AlreadyAbsent`；owner 不同返回 `ReplacedByNewRuntime` 并保持文件；读取/解析失败不得由旧 Guard 盲删，当前明确退出流程只记录 warning。
 
 ### 3.2 HTTP 到聚合器的内部入口
 
@@ -195,7 +249,7 @@ pub fn codex_event_channel() -> (CodexEventSender, CodexEventReceiver);
 
 HTTP 处理器仅完成二次校验/脱敏并调用 `try_send`；阶段二 Actor 独占 Receiver。队列满时不等待、不重试，直接返回 `429`。
 
-### 3.3 聚合器公开快照
+### 3.3 聚合 draft、进程级 SnapshotStore 与公开快照
 
 `cwd` 只在 Rust 内存内部状态存在，不进入 Vue 契约。
 
@@ -250,6 +304,33 @@ export interface CodexStateSnapshot {
 
 `tasks` 由 Rust 按内部服务端单调接收时间倒序输出；`lastActivityAt` 只是对应接收动作的公开 Unix 时间，Vue 不自行按它重排。代表任务按等待授权、失败、完成、中断、测试、命令、编辑、读取、分析排序，同阶段再按内部单调接收顺序选择。
 
+Aggregator 不拥有公开 revision，只产生内部 draft：
+
+```rust
+pub struct CodexStateDraft {
+    pub generated_at: i64,
+    pub tasks: Vec<CodexTaskState>,
+    pub representative_session_id: Option<String>,
+    pub attention: Option<CodexAttention>,
+}
+
+pub struct CodexSnapshotStore {
+    current: std::sync::RwLock<CodexStateSnapshot>,
+    next_revision: std::sync::atomic::AtomicU64,
+}
+
+impl CodexSnapshotStore {
+    pub fn new(initial_generated_at: i64) -> Self;
+    pub fn current(&self) -> CodexStateSnapshot;
+    pub fn commit(&self, draft: CodexStateDraft) -> CodexStateSnapshot;
+    pub fn clear(&self, generated_at: i64) -> CodexStateSnapshot;
+}
+```
+
+`CodexSnapshotStore` 是 Tauri 进程级 managed state，可由 `CodexRuntimeManager` 持有同一个 `Arc`，从进程启动存活到退出。初始 current 是 version=1、revision=0、tasks=[]、representativeSessionId=None、attention=None 的合法空快照，`next_revision` 从 1 开始。`commit()`/`clear()` 在写锁内分配大于 current.revision 的 revision、替换 current 并返回完整快照；Actor 只能提交 draft，publisher 只能发布 Store 返回的快照。soft interrupt 先由 Aggregator 产生不带 revision 的边沿草稿，再由 Actor 绑定对应提交快照的全局 revision；不得再保留 Aggregator revision。
+
+Runtime dormant、not_installed、disabled、managed disabled、config conflict 或 Runtime 已停止时，`get_codex_snapshot()` 都直接成功返回 `SnapshotStore.current()`。停止、卸载、generation 替换或无旧合法 Runtime 的启动失败按“停止接收事件 → owner-aware 清理并关闭旧 Actor/HTTP → `SnapshotStore.clear()` → 发布更高 revision 空快照 → 发布 listening status”执行，因此同一 Runtime 内与跨 Runtime 的 revision 都严格递增。
+
 ### 3.4 监听状态与事件
 
 ```ts
@@ -287,6 +368,32 @@ export interface CodexSoftInterruptPayload {
 }
 ```
 
+Runtime 的动态事实固定为：
+
+```rust
+pub struct CodexRuntimeFacts {
+    pub runtime_generation: Option<u64>,
+    pub authenticated_generation: Option<u64>,
+    pub service_state: CodexServiceState,
+    pub port: Option<u16>,
+    pub using_fallback_port: bool,
+    pub last_event_at: Option<i64>,
+    pub sources: Vec<CodexSource>,
+    pub error_code: Option<String>,
+}
+
+pub trait CodexActivityReporter: Send + Sync + 'static {
+    fn record_authenticated_event(
+        &self,
+        runtime_generation: u64,
+        source: CodexSource,
+        received_at: i64,
+    );
+}
+```
+
+`CodexRuntimeManager` 持有 `next_runtime_generation: AtomicU64`。每次真正创建 HTTP/Actor Runtime 都消耗一个不复用的非零 generation，并把 generation 绑定 HTTP listener、Actor、token、Discovery owner 与 reporter；启动失败可以消耗编号。新 Runtime 启动前清空 authenticatedGeneration/lastEventAt/sources/旧错误/旧端口，成功后才成为 current generation；停止后 current 为 None。reporter 只有在 `reported_generation == current_runtime_generation` 时才更新动态事实，旧 Runtime 晚到事件和关闭回调一律忽略。只有 current generation 非 None 且 `authenticated_generation == runtime_generation` 才能进入 running；self-check 永远不能替代真实事件认证。
+
 Rust 产生的状态事件统一为：
 
 - `codex-state-changed`：完整权威 `CodexStateSnapshot`；
@@ -303,6 +410,8 @@ Tauri 命令统一为：
 - `get_codex_listening_status() -> CodexListeningStatus`；
 - `run_codex_self_check() -> CodexSelfCheckResult`；
 - 阶段四新增 `inspect_codex_integration()`、`preview_codex_hook_change(action)`、`apply_codex_hook_change(action, expected_digest, preview_digest)`。
+
+`get_codex_snapshot()` 不依赖 Actor。`clear_codex_task()` 在 Runtime 运行时交给 Actor 顺序处理；Runtime dormant 且空快照不存在该 session 时返回稳定 `UnknownSession`，不得映射成 service_error。`clear_all_codex_failures()` 在 Runtime 运行时交给 Actor，dormant 时直接返回 Store 当前空快照。Actor 不存在不是快照查询或空集合清除的服务异常。
 
 前端唯一 Agent 投影接口固定为：
 
@@ -330,7 +439,9 @@ pub async fn stop_if_unused(
 ) -> Result<(), CodexRuntimeError>;
 ```
 
-`CodexRuntimeStartReason` 只允许 `StartupInspection`、`InstallSelfCheck`、`RepairSelfCheck`；`CodexRuntimeStopReason` 只允许 `StartupInspectionDisallows`、`InstallFailed`、`Uninstalled`。UI 显示偏好没有调用这些接口的路径。
+`CodexRuntimeStartReason` 只允许 `StartupInspection`、`InstallSelfCheck`、`RepairSelfCheck`；`CodexRuntimeStopReason` 固定为 `StartupInspectionDisallows`、`InstallFailed`、`Uninstalled`、`RuntimeGenerationReplaced`、`RuntimeErrorStateCleared`。后两项分别覆盖同进程替换旧 generation 与 Runtime 错误后明确清理当前状态；五种 stop 都执行 Store.clear/空快照发布。UI 显示偏好没有调用这些接口的路径。
+
+manager 的 Tauri 状态装配固定使用 Tauri 2.11.5 的 `Manager::manage<T: Send + Sync + 'static>()` 持有一个进程级 manager；manager 内共享同一个 `Arc<CodexSnapshotStore>`，不得在 Runtime start 时重新 `manage` 或替换 Store。退出路径继续使用 `App::run` 的 non-exhaustive `RunEvent::ExitRequested { code, api, .. }`、同步 `api.prevent_exit()` 和异步完成后的 `AppHandle::exit(saved_code)`；`RunEvent::Exit` 仅做 owner-aware 同步兜底。
 
 ### 3.5 Hook 配置变更接口
 
@@ -349,8 +460,6 @@ export interface CodexIntegrationInspection {
   managedEntry: 'absent' | 'exact' | 'modified' | 'duplicate'
   markerPresence: CodePulseMarkerPresence
   bridgeState: 'missing' | 'current' | 'outdated' | 'modified'
-  hookState: CodexListeningStatus['hookState']
-  phase: CodexListeningStatus['phase']
   issues: string[]
 }
 
@@ -367,23 +476,55 @@ export interface CodexHookChangePreview {
 
 export interface CodexHookChangeResult {
   inspection: CodexIntegrationInspection
+  listeningStatus: CodexListeningStatus
   selfCheck: CodexSelfCheckResult
 }
 ```
 
-`configPath` 是 Hook 表示的主文件；`featureConfigPath` 只用于告诉用户手动启用 Hooks 的配置位置。若本地 `[features].hooks` 为 false，preview install/repair 返回稳定 `HooksDisabled` 错误，不产生 `PreparedCodexHookChange`，不写 Bridge、不启动 runtime；CodePulse 永不修改该开关。`expectedDigest` 是所有决策输入（`hooks.json`、`config.toml`、只读 `requirements.toml`、Bridge 资源/副本/安装记录）的路径、存在性和原始 SHA-256 经排序后的组合摘要。`previewDigest` 是规范化变更计划的 SHA-256；应用时重新计算两种摘要，任何不一致都停止写入。
+`CodexIntegrationInspection` 只含静态事实，不能包含 hookState/phase；`inspect_codex_integration()` 只重新读取这些事实。唯一动态状态由 `derive_codex_listening_status(&inspection, &runtime_facts)` 返回，设置页、Widget 与 composable 都只从 `CodexListeningStatus` 读取服务/Hook/phase。apply 同时返回静态 inspection 与当时完整 listeningStatus，后续 listening event 只替换动态对象。
+
+| Hooks 状态 | Install | Repair | Uninstall |
+|---|---|---|---|
+| 本地 enabled | 允许 | 允许 | 允许 |
+| 本地 disabled | HooksDisabled | HooksDisabled | 有安全 marker 时允许 |
+| managed disabled | ManagedDisabled | ManagedDisabled | ManagedDisabled |
+| config conflict/ambiguous | ConfigConflict | ConfigConflict | ConfigConflict |
+
+`configPath` 是 Hook 表示的主文件；`featureConfigPath` 只用于告诉用户手动启用 Hooks 的配置位置。本地 `[features].hooks=false` 时 install/repair 返回稳定 `HooksDisabled`，但当 representation 可安全解析、markerPresence=present 且 managedEntry 为 exact/modified/duplicate 时，允许 preview/apply uninstall，只精确删除 CodePulse marker；不得安装 Bridge或启动 Runtime。managed disabled 对 install/repair/uninstall 全部返回 `ManagedDisabled`；config conflict/ambiguous 不自动卸载。`expectedDigest` 是所有决策输入（`hooks.json`、`config.toml`、只读 `requirements.toml`、Bridge 资源/副本/安装记录）的路径、存在性和原始 SHA-256 经排序后的组合摘要。`previewDigest` 是规范化变更计划的 SHA-256；应用时重新计算两种摘要，任何不一致都停止写入。
+
+### 3.6 配置与 Bridge 事务边界
+
+```rust
+pub struct ConfigApplyTransaction;
+
+pub fn apply_prepared_config_change(
+    paths: &CodexIntegrationPaths,
+    prepared: &PreparedCodexHookChange,
+    expected_digest: &str,
+    preview_digest: &str,
+) -> Result<ConfigApplyTransaction, CodexIntegrationError>;
+
+impl ConfigApplyTransaction {
+    pub fn commit(self) -> Result<AppliedConfigChange, CodexIntegrationError>;
+    pub fn rollback_if_unchanged(self) -> Result<(), CodexIntegrationError>;
+}
+```
+
+Install/Repair 固定执行：重新 inspection 与双摘要 → prepare Bridge transaction → 验证 PE Machine/GUI Subsystem/hash/Bridge 启动管道契约 → 暂时安装 Bridge并保留 rollback → 必要时启动 self-check Runtime → apply Config transaction → 完整重读解析 → marker 必须 exact → commit Config → commit Bridge → 发布 awaiting_trust/partial → 完整 self-check → 返回。post-write 解析或 marker 验证失败时先 `rollback_if_unchanged()`，再调用 Bridge rollback；若用户又修改配置，禁止覆盖用户字节，且 Bridge rollback 必须先检查当前配置是否仍引用稳定路径，必要时保留可执行 Bridge，绝不留下 Hook 指向不存在 EXE。首次 Install 失败时停止临时 Runtime、清空并发布 Store、owner-aware 删除 discovery；Repair 前有合法 Runtime 时恢复旧结构并保持原链路。
+
+marker exact 且 Bridge 结构验证完成后，配置与 Bridge 已结构性提交；之后 self-check 超时/失败只返回 warning 并派生 partial/service_error，不回滚 Hook、Bridge 或旧配置。commit 后仅备份/temp/事务日志清理失败同样返回 warning，保留正确结构并交由下次 recovery 清理。
 
 ## 4. 各阶段独立交付与验收
 
 | 阶段 | 计划文档 | 独立交付物 | 阶段验收 |
 |---|---|---|---|
-| 1 | `2026-07-16-codex-status-island-01-bridge-http.md` | workspace、共享协议、唯一路径对象、Bridge、HTTP 服务、发现文件、PE 架构校验与打包资源 | 协议/Bridge/HTTP/路径测试通过；Bridge 所有失败路径严格输出 `{}` 且退出 0；x64/ARM64 错架构资源被拒绝 |
-| 2 | `2026-07-16-codex-status-island-02-aggregator-tauri.md` | 可注入时钟聚合器、顺序 Actor、Tauri 快照/清除/状态接口、dormant manager 与退出协调器 | 聚合器与生命周期测试通过；5 分钟、10/30 分钟、墙钟跳变、去重、Stop 保守判定可用手动时钟瞬时验证；退出最多两秒且只启动一次 shutdown |
-| 3 | `2026-07-16-codex-status-island-03-agent-ui.md` | TS 契约、权威快照 composable、紧凑态/列表/详情、Agent 多岛接入 | Vue 单元/组件/布局测试通过；列表详情导航、自动收缩、主/卫星切换无状态机进入 `IslandView.vue` |
+| 1 | `2026-07-16-codex-status-island-01-bridge-http.md` | workspace、共享协议、唯一路径对象、GUI Subsystem Bridge、HTTP 服务、Discovery owner、完整 PE metadata 与打包资源 | 协议/Bridge/HTTP/路径测试通过；Bridge piped stdin/stdout 在所有失败路径严格 `{}`/空 stderr/0；A/B owner 竞态不误删；x64/ARM64+GUI 通过且 Console 被拒绝 |
+| 2 | `2026-07-16-codex-status-island-02-aggregator-tauri.md` | 可注入时钟聚合器、进程级 SnapshotStore、顺序 Actor、Tauri 快照/清除/状态接口、generation-aware dormant manager 与退出协调器 | 生命周期与跨 Runtime revision 测试通过；dormant 查询为空且不报错；旧 reporter/owner 不污染新 Runtime；退出最多两秒且只启动一次 shutdown |
+| 3 | `2026-07-16-codex-status-island-03-agent-ui.md` | TS 契约、权威快照 composable、紧凑态/列表/详情、Agent 多岛接入 | Vue 单元/组件/布局测试通过；更高 revision 空快照清旧任务；跨 Runtime 不重置 revision；列表详情导航、自动收缩、主/卫星切换无状态机进入 `IslandView.vue` |
 | 4 总览 | `2026-07-16-codex-status-island-04-hook-settings-e2e.md` | 三个批次的依赖、共享接口、review 停止点与总门禁 | 只作为索引，不混入实施任务 |
-| 04A | `2026-07-16-codex-status-island-04a-inspection-planner.md` | 只读 inspection、marker/Bridge/phase/runtime 决策与 install/repair/uninstall 纯计划 | TempDir inspection/planner 全通过；真实用户配置零写入；HooksDisabled 不产出计划 |
-| 04B | `2026-07-16-codex-status-island-04b-writer-installer.md` | writer、事务恢复、PE installer、inspect/preview/apply 命令、inspection 驱动启停 | 故障注入、篡改保护、精确卸载和 runtime 生命周期通过；禁用 Hooks 时零写入/零启动 |
-| 04C | `2026-07-16-codex-status-island-04c-settings-e2e.md` | 设置卡、手动 Hooks 启用引导、显示偏好、自动/真实 E2E 与验收记录 | UI/自动 E2E/App 真实 Hook 通过；CLI 不可用时明确记录环境阻塞，不冒充兼容通过 |
+| 04A | `2026-07-16-codex-status-island-04a-inspection-planner.md` | 只读静态 inspection、generation runtime facts、独立 listening 派生、action matrix 与 install/repair/uninstall 纯计划 | inspection JSON 无动态字段；Runtime generation 派生和 local disabled 安全卸载通过；真实用户配置零写入 |
+| 04B | `2026-07-16-codex-status-island-04b-writer-installer.md` | Config/Bridge 双事务、恢复、完整 PE installer、inspect/preview/apply 命令、Store/generation/owner 生命周期 | post-write 回滚不悬空、exact 后 self-check 不破坏结构、卸载发布空快照、本地 disabled 安全卸载与重装 generation 通过 |
+| 04C | `2026-07-16-codex-status-island-04c-settings-e2e.md` | 静态/动态分离设置卡、手动 Hooks 引导与 disabled 卸载、显示偏好、自动/真实 E2E | 重启 revision/generation、事务故障、Discovery 竞态、GUI 无闪窗、UI/真实 App Hook 通过；CLI 阻塞如实记录 |
 
 每阶段完成时均运行该计划列出的局部测试、全量前端测试、Rust 测试、格式和静态检查；04A、04B、04C 每个批次完成后必须停下来 review，未经新确认不得自动进入下一个批次；验收失败时停留在当前批次，不用跳到后续层规避问题。
 
@@ -402,10 +543,10 @@ export interface CodexHookChangeResult {
 ## 6. `codepulse-codex-bridge.exe` 构建、打包与升级
 
 1. 把 `src-tauri` 转换为 Cargo workspace，成员为根应用、`crates/codex-protocol` 和 `crates/codepulse-codex-bridge`，继续共用现有 `src-tauri/Cargo.lock`。
-2. `scripts/build-codex-bridge.ps1` 从 `TAURI_ENV_TARGET_TRIPLE` 读取 Tauri 当前目标到 `$target`；未提供时从 `rustc -vV` 解析 host；只接受 `x86_64-pc-windows-msvc` 与 `aarch64-pc-windows-msvc`。发布构建执行 `cargo build -p codepulse-codex-bridge --release --target $target`，只从该 target 目录复制产物，随后解析 DOS Header、`e_lfanew`、`PE\0\0` 与 COFF Machine，分别要求 `0x8664` 或 `0xAA64`；不再用修改时间证明架构正确。
+2. Bridge crate root `main.rs` 固定声明 `#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]`，使每个 Hook 进程使用 Windows GUI Subsystem 而不弹控制台，同时保留父进程重定向的 stdin/stdout/stderr 管道。`scripts/build-codex-bridge.ps1` 从 `TAURI_ENV_TARGET_TRIPLE` 读取 Tauri 当前目标到 `$target`；未提供时从 `rustc -vV` 解析 host；只接受 `x86_64-pc-windows-msvc` 与 `aarch64-pc-windows-msvc`。发布构建执行 `cargo build -p codepulse-codex-bridge --release --target $target`，只从该 target 目录复制产物，随后解析 DOS Header、`e_lfanew`、`PE\0\0`、COFF Machine、Optional Header Magic/长度与 Subsystem；Machine 分别要求 `0x8664` 或 `0xAA64`，Subsystem 必须为 `IMAGE_SUBSYSTEM_WINDOWS_GUI = 2`，Console=3、未知值、非法 Magic 与短 Header 全部拒绝。
 3. `package.json` 新增 `build:codex-bridge`；`tauri.conf.json.build.beforeBuildCommand` 在前端构建前运行它。`.gitignore` 忽略暂存 EXE，源码、脚本和锁文件仍入库。
 4. `tauri.conf.json.bundle.resources` 使用资源映射，把暂存 EXE 放入安装包资源目录的 `bin/codepulse-codex-bridge.exe`。这里选 resources 而不是 `externalBin`：应用不把 Bridge 当常驻 sidecar 启动，Bridge 由 Codex Hook 单次启动；resources 也避免 sidecar 的 target-triple 文件名成为 Hook 路径。
-5. 04B 从 `CodexIntegrationPaths.packaged_bridge` 读取安装包版本，先按编译期 target triple 复查 PE Machine，再校验 SHA-256，通过同目录临时文件与 Windows 原子替换安装到 `CodexIntegrationPaths.installed_bridge`。Hook 永远引用稳定路径，不引用版本化安装目录。
+5. 04B 从 `CodexIntegrationPaths.packaged_bridge` 读取安装包版本，先按编译期 target triple 复查 `WindowsPeMetadata { machine, subsystem: WindowsGui }`，再校验 SHA-256 和 piped `--codepulse-self-check` 启动契约，通过同目录临时文件与 Windows 原子替换安装到 `CodexIntegrationPaths.installed_bridge`。Hook 永远引用稳定路径，不引用版本化安装目录。
 6. 每次 CodePulse 启动先恢复事务并只读 inspection；只有 exact、modified 或带可识别 marker 的 partial 才允许启动 runtime。资源升级只有在现有条目与 CodePulse 精确签名、安装记录有效且副本未篡改时自动进行；modified 允许服务继续接收事件但禁止后台覆盖配置。
 7. 卸载先精确移除配置条目并验证配置，再删除稳定副本和安装记录。应用升级带入的新资源在下次启动修复稳定副本；旧安装包不会覆盖用户配置。
 
@@ -416,10 +557,11 @@ export interface CodexHookChangeResult {
 ### 7.1 并发、乱序与可测试时钟
 
 - HTTP 并发只进入有界队列；一个 Actor 顺序处理 `Event`、`Tick`、`ClearTask`、`ClearFailures`、`GetSnapshot`、`Shutdown` 消息。
-- `CodexAggregator<C: Clock>` 是无 Tauri、无 Tokio 定时器的纯状态对象；每次 `ingest()`/`tick()` 只读取一次同时含 Unix 墙上毫秒和进程内单调毫秒的 `ClockReading`。生产 `SystemClock` 用 `SystemTime` 生成公开展示时间、用 `Instant` 生成生命周期时间；测试 `ManualClock` 可分别推进单调时间和跳变墙上时间。
+- `CodexAggregator<C: Clock>` 是无 Tauri、无 Tokio 定时器、无公开 revision 的纯状态对象；每次 `ingest()`/`tick()` 只读取一次同时含 Unix 墙上毫秒和进程内单调毫秒的 `ClockReading`，变化后产生 `CodexStateDraft`。生产 `SystemClock` 用 `SystemTime` 生成公开展示时间、用 `Instant` 生成生命周期时间；测试 `ManualClock` 可分别推进单调时间和跳变墙上时间。
 - 去重缓存最多保存 `2048` 个 `eventId`；每个 session 另保存最近 `8` 个 retired turnId；toolUseId 关联工具开始/完成，agentId 做子智能体计数去重。新轮次事件先于 UserPromptSubmit 到达时建立临时轮次，后到的同 turnId UserPromptSubmit 只补任务摘要而不把阶段倒退为分析；retired turnId 的事件直接丢弃。当前轮次无论 wire occurredAt 增大、相等或减小都按 Actor 实际接收顺序处理；墙钟回拨两小时后的 running_tests 和 PermissionRequested 必须生效。
 - wire occurredAt 只校验合法并可用于诊断/必要展示；它与公开墙上时间都不参与任务排序、代表任务排序、平滑、完成保留、10/30 分钟中断或 attention 期限。所有这些规则只使用服务端单调接收时间，因此客户端漂移与 Windows 校时不能提前、延后或淘汰状态转换。
 - 一秒平滑通过一个待提交普通阶段实现：同一秒只保留最后一个普通阶段；等待授权、失败、完成和中断立即提交。真实定时器只每秒向 Actor 发送 `Tick`，所有判断仍在纯聚合器内。
+- Actor 是 draft 的唯一正常提交者：draft 交给进程级 `CodexSnapshotStore` 后才得到公开 revision，再先发布完整快照、后发布绑定同 revision 的 soft interrupt。Runtime stop/替换的 clear 由 manager 串行协调，不创建第二套 revision 计数器。
 
 ### 7.2 生命周期与提醒
 
@@ -435,24 +577,28 @@ export interface CodexHookChangeResult {
 - 最后操作成功或回答含明确完成语义时为完成；最后操作失败且回答含“无法完成、仍然失败、需要用户处理”等明确失败语义时才为失败；失败结果但语义不明确时为完成并设置 `hasUnresolvedIssue = true`；完全无法判断时默认完成。
 - 终态词表由确定的正向和失败短语表驱动并有表格测试，不调用模型、不读取 transcript。
 
-### 7.4 启动、卸载与退出生命周期
+### 7.4 启动、卸载、generation 与退出生命周期
 
 - 应用启动固定顺序为：构造 CodexIntegrationPaths → 恢复未完成配置事务 → 只读 inspection → 根据 inspection 决定是否 ensure_started/stop_if_unused → 发布 CodexListeningStatus。
-- startup 只在 Hook exact、Hook modified、或 inspection phase=partial 且 markerPresence=present 时启动；not_installed、disabled、managed_disabled、config_conflict、已确认卸载和仅 idlePersistent 均不启动。无法安全识别 CodePulse 条目的 conflict 必须保持 config_conflict，不能降级成 partial 绕过门禁。
-- Install/Repair 用户确认后先验证 Bridge，runtime 未运行时用 InstallSelfCheck/RepairSelfCheck 临时启动，再写配置并 self-check；成功保持运行并进入 awaiting_trust，第一条真实 Hook 事件后 running。配置失败时回滚 Bridge；此前无合法 Hook 时 stop_if_unused(InstallFailed) 并删除发现文件。
-- Uninstall 精确删除 marker、验证不存在、stop_if_unused(Uninstalled)、关闭 Actor/HTTP、删除发现文件，再删除稳定 Bridge/记录；EXE 删除失败只警告，不恢复 Hook、不重启服务。
-- ExitRequested 第一次同步 prevent，原子保证 shutdown 只启动一次；异步关闭按“停止接受 HTTP → 使发现文件失效 → 关闭 sender → 请求 Actor shutdown → 等待两个 task”执行，整体最多两秒，随后设置 finished 并调用 AppHandle::exit(saved_code)。第二次请求在 finished 后放行；尚未 finished 时继续阻止且不重复启动。RunEvent::Exit 只做同步、无等待、按 PID/token 所有权删除发现文件的兜底。
+- startup 只在 Hook exact、Hook modified、或静态 inspection 的 marker present 且可安全解析时启动；not_installed、disabled、managed_disabled、config conflict、已确认卸载和仅 idlePersistent 均不启动。无法安全识别 CodePulse 条目的 conflict 必须由 listening 派生为 config_conflict，不能降级成 partial 绕过门禁。
+- 每次真正创建 HTTP/Actor Runtime 先从进程级 AtomicU64 分配非零 generation，并为该 generation 创建 token、DiscoveryOwner、Actor/reporter。新 generation 先清空旧认证事实；只有该 generation 的第一条真实事件可令 `authenticated_generation == runtime_generation` 并进入 running。旧 Actor 晚到上报、旧 HTTP 关闭回调和旧 DiscoveryGuard 都不能改变新 Runtime。
+- Install/Repair 严格使用第 3.6 节双事务顺序。post-write inspection 未达到 exact 时回滚未提交结构；首次 Install 失败停止临时 Runtime、发布更高 revision 空快照并 owner-aware 删除 discovery，Repair 失败保持安装前合法链路。exact 后 self-check 失败保留 Hook/Bridge 并进入 partial/service_error，不误报 running。
+- Uninstall 精确删除 marker、验证不存在，再按“停止接收 → 关闭 Actor/HTTP → Store.clear/发布空快照 → 发布 not_installed”停止链路，owner-aware 删除 discovery，最后删除稳定 Bridge/记录；EXE 删除失败只警告，不恢复 Hook、不重启服务。本地 hooks=false 且有安全 marker 允许此路径，且不先启动 Runtime；managed disabled 与 ambiguous conflict 禁止。
+- ExitRequested 第一次同步 prevent，原子保证 shutdown 只启动一次；异步关闭按“停止接受 HTTP → 使用完整 Owner 使 discovery 失效 → 关闭 sender/Actor → Store.clear 并发布空快照 → 等待两个 task”执行，整体最多两秒，随后设置 finished 并调用 AppHandle::exit(saved_code)。第二次请求在 finished 后放行；尚未 finished 时继续阻止且不重复启动。RunEvent::Exit 只做同步、无等待、调用 `remove_discovery_if_owned()` 兜底；文件损坏或已被新 Runtime 替换时不盲删。
 
 ## 8. 主要风险与回滚策略
 
 | 风险 | 防护 | 回滚策略 |
 |---|---|---|
-| Bridge 未进入安装包或目标架构错误 | 构建/验证/installer 三层解析 DOS Header、PE 签名和 COFF Machine；x64/ARM64 与 target triple 必须一致；不支持 triple 直接失败 | 关闭设置入口并恢复上一版资源配置；未写 Hook 时不影响 Codex |
+| Bridge 未进入安装包、目标架构/Subsystem 错误或 Hook 闪控制台 | crate root 强制 windows_subsystem=windows；构建/验证/installer 三层解析 DOS Header、PE 签名、COFF Machine、Optional Header Magic/Subsystem；piped 黑盒验证 stdout/stderr | Console/未知 Subsystem 或错架构直接拒绝；未写 Hook 时不影响 Codex |
 | Tauri 隐藏窗口或托盘强退绕过清理 | 窗口只 hide；托盘使用 AppHandle::exit；ExitRequested 同步 prevent 后只 spawn 一次两秒 shutdown；Exit 只做同步兜底 | 超时仍发起第二次 exit；Bridge 遇到残留 PID/连接失败仍静默退出 |
-| 固定端口被占用或恶意本机进程伪装 | 仅 `AddrInUse` 降级动态端口；每次启动随机令牌；发现文件原子替换；Bridge 校验版本、PID 和回环端口 | 切换动态端口不算故障；发现文件无法安全写入则关闭服务，不开放未认证端口 |
+| 固定端口被占用、旧 Runtime 清理新 discovery 或本机进程伪装 | 仅 `AddrInUse` 降级动态端口；每次 generation 随机令牌；发现文件原子替换；完整 DiscoveryOwner 比较；Bridge 校验版本、PID 和回环端口 | 切换动态端口不算故障；旧 owner 返回 ReplacedByNewRuntime；发现文件无法安全写入则关闭服务 |
 | 并发、跨轮次迟到或墙钟回拨产生间歇错误 | 单 Actor 实际接收顺序、eventId/retired turnId/toolUseId/agentId、可注入手动时钟；不以 occurredAt 淘汰当前轮次 | 保留 HTTP/快照接口，回退聚合器提交；旧版本不会持久化任务状态 |
+| Runtime 重启后 revision 回到 1 导致 Vue 拒绝新状态 | 进程级 SnapshotStore 独占 revision；stop 先发布更高 revision 空快照；dormant 查询 Store | 清理 Runtime 不销毁 Store；卸载/失败后 Vue 必须先收到空快照 |
+| 旧 Runtime 的真实事件把新 Runtime 误报 running | generation-aware reporter；authenticatedGeneration 只接受当前 generation；新启动清空来源/时间/错误 | 旧上报直接忽略，新 Runtime 维持 awaiting_trust/partial 直到真实新 Hook |
 | Hook 配置格式或字段与官方版本变化 | 实施时再次查官方文档；完整解析；真实 App/CLI 门禁；记录协议版本 | 检查到未知结构只读报冲突；不写文件；卸载只删精确签名 |
 | 用户已有 Hook 被覆盖 | 沿用现有表示方式；摘要预览；备份；摘要校验；语义级增删 | 原子写失败保留原文件；卸载不恢复整份旧备份；备份只供用户审计或手工恢复 |
+| post-write 或 self-check 失败留下 Hook 指向缺失 Bridge | ConfigApplyTransaction 与 BridgeInstallTransaction 共同持有未提交结构；marker exact 是结构提交点；回滚前检查用户并发修改和稳定路径引用 | pre-exact 失败回滚两者或保留仍被引用的 Bridge；post-exact self-check 失败保留结构并进入 partial/service_error |
 | Hook 条目已被用户手改 | 精确命令与标记参数识别；`modified` 状态拒绝自动修复/卸载 | 展示差异并要求新预览，不强制覆盖 |
 | 设置页把“已写配置”误报为运行 | `awaiting_trust` 与 `active` 分离；只有收到第一条真实事件后为 `running` | 保持未信任提示和自检，不自动重复写入 |
 | 空闲常驻掩盖未安装或服务错误 | Agent 投影同时消费 snapshot/listeningStatus；idlePersistent 只影响 running 且无任务；UI 没有 runtime start 权限 | 关闭显示偏好不影响服务；异常/冲突继续显示真实 warning/error |
@@ -498,6 +644,7 @@ export interface CodexHookChangeResult {
 | 7.3 八种 Hook | 01 任务 2、04A 任务 1/3、04C 任务 5 | 八事件解析和配置测试 |
 | 7.4 稳定 Bridge 路径 | 01 任务 4/5、04B 任务 2 | 路径对象、bundle、PE 与稳定副本哈希测试 |
 | 7.5 所有路径 `{}`/0 | 01 任务 3 | Bridge 进程契约测试 |
+| Bridge Windows GUI Subsystem 与管道契约 | 01 任务 1/3/5、04B 任务 2、04C 任务 5 | windows_subsystem 源码门禁、piped stdin/stdout 黑盒、PE Subsystem 与无控制台闪烁真实验收 |
 | 8.1 单次进程模式 | 01 任务 2/3 | 每个 Hook 启动一次、无守护状态测试 |
 | 8.2 Bridge 职责 | 01 任务 2/3 | 解析、来源、摘要、投递测试 |
 | 8.3 Bridge 禁止职责 | 01 任务 3、02 任务 1–3 | 无重试/无事件落盘检查；聚合职责测试 |
@@ -509,6 +656,7 @@ export interface CodexHookChangeResult {
 | 9.3 任务摘要 | 01 任务 2 | 摘要表格测试 |
 | 9.4 命令摘要 | 01 任务 2 | 命令分类与秘密清理表格测试 |
 | 10.1 固定/动态端口与发现文件 | 01 任务 4、02 任务 5 | 端口占用、原子写、退出清理测试 |
+| Discovery 完整 Owner 与 A/B 清理竞态 | 01 任务 4、02 任务 5、04C 任务 4 | ReplacedByNewRuntime、相同 PID 不同 token、损坏文件和 RunEvent::Exit owner-aware 测试 |
 | 10.2 HTTP 处理顺序与 202 | 01 任务 4 | 路由/认证/限制/过载集成测试 |
 | 10.3 回环、令牌、二次脱敏和安全日志 | 01 任务 4、02 任务 5 | 网络绑定、重启令牌、日志捕获测试 |
 | 11 Rust 模块边界 | 01 任务 1/4、02 任务 1–5、04A 任务 1–3、04B 任务 1–4 | 模块 API 编译和职责审查 |
@@ -519,10 +667,15 @@ export interface CodexHookChangeResult {
 | 16 等待授权 | 02 任务 2/3、03 任务 3/4 | 强打断、不超时、无授权按钮测试 |
 | 17 子智能体计数 | 01 任务 2、02 任务 2、03 任务 3 | start/stop 去重与计数展示测试 |
 | 18 Rust/Vue 边界及三个事件 | 02 任务 4、03 任务 1/2 | IPC 契约、revision 防旧写和清理测试 |
+| 进程级 SnapshotStore、dormant 查询与跨 Runtime revision | 02 任务 1/4/5、03 任务 2、04B 任务 3/4、04C 任务 4 | revision 20→stop 21 空→新任务 >21、未安装查询空、卸载清旧任务与重装 E2E |
+| Runtime generation 与真实事件认证 | 02 任务 4/5、04A 任务 2、04B 任务 3/4、04C 任务 4/5 | generation 1/2、旧上报忽略、重装 awaiting_trust、真实新 Hook 后 running |
 | 19 Vue 组件拆分 | 03 任务 2/3 | 独立模块与组件测试；IslandView 差异审查 |
 | 20 多岛集成 | 03 任务 2/4/5 | 主/卫星、手动焦点、强软打断和展开尺寸测试 |
 | 21 设置分组和七种状态 | 04A 任务 2、04C 任务 1–3 | inspection 派生状态、手动 Hooks 引导与设置组件测试 |
+| Inspection 静态事实与 ListeningStatus 唯一动态状态 | 04A 任务 1/2、04B 任务 4、04C 任务 1/2 | inspection JSON 无 hookState/phase、event 不改 inspection、无需 re-inspect 即 running |
+| 本地 hooks=false 的安全卸载 | 04A 任务 3、04B 任务 4、04C 任务 2/4 | install/repair=HooksDisabled，marker present 可预览/卸载且不启动 Runtime，managed disabled 全只读 |
 | 22 解析、备份、原子写、精准卸载、修复 | 04A 任务 1/3、04B 任务 1–4 | 临时 Home 配置矩阵、并发摘要冲突、故障注入测试 |
+| 配置/Bridge 双事务提交边界 | 04B 任务 1/2/4、04C 任务 4 | post-write 非 exact 双回滚、用户并发修改不覆盖、exact 后 self-check 失败保留结构、cleanup warning |
 | 23 异常处理 | 01 任务 3/4、02 任务 5、04A 任务 1–3、04B 任务 1–4 | 端口、发现文件、协议、认证、队列、来源、配置错误测试 |
 | 24 Windows CLI/App 兼容与 WSL 排除 | 01 任务 2、04C 任务 4/5 | 父进程链测试、真实端验收、WSL 范围检查 |
 | 25.1 Bridge 单测 | 01 任务 2/3 | Bridge crate 测试 |
@@ -539,6 +692,9 @@ export interface CodexHookChangeResult {
 - 五个主计划与三个 04 子计划中的接口名称、枚举值、事件名、命令名、路径和时间边界必须保持与本路线图一致；需要改变时先修改路线图及所有消费计划，再改源码。
 - 阶段一至三可以在没有写入真实 Codex 配置的情况下完整自动测试；阶段四的配置测试使用临时 `CODEX_HOME`，真实 Home 只在用户确认预览后修改。
 - “正常运行”只由第一条真实、通过认证的 Hook 事件触发；模拟 HTTP 自检只能证明服务可用，不能替代信任或真实端验收。
+- “真实、通过认证”还必须属于当前 runtimeGeneration；旧 generation 的事件、reporter 和关闭回调不能更新当前 listening status。
+- 任何 Runtime stop/uninstall/无旧合法 Runtime 的启动失败都必须先发布更高 revision 空快照；`get_codex_snapshot()` 在 dormant 状态必须成功，不能把 Actor 缺失映射为 service_error。
+- Install/Repair 的 post-write exact 验证是结构提交点：提交前失败不得留下悬空 Hook，提交后 self-check 失败不得删除正确 Hook/Bridge。
 - 本机无法独立启动 CLI 时，不把 CLI 门禁标成通过；这不会阻止计划文档完成，但会阻止功能版本宣称满足全部正式兼容范围。
 - 最终源码提交前必须确认 `git diff --name-only` 没有 `package-lock.json`、`yarn.lock`、事件历史、日志正文或用户配置样本。
 
@@ -546,27 +702,27 @@ export interface CodexHookChangeResult {
 
 - [ ] **审核阶段一：协议、路径、Bridge、HTTP 与 PE 资源**
 
-  执行 `docs/superpowers/plans/2026-07-16-codex-status-island-01-bridge-http.md`，运行该计划的阶段一全量命令。预期共享协议/路径只有一份、Bridge 严格 `{}`/0、回环 HTTP 与 PE x64/ARM64 门禁通过；完成后停止 review。
+  执行 `docs/superpowers/plans/2026-07-16-codex-status-island-01-bridge-http.md`，运行该计划的阶段一全量命令。预期共享协议/路径只有一份、Bridge 为 GUI Subsystem 且 piped 严格 `{}`/空 stderr/0、回环 HTTP、完整 Discovery owner 与 PE x64/ARM64+GUI 门禁通过；完成后停止 review。
 
 - [ ] **审核阶段二：聚合、Runtime Manager 与退出协调器**
 
-  执行 `docs/superpowers/plans/2026-07-16-codex-status-island-02-aggregator-tauri.md`。预期当前轮次按 Actor 接收顺序、墙钟/occurredAt 回拨不丢状态、runtime 默认 dormant、两秒退出只启动一次 shutdown；完成后停止 review。
+  执行 `docs/superpowers/plans/2026-07-16-codex-status-island-02-aggregator-tauri.md`。预期当前轮次按 Actor 接收顺序、进程级 SnapshotStore 跨 Runtime 保持 revision、dormant 查询空快照、generation 过滤旧 reporter/Owner、两秒退出只启动一次 shutdown；完成后停止 review。
 
 - [ ] **审核阶段三：Agent UI 与 listening status 联合投影**
 
-  执行 `docs/superpowers/plans/2026-07-16-codex-status-island-03-agent-ui.md`。预期 `toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)` 是唯一投影，IslandView 只接线；完成后停止 review。
+  执行 `docs/superpowers/plans/2026-07-16-codex-status-island-03-agent-ui.md`。预期 `toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)` 是唯一投影，更高 revision 空快照清掉卸载前任务，前端不在 Runtime 重启时重置 revision，IslandView 只接线；完成后停止 review。
 
 - [ ] **审核 04A：只读 inspection 与纯 planner**
 
-  执行 `docs/superpowers/plans/2026-07-16-codex-status-island-04a-inspection-planner.md`。预期 TempDir 零写入、HooksDisabled 不产生 prepared plan、无 writer/installer/UI；完成后停止 review。
+  执行 `docs/superpowers/plans/2026-07-16-codex-status-island-04a-inspection-planner.md`。预期 TempDir 零写入、Inspection 无动态字段、generation listening 派生通过、本地 disabled 只允许安全 uninstall、无 writer/installer/UI；完成后停止 review。
 
 - [ ] **审核 04B：writer、installer、commands 与 runtime 生命周期**
 
-  仅在 04A 已批准后执行 `docs/superpowers/plans/2026-07-16-codex-status-island-04b-writer-installer.md`。预期故障注入、PE、篡改、startup/apply/uninstall/退出通过且无设置页；完成后停止 review。
+  仅在 04A 已批准后执行 `docs/superpowers/plans/2026-07-16-codex-status-island-04b-writer-installer.md`。预期 Config/Bridge 双事务、PE Machine+GUI、Store 清空、generation、Owner、local disabled uninstall、startup/apply/uninstall/退出通过且无设置页；完成后停止 review。
 
 - [ ] **审核 04C：设置、显示偏好与 E2E**
 
-  仅在 04B 已批准后执行 `docs/superpowers/plans/2026-07-16-codex-status-island-04c-settings-e2e.md`。预期手动 Hooks 引导、UI/自动 E2E、App 真实信任通过；CLI 环境阻塞如实记录；完成后停止 review。
+  仅在 04B 已批准后执行 `docs/superpowers/plans/2026-07-16-codex-status-island-04c-settings-e2e.md`。预期静态/动态 UI 分离、disabled marker 卸载、重装 revision/generation、事务故障、Discovery 竞态、GUI 无闪窗和 App 真实信任通过；CLI 环境阻塞如实记录；完成后停止 review。
 
 - [ ] **审核最终验收记录路径**
 

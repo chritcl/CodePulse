@@ -4,7 +4,7 @@
 
 **目标：** 用阶段二的权威快照替换 Agent 占位内容，实现紧凑态、多会话列表、任务详情和清除操作，并与现有主岛展开、卫星岛切换、手动焦点和一秒自动收缩完整共存。
 
-**架构：** IPC 契约集中在 `src/shared/ipc`；`src/modules/codex` 负责纯展示映射和 revision 规则；`useCodexAgent` 负责快照初始化、Tauri 监听与卸载清理；Codex 组件只渲染/导航；`IslandView.vue` 只初始化 composable、加入一个 `IslandModuleSnapshot` 并传 props/events，不承载聚合、超时或失败判断。
+**架构：** IPC 契约集中在 `src/shared/ipc`；`src/modules/codex` 负责纯展示映射和进程级 revision 规则；`useCodexAgent` 负责从 SnapshotStore 初始化（包括 Runtime dormant 的合法空快照）、Tauri 监听与卸载清理；Codex 组件只渲染/导航；`IslandView.vue` 只初始化 composable、加入一个 `IslandModuleSnapshot` 并传 props/events，不承载聚合、超时、Runtime 重启或失败判断。
 
 **技术栈：** Vue 3 Composition API、TypeScript、Tauri JS API、现有事件监听器注册表、Vitest、`@vue/test-utils`；不新增前端依赖。
 
@@ -170,7 +170,7 @@ export interface CodexSelfCheckResult {
 
 ## 任务 2：实现纯展示映射与权威快照 composable
 
-**独立交付物：** mocked IPC 下可初始化、接收新版快照、忽略旧 revision、映射 Agent 模块、清除任务并在 scope 销毁时释放全部监听器。
+**独立交付物：** mocked IPC 下可从 dormant 空快照初始化、接收跨 Runtime 的更高 revision 快照、忽略真正旧 revision、在卸载空快照到达时清除旧任务、映射 Agent 模块、清除任务并在 scope 销毁时释放全部监听器。
 
 **Files:**
 
@@ -229,6 +229,8 @@ export function useCodexAgent(options: UseCodexAgentOptions): {
   `status.test.ts` 覆盖：
 
   - revision 小于或等于当前值时保持当前对象；更大 revision 替换；错误 version 保持当前并返回可诊断错误；
+  - 当前 revision=20 且有旧任务时收到 revision=21 空快照，必须接受并清空 tasks/representative/attention；随后 listeningStatus.phase=not_installed 时 Agent 隐藏；
+  - Runtime 重启不会触发前端 revision 归零或重新创建 comparison state；revision=22 的新 Runtime 任务在 revision=21 空快照后正常接受；
   - 有真实任务时始终按代表任务投影，优先于所有无任务监听状态；
   - 无任务、phase=running、idlePersistent=false => `active=false`；true => paused/“Codex 已就绪”；
   - 无任务、phase=awaiting_trust => warning/“等待 Codex 信任”且 interrupt=none，不受 idlePersistent 影响；
@@ -266,7 +268,9 @@ export function useCodexAgent(options: UseCodexAgentOptions): {
 
 - [ ] **步骤 3：先写 composable 异步竞态和清理失败测试**
 
-  测试顺序固定为“先注册三个 listener，再调用初始 get”。覆盖：初始化 invoke 尚未返回时收到 revision 5，随后旧 revision 3 的 get 结果不能覆盖；事件 revision 倒退被忽略；监听状态事件完整替换并立即驱动同一个 `toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)`；任务与监听状态初始化请求任意顺序返回都不覆盖事件新值；soft interrupt 不单独伪造任务状态；clear 命令返回的新快照立即应用；clear 失败保留旧快照并 reject；idlePersistent 变化不会 invoke runtime 命令；scope dispose 调用三个 unlisten；dispose 后迟到 invoke 不回写。
+  测试顺序固定为“先注册三个 listener，再调用初始 get”。覆盖：未安装 Hook/Runtime dormant 时 `getCodexSnapshot()` 成功返回 revision=0、tasks=[]，composable 不设置 service_error且按 not_installed 隐藏；初始化 invoke 尚未返回时收到 revision 5，随后旧 revision 3 的 get 结果不能覆盖；事件 revision 倒退被忽略；监听状态事件完整替换并立即驱动同一个 `toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)`；任务与监听状态初始化请求任意顺序返回都不覆盖事件新值；soft interrupt 不单独伪造任务状态；clear 命令返回的新快照立即应用；clear 失败保留旧快照并 reject；idlePersistent 变化不会 invoke runtime 命令；scope dispose 调用三个 unlisten；dispose 后迟到 invoke 不回写。
+
+  增加完整重启序列：Runtime A revision=20 有任务 → uninstall/stop 事件 revision=21 空快照 → listening not_installed → 任务与 Agent 立即消失 → Runtime B 新事件 revision=22 → 正常显示，不被旧 comparison state 拒绝。测试必须断言 composable 没有在 not_installed、disabled、service restart 或 refresh 时把本地 revision 重置为 0。
 
   运行：
 
@@ -278,9 +282,9 @@ export function useCodexAgent(options: UseCodexAgentOptions): {
 
 - [ ] **步骤 4：实现纯投影与事件生命周期**
 
-  `applyCodexSnapshot` 以 version/revision 为唯一新旧依据；前端不根据本机时间删除任务或过期 attention。`toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)` 先判断是否有真实任务；有任务时只按后端代表任务和 attention 投影；无任务时严格使用本任务表格，`idlePersistent` 只影响 running。attention 缺失时已完成/失败/中断任务仍保留视觉 status，但 interrupt 必须为 none。`useCodexAgent` 使用 generation/disposed 防旧请求回写，采用项目已有事件监听器注册表；`onScopeDispose` 清理 listener，不新增全局 singleton。
+  `applyCodexSnapshot` 以 version/进程级 revision 为唯一新旧依据；更高 revision 的空快照与任务快照完全等价地接受，前端不根据 Runtime start/stop 重置 revision，也不根据本机时间删除任务或过期 attention。`toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)` 先判断是否有真实任务；有任务时只按后端代表任务和 attention 投影；无任务时严格使用本任务表格，`idlePersistent` 只影响 running。attention 缺失时已完成/失败/中断任务仍保留视觉 status，但 interrupt 必须为 none。`useCodexAgent` 的 request generation 仅隔离前端异步请求，不得和后端 runtimeGeneration 混用；采用项目已有事件监听器注册表，`onScopeDispose` 清理 listener，不新增全局 singleton。
 
-  soft interrupt listener 只触发一个递增的内部 pulse 或立即刷新本地 `now`，确保布局重算；若对应完整快照尚未到达，仍不自行创建 attention。初始化失败返回空快照和 service_error 状态，但不抛出导致 Widget 无法渲染。`CodexAgentDisplayState` 直接携带同一份 listeningStatus、纯投影结果和当前 idlePersistent 值，组件不得另取或另推监听状态。
+  soft interrupt listener 只触发一个递增的内部 pulse 或立即刷新本地 `now`，确保布局重算；若对应完整快照尚未到达，仍不自行创建 attention。只有 invoke 真正失败才使用本地合法空快照和 service_error 降级；dormant/not_installed/disabled/config conflict 返回的成功空快照不是错误，不能触发 service_error。`CodexAgentDisplayState` 直接携带同一份 listeningStatus、纯投影结果和当前 idlePersistent 值，组件不得另取或另推监听状态。
 
   运行：
 
@@ -531,6 +535,7 @@ defineEmits<{
   - 等待授权 strong 能切到 Agent；completed soft 受现有 manual focus 保护；
   - 无任务时 running+常驻显示“Codex 已就绪”，awaiting_trust/partial/service_error/config_conflict 显示各自状态，not_installed/disabled 隐藏；上述状态变化都复用 composable 的同一份 listeningStatus；
   - Agent 任务自动从快照删除时详情组件回列表，若 Agent 变 inactive 则通用布局回网速/其他主岛。
+  - 当前有 revision=20 任务时依次收到 revision=21 空快照和 not_installed，详情选择清空、Agent 隐藏；随后 revision=22 新任务与 awaiting_trust/running 状态正常显示，证明卸载/重装不会因旧 revision 被拒绝；
 
   运行：
 
@@ -596,10 +601,12 @@ defineEmits<{
 
 ## 阶段三完成门禁
 
-- IPC 类型、函数名、命令和事件与 Rust/总体路线图完全一致；旧 revision 和卸载后异步结果不会覆盖新状态。
+- IPC 类型、函数名、命令和事件与 Rust/总体路线图完全一致；dormant revision=0 空快照是成功结果；旧 revision 和卸载后异步结果不会覆盖新状态。
+- 前端不因 not_installed/disabled/Runtime restart 重置 revision；revision=20 旧任务 → revision=21 空快照 → revision=22 新 Runtime 任务的测试通过。
 - 紧凑态、列表、详情、返回和清除均有组件测试；没有授权、打开 Codex、暂停、终止或继续操作。
 - `IslandView.vue` 只接线，没有聚合、超时、保留、乱序或失败判断。
 - Agent 详情整体尺寸 420×330；布局仍按现有通用优先级和卫星规则运行。
 - 展开详情中的选择在新事件下保持；选中任务消失回列表；主岛切走或鼠标离开一秒按现有机制收缩。
 - 无任务时严格按 listening phase 投影；idlePersistent 只影响 running，not_installed/disabled 始终隐藏，等待信任/部分可用/配置冲突/服务异常不会伪装成已就绪；本阶段传 false，04C 接入用户设置。
+- Agent 的动态服务/Hook 状态只消费 `CodexListeningStatus`；阶段四静态 Inspection 不进入阶段三投影，也不形成第二个 phase 来源。
 - 全量前端与 Rust 回归通过后才执行阶段四；不要自动进入阶段四。

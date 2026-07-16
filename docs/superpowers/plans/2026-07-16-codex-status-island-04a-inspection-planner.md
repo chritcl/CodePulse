@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**目标：** 只读检查 Codex Home、企业策略、Hook 表示、CodePulse marker 与 Bridge 状态，派生 listening phase/runtime 启动决策，并生成不写盘的 install/repair/uninstall 计划和安全预览。
+**目标：** 只读检查 Codex Home、企业策略、Hook 表示、CodePulse marker 与 Bridge 状态，输出不含动态 phase 的静态 Inspection；再结合 generation-aware Runtime facts 单独派生唯一 ListeningStatus/runtime 启动决策，并生成不写盘的 install/repair/uninstall 计划和安全预览。
 
 **架构：** `inspection.rs` 只读取 `CodexIntegrationPaths` 指向的文件并产生结构化事实；`status.rs` 用 inspection 与 runtime facts 纯派生 `CodexListeningStatus`；`plan.rs` 对完整解析树做语义增删并产生 `PreparedCodexHookChange`。本批次不引入 writer、installer、Tauri apply 或 Vue UI。
 
@@ -13,10 +13,10 @@
 - 前置门禁：阶段一至三全部通过；阶段四总览已 review。
 - 只消费阶段一 `CodexIntegrationPaths`，禁止重新拼接 CodePulse/runtime/bin。
 - 真实 `%USERPROFILE%\.codex` 与 `%ProgramData%` 只能读；全部自动测试使用 TempDir。
-- `features.hooks=false` 时 install/repair planner 返回 HooksDisabled；不产生 PreparedCodexHookChange。
+- `features.hooks=false` 时 install/repair planner 返回 HooksDisabled；marker absent 不产生计划；marker present 且 representation/marker 可安全解析时允许生成只删除 CodePulse marker 的 uninstall 计划。
 - 企业托管禁用时返回 ManagedDisabled；不引导修改企业文件。
 - 不创建自建 Dispatcher；planner 在 Codex 原生多 Hook 表示上逐项保留用户原 Hook，只增删带 CodePulse marker 的条目。
-- `modified` 允许后续 runtime 启动但 phase 必须 partial，planner 只能通过显式 Repair 处理。
+- `modified` 允许后续 runtime 启动但 ListeningStatus phase 必须 partial，planner 只能通过显式 Repair 处理；Inspection 本身不保存 phase。
 - 每个任务完成后可单独 review；本计划门禁完成后停止，不自动进入 04B。
 
 ---
@@ -58,7 +58,7 @@ pub struct BridgeInstallRecord {
     pub installed_at: i64,
 }
 
-pub struct CodexIntegrationFacts {
+pub struct CodexIntegrationInspection {
     pub codex_home: String,
     pub feature_config_path: String,
     pub representation: CodexHookRepresentation,
@@ -73,8 +73,10 @@ pub struct CodexIntegrationFacts {
 
 pub fn inspect_codex_environment(
     paths: &CodexIntegrationPaths,
-) -> Result<CodexIntegrationFacts, CodexIntegrationError>;
+) -> Result<CodexIntegrationInspection, CodexIntegrationError>;
 ```
+
+该结构必须精确保持上述静态字段，不得加入 `hook_state`、`phase`、service state、port、lastEventAt、sources、runtime generation 或 authenticated generation。Rust serde/04C TypeScript fixture 都要断言 JSON 中不存在动态字段。
 
 - [ ] **步骤 1：先写 inspection 零副作用失败测试**
 
@@ -92,7 +94,7 @@ pub fn inspect_codex_environment(
 
 - [ ] **步骤 2：先写 feature、marker 和 Bridge 状态失败测试**
 
-  覆盖本地默认 enabled、本地 `[features].hooks=false` 为 disabled、企业 requirements 强制 false 或 managed-only 为 managed_disabled；CodePulse 条目按 `--codepulse-hook-v1` marker 区分 absent/exact/modified/duplicate，缺事件、超时不同、路径不同和额外 statusMessage 都是 modified；无法完整解析时 markerPresence=ambiguous。Bridge 覆盖 missing/current/outdated/modified，并断言所有路径都来自同一个 paths 对象。
+  覆盖本地默认 enabled、本地 `[features].hooks=false` 为 disabled、企业 requirements 强制 false 或 managed-only 为 managed_disabled；CodePulse 条目按 `--codepulse-hook-v1` marker 区分 absent/exact/modified/duplicate，缺事件、超时不同、路径不同和额外 statusMessage 都是 modified；无法完整解析时 markerPresence=ambiguous。Bridge 覆盖 missing/current/outdated/modified，并断言所有路径都来自同一个 paths 对象。序列化完整 inspection 后断言没有 hookState/phase/serviceState/runtimeGeneration/authenticatedGeneration。
 
   运行：
 
@@ -116,7 +118,7 @@ pub fn inspect_codex_environment(
   Pop-Location
   ```
 
-  预期：表示、feature、marker、Bridge 与零副作用测试全部通过。
+  预期：表示、feature、marker、Bridge、静态 JSON 边界与零副作用测试全部通过。
 
 - [ ] **步骤 4：验证唯一路径消费并提交**
 
@@ -151,34 +153,20 @@ pub fn inspect_codex_environment(
 - Create: `src-tauri/src/codex/integration/status.rs`
 - Create: `src-tauri/src/codex/integration/status_tests.rs`
 
-**消费接口：** 任务 1 `CodexIntegrationFacts`、阶段二 `CodexListeningStatus`、`CodexRuntimeStartReason`、`CodexRuntimeStopReason`。
+**消费接口：** 任务 1 静态 `CodexIntegrationInspection`、阶段二 `CodexListeningStatus`、`CodexRuntimeStartReason`、`CodexRuntimeStopReason` 与 manager 暴露的 generation facts。
 
 **产生接口：**
 
 ```rust
 pub struct CodexRuntimeFacts {
+    pub runtime_generation: Option<u64>,
+    pub authenticated_generation: Option<u64>,
     pub service_state: CodexServiceState,
     pub port: Option<u16>,
     pub using_fallback_port: bool,
-    pub authenticated_current_process: bool,
     pub last_event_at: Option<i64>,
     pub sources: Vec<CodexSource>,
     pub error_code: Option<String>,
-}
-
-pub struct CodexIntegrationInspection {
-    pub codex_home: String,
-    pub feature_config_path: String,
-    pub representation: CodexHookRepresentation,
-    pub config_path: Option<String>,
-    pub config_digest: Option<String>,
-    pub hooks_feature: CodexHooksFeature,
-    pub managed_entry: ManagedEntryState,
-    pub marker_presence: CodePulseMarkerPresence,
-    pub bridge_state: BridgeState,
-    pub hook_state: CodexHookState,
-    pub phase: CodexListeningPhase,
-    pub issues: Vec<String>,
 }
 
 pub enum CodexRuntimeStartupDecision {
@@ -186,14 +174,8 @@ pub enum CodexRuntimeStartupDecision {
     RemainStopped(CodexRuntimeStopReason),
 }
 
-pub fn combine_codex_integration_inspection(
-    facts: CodexIntegrationFacts,
-    runtime_facts: &CodexRuntimeFacts,
-) -> CodexIntegrationInspection;
-
 pub fn inspect_codex_integration_state(
     paths: &CodexIntegrationPaths,
-    runtime_facts: &CodexRuntimeFacts,
 ) -> Result<CodexIntegrationInspection, CodexIntegrationError>;
 
 pub fn derive_codex_listening_status(
@@ -206,9 +188,13 @@ pub fn derive_startup_runtime_decision(
 ) -> CodexRuntimeStartupDecision;
 ```
 
+删除任何把动态 phase/hook state 合并回 Inspection 的 combine 接口。`inspect_codex_integration_state()` 只返回任务 1 的静态结构；`derive_codex_listening_status()` 是唯一动态派生函数。
+
 - [ ] **步骤 1：先写七 phase 派生失败测试**
 
-  表格覆盖：exact+真实当前进程事件+listening => running；exact 无真实事件 => awaiting_trust；modified、duplicate、Bridge missing/outdated 且 marker present => partial；解析/双表示冲突 => config_conflict；服务启动失败 => service_error；absent => not_installed；本地 disabled 与 managed disabled => disabled。managed disabled 仍由 inspection.hooksFeature 区分，设置页据此显示组织策略。
+  表格覆盖：exact + runtimeGeneration=1 + authenticatedGeneration=1 + listening => running；exact + generation=1 + authenticatedGeneration=None => awaiting_trust；generation=1 已认证后 stop、generation=2 启动但 authenticatedGeneration=None => awaiting_trust；旧 generation=1 的认证事实与当前 generation=2 不相等时不得 running；modified、duplicate、Bridge missing/outdated 且 marker present => partial；解析/双表示冲突 => config_conflict；服务启动失败 => service_error；absent => not_installed；本地 disabled 与 managed disabled => disabled。managed disabled 仍由 inspection.hooksFeature 区分，设置页据此显示组织策略。
+
+  再断言同一个 inspection 对象在 runtime facts 从 awaiting_trust 变 running 时保持值/序列化字节不变；只有 `CodexListeningStatus` 改变，证明 UI 不需要重新 inspect。
 
   运行：
 
@@ -222,7 +208,7 @@ pub fn derive_startup_runtime_decision(
 
 - [ ] **步骤 2：先写 startup decision 失败测试**
 
-  覆盖 exact => Start(StartupInspection)；modified => Start(StartupInspection) 且 phase=partial；partial+marker present => Start；not_installed、disabled、managed disabled、任意 config_conflict、已卸载 => RemainStopped(StartupInspectionDisallows)。无法安全识别 marker 的 conflict 不得被派生为 partial。额外传入 idlePersistent=true/false 的 UI fixture，断言函数签名没有该参数且结果不变。
+  覆盖 exact => Start(StartupInspection)；modified/duplicate/Bridge 非 Current 且 marker present => Start(StartupInspection)，对应 phase 由独立 listening 派生为 partial；not_installed、disabled、managed disabled、任意 config conflict/ambiguous、已卸载 => RemainStopped(StartupInspectionDisallows)。无法安全识别 marker 的 conflict 不得被派生为 partial。额外传入 idlePersistent=true/false 的 UI fixture，断言函数签名没有该参数且结果不变。
 
   运行：
 
@@ -236,7 +222,7 @@ pub fn derive_startup_runtime_decision(
 
 - [ ] **步骤 3：实现确定的优先级表**
 
-  派生顺序固定为：服务 Error → service_error；feature Disabled/ManagedDisabled → disabled；representation Conflict/marker Ambiguous → config_conflict；entry Absent → not_installed；entry Modified/Duplicate 或 Bridge 非 Current → partial；entry Exact 且当前进程已有真实事件 → running；其余 Exact → awaiting_trust。startup decision 只读 inspection marker/entry/feature/phase，不读取 localStorage，不写文件，不调用 manager。
+  派生顺序固定为：服务 Error → service_error；feature Disabled/ManagedDisabled → disabled；representation Conflict/marker Ambiguous → config_conflict；entry Absent → not_installed；entry Modified/Duplicate 或 Bridge 非 Current → partial；entry Exact 且 runtimeGeneration 非 None、authenticatedGeneration 精确等于 runtimeGeneration、service listening → running；其余 Exact → awaiting_trust。self-check 成功不改变 generation 字段，因此不能 running。startup decision 只读 inspection 的 marker/entry/feature/representation/bridge 静态事实，不读取 phase、localStorage，不写文件，不调用 manager。
 
   运行：
 
@@ -273,7 +259,7 @@ pub fn derive_startup_runtime_decision(
 
 ## 任务 3：生成不写盘的 Hook 变更计划与预览
 
-**独立交付物：** install/repair/uninstall 对 JSON/TOML 产生确定的目标字节、摘要和警告；用户其他 Hook 语义完整保留；HooksDisabled 不产生 prepared plan。
+**独立交付物：** install/repair/uninstall 对 JSON/TOML 产生确定的目标字节、摘要和警告；用户其他 Hook 语义完整保留；本地 disabled 禁止 install/repair，但有安全 marker 时仍可产生仅删除 CodePulse 条目的 uninstall plan。
 
 **Files:**
 
@@ -322,7 +308,14 @@ pub fn prepare_codex_hook_change(
 ) -> Result<PreparedCodexHookChange, CodexIntegrationError>;
 ```
 
-稳定错误码至少包含 `HooksDisabled`、`ManagedDisabled`、`ConfigConflict`、`UseRepair`、`NoManagedEntry`。
+稳定错误码至少包含 `HooksDisabled`、`ManagedDisabled`、`ConfigConflict`、`UseRepair`、`NoManagedEntry`。动作矩阵固定为：
+
+| Hooks 状态 | Install | Repair | Uninstall |
+|---|---|---|---|
+| 本地 enabled | 允许 | 允许 | 允许 |
+| 本地 disabled | `HooksDisabled` | `HooksDisabled` | representation 可安全解析、markerPresence=Present、managedEntry=Exact/Modified/Duplicate 时允许 |
+| managed disabled | `ManagedDisabled` | `ManagedDisabled` | `ManagedDisabled` |
+| conflict/ambiguous | `ConfigConflict` | `ConfigConflict` | `ConfigConflict` |
 
 - [ ] **步骤 1：先写 JSON/TOML 语义保留失败测试**
 
@@ -338,9 +331,11 @@ pub fn prepare_codex_hook_change(
 
   预期：planner 和文档变换器不存在，测试失败。
 
-- [ ] **步骤 2：先写 HooksDisabled 与企业禁用失败测试**
+- [ ] **步骤 2：先写 local disabled action matrix 与企业禁用失败测试**
 
-  固定序列：`features.hooks=false` → preview install 返回 HooksDisabled → 不创建 PreparedCodexHookChange → 文件系统快照不变。用户手动把 config.toml 改为 hooks=true 后重新 inspect，才允许生成 install preview。ManagedDisabled 对 install/repair/uninstall 都返回 ManagedDisabled，不产生修改计划，不引导写 enterprise 文件。本批次不引用 installer/runtime；零 Bridge 写入和零 HTTP 启动由 04B 命令边界测试覆盖。
+  固定覆盖：hooks=false + marker absent + install → HooksDisabled；hooks=false + marker present + repair → HooksDisabled；两者都不创建 PreparedCodexHookChange且文件系统不变。hooks=false + representation 可安全解析 + marker present + managedEntry exact → uninstall 成功产生只删除 CodePulse marker 的计划；modified/duplicate 也必须按 marker 精确删除并保留用户其他 handler；该计划 bridgeAction=Remove，不包含安装/更新 Bridge。hooks=false + marker absent/ambiguous 或 representation conflict → uninstall 分别返回 NoManagedEntry/ConfigConflict。用户手动把 config.toml 改为 hooks=true 后重新 inspect，才允许 install/repair preview。
+
+  ManagedDisabled 对 install/repair/uninstall 都返回 ManagedDisabled，不产生修改计划，不引导写 enterprise 文件。本批次不引用 installer/runtime；uninstall 不启动 HTTP、不安装 Bridge的边界由 04B 命令测试覆盖。
 
   运行：
 
@@ -350,7 +345,7 @@ pub fn prepare_codex_hook_change(
   Pop-Location
   ```
 
-  预期：旧行为若会计划修改 feature flag，该测试必须失败。
+  预期：旧行为若会计划修改 feature flag、全面禁止 local disabled uninstall，或允许 managed disabled 写入，该测试必须失败。
 
 - [ ] **步骤 3：先写摘要、选择和 modified 失败测试**
 
@@ -378,7 +373,7 @@ pub fn prepare_codex_hook_change(
   Pop-Location
   ```
 
-  预期：配置保留、disabled 拒绝、选择和摘要测试全部通过，测试前后无新增文件。
+  预期：配置保留、local disabled action matrix、managed disabled 拒绝、选择和摘要测试全部通过，测试前后无新增文件。
 
 - [ ] **步骤 5：完成 04A 门禁并停止**
 
@@ -407,9 +402,9 @@ pub fn prepare_codex_hook_change(
 
 ## 04A 完成门禁
 
-- inspection 对用户与企业配置只读，路径全部来自 CodexIntegrationPaths。
-- representation、feature、marker、Bridge、phase 和 runtime startup decision 有完整 TempDir 表格测试。
+- inspection 对用户与企业配置只读，路径全部来自 CodexIntegrationPaths；JSON 不含动态 hookState/phase。
+- representation、feature、marker、Bridge、generation-aware ListeningStatus 和 runtime startup decision 有完整 TempDir 表格测试。
 - exact/modified/partial+marker 与停止条件精确；idlePersistent 不参与。
-- HooksDisabled 不创建 PreparedCodexHookChange；用户手动启用并重新 inspect 后才允许 preview。
+- 本地 disabled 的 install/repair 返回 HooksDisabled；安全 marker 的 uninstall 可生成精确删除计划；managed disabled 和 ambiguous conflict 全部只读。
 - 用户其他 Hook 语义保留；modified 只能显式 Repair；无 writer、installer、Tauri apply 或 Vue UI。
 - 全部通过后停止，未经 review 不得执行 04B。

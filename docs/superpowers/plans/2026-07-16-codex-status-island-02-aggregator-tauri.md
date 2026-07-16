@@ -2,23 +2,23 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**目标：** 把阶段一的无状态事件流聚合为权威任务快照，实现优先级、去重、跨轮次迟到过滤、平滑显示、完成/失败/中断生命周期，并提供由 inspection 显式驱动、可安全退出的 Tauri runtime；本阶段不在应用启动时自行开启 HTTP。
+**目标：** 把阶段一的无状态事件流聚合为 draft，由进程级 `CodexSnapshotStore` 生成跨 Runtime 严格递增的权威快照，实现优先级、去重、跨轮次迟到过滤、平滑显示、完成/失败/中断生命周期，并提供 generation-aware、由 inspection 显式驱动且可安全退出的 Tauri runtime；本阶段不在应用启动时自行开启 HTTP。
 
-**架构：** `CodexAggregator<C: Clock>` 是不依赖 Tokio/Tauri 的纯状态对象；`ClockReading` 同时提供只用于公开时间戳的 Unix 墙上毫秒和只用于状态转换的进程内单调毫秒；一个 Actor 按实际接收顺序独占处理聚合器与阶段一 Receiver；可注入 publisher 把完整快照和边沿提醒映射为 Tauri 事件。`CodexRuntimeManager` 持有同一个 `CodexIntegrationPaths`、HTTP/Actor 任务与监听状态，只响应 `ensure_started(reason)`、`stop_if_unused(reason)` 和应用退出；04B 才把 startup inspection 结果接入这些接口。
+**架构：** `CodexAggregator<C: Clock>` 是不依赖 Tokio/Tauri、也不持有公开 revision 的纯状态对象；`ClockReading` 同时提供只用于公开时间戳的 Unix 墙上毫秒和只用于状态转换的进程内单调毫秒；一个 Actor 按实际接收顺序独占处理聚合器与阶段一 Receiver，把变化后的 `CodexStateDraft` 提交给进程级 `CodexSnapshotStore`。可注入 publisher 只发布 Store 返回的完整快照和绑定该全局 revision 的边沿提醒。`CodexRuntimeManager` 持有同一个 `CodexIntegrationPaths`、同一个 SnapshotStore、单调 generation、HTTP/Actor/Discovery owner 与监听事实，只响应 `ensure_started(reason)`、`stop_if_unused(reason)` 和应用退出；04B 才把 startup inspection 结果接入这些接口。
 
 **技术栈：** Rust 2021、Tokio mpsc/oneshot/interval、serde、Tauri 2、阶段一 `codex-protocol` 与 HTTP runtime；不新增生产依赖。
 
 **前置条件：** 阶段一完成门禁全部通过；Bridge/HTTP wire 类型不得在本阶段复制或改名。
 
-**本阶段消费：** `CodexEventReceiver`、`CodexBridgeEvent`、`start_codex_http()`、`CodexHttpHandle`。
+**本阶段消费：** `CodexEventReceiver`、`CodexBridgeEvent`、`start_codex_http()`、`CodexHttpHandle`、`DiscoveryOwner` 与 `remove_discovery_if_owned()`。
 
-**本阶段产生：** `CodexStateSnapshot`、`CodexListeningStatus`、`CodexSelfCheckResult`、五个 Tauri 命令、三个 Tauri 事件、按原因幂等启停的 `CodexRuntimeManager` 与同步退出/异步关闭协调器。阶段三只能消费这些公开契约，不能读取聚合器内部记录。
+**本阶段产生：** `CodexStateDraft`、进程级 `CodexSnapshotStore`、全局 revision 的 `CodexStateSnapshot`、`CodexRuntimeFacts`、`CodexListeningStatus`、`CodexSelfCheckResult`、五个 Tauri 命令、三个 Tauri 事件、按原因幂等启停且 generation-aware 的 `CodexRuntimeManager` 与同步退出/异步关闭协调器。阶段三只能消费公开快照/监听契约，不能读取聚合器内部记录。
 
 ---
 
-## 任务 1：定义公开状态、可注入时钟与 Stop 保守分类器
+## 任务 1：定义公开状态、进程级 SnapshotStore、可注入时钟与 Stop 保守分类器
 
-**独立交付物：** 阶段三所需 Rust DTO 已稳定；所有时间常量和 Stop 判定可在无异步运行时环境单独测试。
+**独立交付物：** 阶段三所需 Rust DTO 与进程级 Store 已稳定；Runtime dormant 时已经有 revision=0 的合法空快照，所有时间常量和 Stop 判定可在无异步运行时环境单独测试。
 
 **Files:**
 
@@ -28,6 +28,8 @@
 - Create: `src-tauri/src/codex/classifier.rs`
 - Create: `src-tauri/src/codex/types_tests.rs`
 - Create: `src-tauri/src/codex/classifier_tests.rs`
+- Create: `src-tauri/src/codex/snapshot_store.rs`
+- Create: `src-tauri/src/codex/snapshot_store_tests.rs`
 
 **消费接口：** `CodexSource`、`OperationResult` 和 wire enum；阶段一已脱敏的 `latestOutput`/`errorSummary`。
 
@@ -116,9 +118,30 @@ pub struct CodexStateSnapshot {
     pub representative_session_id: Option<String>,
     pub attention: Option<CodexAttention>,
 }
+
+pub struct CodexStateDraft {
+    pub generated_at: i64,
+    pub tasks: Vec<CodexTaskState>,
+    pub representative_session_id: Option<String>,
+    pub attention: Option<CodexAttention>,
+}
+
+pub struct CodexSnapshotStore {
+    current: std::sync::RwLock<CodexStateSnapshot>,
+    next_revision: std::sync::atomic::AtomicU64,
+}
+
+impl CodexSnapshotStore {
+    pub fn new(initial_generated_at: i64) -> Self;
+    pub fn current(&self) -> CodexStateSnapshot;
+    pub fn commit(&self, draft: CodexStateDraft) -> CodexStateSnapshot;
+    pub fn clear(&self, generated_at: i64) -> CodexStateSnapshot;
+}
 ```
 
 所有 serde 输出使用 camelCase/route 所需 snake_case enum。公开 `CodexTaskState` 不含 `cwd`、eventId、原始响应、内部计时字段或子智能体 ID 集合。
+
+`CodexStateDraft` 是 Rust 内部类型，不 serde 到 Vue且没有 revision/version。`CodexSnapshotStore::new()` 固定建立 version=1、revision=0、generatedAt=initial_generated_at、tasks=[]、representativeSessionId=None、attention=None 的 current，并把 next_revision 初始化为 1。`commit()` 与 `clear()` 在 current 写锁内从 AtomicU64 分配严格大于 current.revision 的 revision，再替换 current；`clear()` 始终产生一份新的空快照，不复用旧 revision。Store 从 CodePulse 进程启动到退出只构造一次，不随 Runtime stop/start 销毁。
 
 ```rust
 pub struct StopEvidence<'a> {
@@ -149,7 +172,21 @@ pub fn classify_stop(evidence: StopEvidence<'_>) -> StopOutcome;
 
   预期：类型、优先级和时钟尚不存在，测试编译失败。
 
-- [ ] **步骤 2：先写 Stop 分类失败测试**
+- [ ] **步骤 2：先写 SnapshotStore 失败测试**
+
+  `snapshot_store_tests.rs` 覆盖：new 返回合法 revision=0 空快照；current 返回 clone 且不暴露锁；第一次 commit 为 revision=1；连续 commit/clear/commit 的 revision 严格 1/2/3；clear 清除 tasks/representative/attention 但保留 version；并发提交仍无重复或倒退 revision；人为构造 current.revision 高于 next_revision 的防御用例仍保证下一 revision 更大。再模拟 Runtime A 最后 revision=20 → clear 得 revision=21 空快照 → Runtime B 第一份任务 draft commit 得 revision>21，证明 Store 生命周期与 Runtime 解耦。
+
+  运行：
+
+  ```powershell
+  Push-Location src-tauri
+  cargo test -p netspeed-dynamic codex::snapshot_store_tests -- --nocapture
+  Pop-Location
+  ```
+
+  预期：`CodexSnapshotStore` 与 `CodexStateDraft` 尚不存在，测试编译失败。
+
+- [ ] **步骤 3：先写 Stop 分类失败测试**
 
   表格用例至少包含：
 
@@ -172,22 +209,23 @@ pub fn classify_stop(evidence: StopEvidence<'_>) -> StopOutcome;
 
   预期：`classify_stop()` 尚不存在，测试失败。
 
-- [ ] **步骤 3：实现最小类型、手动时钟和保守分类**
+- [ ] **步骤 4：实现最小类型、Store、手动时钟和保守分类**
 
-  `ManualClock` 用共享原子值分别保存墙上毫秒与单调毫秒，`advance_ms()` 同时推进两者，`set_wall_time_ms()` 模拟 Windows 校时且不推进单调时间，测试不调用 `sleep`。`SystemClock` 构造时保存一个 `Instant` 基准，`now()` 用 `SystemTime` 读取 Unix 毫秒、用该基准的 elapsed 生成进程内单调毫秒；处理系统时间早于 Unix epoch、Unix 毫秒超出 `i64` 和 elapsed 超出 `u64` 时使用显式饱和转换。`classifier.rs` 只处理脱敏短文本，不读 transcript、不调用模型、不把单次命令失败直接升级为任务失败。
+  `snapshot_store.rs` 只负责初始空快照、revision 分配与 current 替换；`commit()`/`clear()` 的 revision 分配和 current 替换必须在同一写锁临界区完成，并用 AtomicU64 的单调更新防御 next_revision 落后，不引入第二个 revision 计数器。`ManualClock` 用共享原子值分别保存墙上毫秒与单调毫秒，`advance_ms()` 同时推进两者，`set_wall_time_ms()` 模拟 Windows 校时且不推进单调时间，测试不调用 `sleep`。`SystemClock` 构造时保存一个 `Instant` 基准，`now()` 用 `SystemTime` 读取 Unix 毫秒、用该基准的 elapsed 生成进程内单调毫秒；处理系统时间早于 Unix epoch、Unix 毫秒超出 `i64` 和 elapsed 超出 `u64` 时使用显式饱和转换。`classifier.rs` 只处理脱敏短文本，不读 transcript、不调用模型、不把单次命令失败直接升级为任务失败。
 
   运行：
 
   ```powershell
   Push-Location src-tauri
   cargo test -p netspeed-dynamic codex::types_tests -- --nocapture
+  cargo test -p netspeed-dynamic codex::snapshot_store_tests -- --nocapture
   cargo test -p netspeed-dynamic codex::classifier_tests -- --nocapture
   Pop-Location
   ```
 
-  预期：所有 DTO、时钟、优先级和 Stop 组合通过，测试耗时不受 5/10/30 分钟常量影响。
+  预期：所有 DTO、Store、进程级 revision、时钟、优先级和 Stop 组合通过，测试耗时不受 5/10/30 分钟常量影响。
 
-- [ ] **步骤 4：静态检查和提交**
+- [ ] **步骤 5：静态检查和提交**
 
   运行：
 
@@ -226,8 +264,8 @@ pub fn classify_stop(evidence: StopEvidence<'_>) -> StopOutcome;
 
 ```rust
 pub struct AggregateEffects {
-    pub snapshot_changed: bool,
-    pub soft_interrupt: Option<CodexSoftInterrupt>,
+    pub draft_changed: bool,
+    pub soft_interrupt: Option<CodexSoftInterruptDraft>,
     pub authenticated_activity: Option<CodexAuthenticatedActivity>,
 }
 
@@ -244,11 +282,11 @@ impl<C: Clock> CodexAggregator<C> {
     pub fn tick(&mut self) -> AggregateEffects;
     pub fn clear_task(&mut self, session_id: &str) -> Result<AggregateEffects, ClearTaskError>;
     pub fn clear_all_failures(&mut self) -> AggregateEffects;
-    pub fn snapshot(&self) -> CodexStateSnapshot;
+    pub fn draft(&self) -> CodexStateDraft;
 }
 ```
 
-内部 `CodexTaskRecord` 允许保存 `cwd`、`last_received_monotonic_ms`、当前/待提交普通阶段、`visible_since_monotonic_ms`、`completed_monotonic_ms`、`attention_expires_monotonic_ms`、最近 8 个 retired turnId、按 `toolUseId` 关联的活动工具集合、`HashSet<agentId>` 和提醒周期标记；这些字段不得序列化到 Vue。`occurredAt` 只在共享协议校验非负并可用于诊断/必要展示，不保存为当前轮次淘汰游标。公开的 `startedAt`、`lastActivityAt`、`completedAt`、`expiresAt`、`generatedAt` 取同一次 `ClockReading.wall_time_ms`，内部期限和排序只取 `monotonic_ms`。
+内部 `CodexTaskRecord` 允许保存 `cwd`、`last_received_monotonic_ms`、当前/待提交普通阶段、`visible_since_monotonic_ms`、`completed_monotonic_ms`、`attention_expires_monotonic_ms`、最近 8 个 retired turnId、按 `toolUseId` 关联的活动工具集合、`HashSet<agentId>` 和提醒周期标记；这些字段不得序列化到 Vue。`occurredAt` 只在共享协议校验非负并可用于诊断/必要展示，不保存为当前轮次淘汰游标。公开草稿的 `startedAt`、`lastActivityAt`、`completedAt`、`expiresAt`、`generatedAt` 取同一次 `ClockReading.wall_time_ms`，内部期限和排序只取 `monotonic_ms`。Aggregator 不引用 `CodexSnapshotStore`，不含 AtomicU64，不生成 version/revision。
 
 - [ ] **步骤 1：先写会话与轮次归并失败测试**
 
@@ -298,11 +336,11 @@ impl<C: Clock> CodexAggregator<C> {
 
 - [ ] **步骤 4：实现 Map 所有权与确定性规则**
 
-  使用 `HashMap<sessionId, CodexTaskRecord>`；一个 `VecDeque + HashSet` 实现 2048 ID 去重。每次 `ingest()` 只调用一次 `clock.now()`：`wall_time_ms` 写入公开 `startedAt/lastActivityAt` 并作为本次 `authenticated_activity.received_at`，`monotonic_ms` 写入内部 `last_received_monotonic_ms` 并用于任务排序。重复 eventId 仍返回 authenticated activity，因为它确实是本次进程收到的已认证请求，但不得再次改变任务。
+  使用 `HashMap<sessionId, CodexTaskRecord>`；一个 `VecDeque + HashSet` 实现 2048 ID 去重。每次 `ingest()` 只调用一次 `clock.now()`：`wall_time_ms` 写入 draft 的 `startedAt/lastActivityAt` 并作为本次 `authenticated_activity.received_at`，`monotonic_ms` 写入内部 `last_received_monotonic_ms` 并用于任务排序。重复 eventId 仍返回 authenticated activity，因为它确实是本次进程收到的已认证请求，但不得再次改变任务。
 
-  当前轮次状态严格以 Actor 收到事件的顺序更新；不得比较 wire `occurredAt` 来排序或淘汰。`occurredAt` 只在协议层验证为非负整数，并允许进入不含正文的诊断元数据；它不得控制任务列表/代表任务排序、一秒平滑、完成保留、10/30 分钟中断或 attention 过期。允许丢弃的事件只有重复 eventId、属于 retired turnId 的迟到事件，以及 session generation 明确不兼容的旧事件。
+  当前轮次状态严格以 Actor 收到事件的顺序更新；不得比较 wire `occurredAt` 来排序或淘汰。`occurredAt` 只在协议层验证为非负整数，并允许进入不含正文的诊断元数据；它不得控制任务列表/代表任务排序、一秒平滑、完成保留、10/30 分钟中断或 attention 过期。允许丢弃的事件只有重复 eventId、属于 retired turnId 的迟到事件，以及 session 内部轮次 generation 明确不兼容的旧事件；这里的 session generation 不得与 Runtime Manager 的 runtime_generation 共用字段或含义。
 
-  新 TurnStarted 是轮次边界；若工具/授权事件先到，同 turnId 可先建立 `turn_boundary_seen=false` 的临时记录，后到 TurnStarted 只补 taskSummary 并设为 true，不覆盖临时记录的首次服务端接收时间或更新后的可见阶段。真正替换轮次时把旧 turnId 放进最多 8 项的 retired deque；retired 轮次的任何晚到事件都丢弃。若缺少 `turnId`，仍以收到 TurnStarted 为新轮边界并清空旧终态。`toolUseId` 维护当前轮次工具关联，`agentId` 维护当前轮次子智能体去重。SessionStarted 可缓存 session 元数据，但快照只输出活跃任务。所有 snapshot 构造集中在一个函数，按内部单调接收时间排序后再选代表任务；公开 `lastActivityAt` 和 wire `occurredAt` 都不参与排序。
+  新 TurnStarted 是轮次边界；若工具/授权事件先到，同 turnId 可先建立 `turn_boundary_seen=false` 的临时记录，后到 TurnStarted 只补 taskSummary 并设为 true，不覆盖临时记录的首次服务端接收时间或更新后的可见阶段。真正替换轮次时把旧 turnId 放进最多 8 项的 retired deque；retired 轮次的任何晚到事件都丢弃。若缺少 `turnId`，仍以收到 TurnStarted 为新轮边界并清空旧终态。`toolUseId` 维护当前轮次工具关联，`agentId` 维护当前轮次子智能体去重。SessionStarted 可缓存 session 元数据，但 draft 只输出活跃任务。所有 draft 构造集中在一个函数，按内部单调接收时间排序后再选代表任务；公开 `lastActivityAt` 和 wire `occurredAt` 都不参与排序。
 
   运行：
 
@@ -350,9 +388,16 @@ impl<C: Clock> CodexAggregator<C> {
 
 **消费接口：** 任务 2 的 `ingest()`/`tick()` 与任务 1 时间常量。
 
-**产生接口：** `AggregateEffects.soft_interrupt` 与快照中的 `CodexAttention`。软提醒结构固定为：
+**产生接口：** `AggregateEffects.soft_interrupt` 与 draft 中的 `CodexAttention`。Aggregator 只产生不带公开 revision 的软提醒草稿：
 
 ```rust
+pub struct CodexSoftInterruptDraft {
+    pub attention_id: u64,
+    pub session_id: String,
+    pub reason: CodexSoftInterruptReason,
+    pub expires_at: i64,
+}
+
 pub struct CodexSoftInterrupt {
     pub attention_id: u64,
     pub session_id: String,
@@ -361,6 +406,8 @@ pub struct CodexSoftInterrupt {
     pub revision: u64,
 }
 ```
+
+只有 Actor 把同一次变化的 `CodexStateDraft` 提交给 `CodexSnapshotStore` 后，才能用 Store 返回的 `snapshot.revision` 把 draft 转换成公开 `CodexSoftInterrupt`。
 
 - [ ] **步骤 1：先写一秒平滑失败测试**
 
@@ -407,9 +454,9 @@ pub struct CodexSoftInterrupt {
 
 - [ ] **步骤 4：实现纯 tick 状态转换**
 
-  `ingest()` 对关键态立即提交；普通态根据 `visible_since_monotonic_ms` 决定立即提交或替换 pending。`tick()` 按固定顺序执行：提交到期 pending、删除到期 completed、检测活动任务中断、过期非授权 attention、重新计算代表任务/快照 revision。每次调用只取一次 `clock.now()` 并把同一个 `ClockReading` 传给本次全部转换，避免一次转换混用两个时刻。
+  `ingest()` 对关键态立即提交内部可见状态；普通态根据 `visible_since_monotonic_ms` 决定立即提交或替换 pending。`tick()` 按固定顺序执行：提交到期 pending、删除到期 completed、检测活动任务中断、过期非授权 attention、重新计算代表任务/draft 是否变化。每次调用只取一次 `clock.now()` 并把同一个 `ClockReading` 传给本次全部转换，避免一次转换混用两个时刻。
 
-  中断阈值基于内部 `last_received_monotonic_ms`；完成删除基于 `completed_monotonic_ms`；普通阶段、提醒期限分别基于 `visible_since_monotonic_ms`、`attention_expires_monotonic_ms`。等待授权与终态不进入中断扫描。新事件清除本次中断提醒标记，重复同状态事件只更新活动时间。revision 仅在公开快照字段变化时递增；`generatedAt` 变化本身不触发事件。所有公开时间戳用本次 reading 的墙上时间计算，任何状态转换都禁止比较墙上时间。
+  中断阈值基于内部 `last_received_monotonic_ms`；完成删除基于 `completed_monotonic_ms`；普通阶段、提醒期限分别基于 `visible_since_monotonic_ms`、`attention_expires_monotonic_ms`。等待授权与终态不进入中断扫描。新事件清除本次中断提醒标记，重复同状态事件只更新活动时间。公开字段变化时只设置 `draft_changed=true`；`generatedAt` 变化本身不算变化；Aggregator 不分配 revision。所有公开时间戳用本次 reading 的墙上时间计算，任何状态转换都禁止比较墙上时间。
 
   运行：
 
@@ -447,7 +494,7 @@ pub struct CodexSoftInterrupt {
 
 ## 任务 4：实现单 Actor、权威快照命令与 Tauri 事件
 
-**独立交付物：** 并发 HTTP 事件、Tick 和 UI 命令都被一个 Actor 顺序处理；Vue 可查询完整快照并接收三类事件，清除操作有确定返回值。
+**独立交付物：** 并发 HTTP 事件、Tick 和运行期清除命令都被一个 Actor 顺序处理并提交进程级 Store；Vue 无论 Actor 是否存在都可查询完整快照并接收三类事件，dormant 清除操作有确定返回值且不产生 service_error。
 
 **Files:**
 
@@ -459,14 +506,13 @@ pub struct CodexSoftInterrupt {
 - Create: `src-tauri/src/codex/commands_tests.rs`
 - Modify: `src-tauri/src/lib.rs`（`use codex::commands::*` 与 `generate_handler!` 的 Codex 命令区域）
 
-**消费接口：** 阶段一 `CodexEventReceiver`；任务 3 `CodexAggregator` 和 effects。
+**消费接口：** 阶段一 `CodexEventReceiver`；任务 1 的进程级 `Arc<CodexSnapshotStore>`；任务 3 `CodexAggregator`、draft 和 effects；Runtime 创建时分配的 generation。
 
 **产生接口：**
 
 ```rust
 pub enum CodexActorCommand {
     Tick,
-    GetSnapshot { reply: oneshot::Sender<CodexStateSnapshot> },
     ClearTask { session_id: String, reply: oneshot::Sender<Result<CodexStateSnapshot, ClearTaskError>> },
     ClearFailures { reply: oneshot::Sender<CodexStateSnapshot> },
     Shutdown { reply: oneshot::Sender<()> },
@@ -479,11 +525,16 @@ pub trait CodexEventPublisher: Send + Sync + 'static {
 }
 
 pub trait CodexActivityReporter: Send + Sync + 'static {
-    fn record_authenticated_event(&self, source: CodexSource, received_at: i64);
+    fn record_authenticated_event(
+        &self,
+        runtime_generation: u64,
+        source: CodexSource,
+        received_at: i64,
+    );
 }
 ```
 
-事件固定为 `codex-state-changed`、`codex-soft-interrupt`、`codex-listening-status-changed`；publisher 使用 `AppHandle::emit`，测试使用内存 publisher。
+每个 Actor/Reporter 创建时捕获不可变的 `runtime_generation`。事件固定为 `codex-state-changed`、`codex-soft-interrupt`、`codex-listening-status-changed`；publisher 使用 `AppHandle::emit`，测试使用内存 publisher。Actor 在 effects.draft_changed 时取得 `aggregator.draft()` 并调用 Store.commit；先发布返回的完整权威快照，再把 soft interrupt draft 绑定该 snapshot.revision 后发布。没有 draft 变化时不得为了 generatedAt 单独 commit。
 
 监听与自检类型固定为：
 
@@ -556,7 +607,7 @@ async fn run_codex_self_check(
 
 - [ ] **步骤 1：先写 Actor 并发与发布失败测试**
 
-  用容量 256 的 event channel 并发发送多个 session，同时交错 GetSnapshot、ClearTask 和显式 `CodexActorCommand::Tick`；断言 publisher 收到 revision 单调递增的完整快照，最终快照与顺序参考模型相同。软提醒只发 `codex-soft-interrupt` 一次，但对应状态也必须已经出现在同 revision 或更早的完整快照。每个从已认证 HTTP 队列取出的事件都把 `AggregateEffects.authenticated_activity` 转交 activity reporter 一次，包括被 eventId 去重的重投；GetSnapshot、自检和 Tick 不得调用。
+  用容量 256 的 event channel 并发发送多个 session，同时交错 ClearTask 和显式 `CodexActorCommand::Tick`；断言 publisher 收到的快照全部来自同一个 Store且 revision 单调递增，最终 `store.current()` 与顺序参考模型相同。软提醒只发一次，并且 revision 精确等于产生该提醒的 Store commit revision；不存在 Aggregator revision。每个从已认证 HTTP 队列取出的事件都把 `AggregateEffects.authenticated_activity` 连同 Actor 捕获的 generation 转交 activity reporter 一次，包括被 eventId 去重的重投；自检和 Tick 不得调用。
 
   运行：
 
@@ -570,7 +621,7 @@ async fn run_codex_self_check(
 
 - [ ] **步骤 2：先写清除和命令失败测试**
 
-  覆盖：只允许清除 failed/interrupted；清除 active/completed/unknown session 返回稳定错误码；清除全部失败不删中断；每个命令返回处理后的权威快照；Actor 关闭后命令快速返回错误；self-check 精确返回服务/发现文件/队列三项且不发送伪 Codex 事件。
+  覆盖：Runtime 运行时只允许清除 failed/interrupted并由 Actor 顺序提交 Store；清除 active/completed/unknown session 返回稳定错误码；清除全部失败不删中断；每个命令返回 Store 提交后的权威快照。新增 dormant 矩阵：not_installed、local disabled、managed disabled、config conflict、Runtime 从未启动与 Runtime 已停止六种状态都让 `get_codex_snapshot()` 成功返回 `store.current()`，初始 revision=0、tasks=[]，且 listening 不变、不产生 service_error；dormant 空快照执行 clear task返回稳定 `UnknownSession`；dormant 执行 clear all 直接返回当前空快照。self-check 精确返回服务/发现文件/队列三项且不发送伪 Codex 事件。
 
   运行：
 
@@ -584,9 +635,9 @@ async fn run_codex_self_check(
 
 - [ ] **步骤 3：实现 `tokio::select!` 顺序循环**
 
-  Actor 同时选择 event receiver、命令 receiver、一秒 `interval` 与 shutdown；所有分支只调用同一个聚合器实例。interval 使用 `MissedTickBehavior::Skip`，防止恢复后批量重放过期 Tick。每个 event 分支只调用一次 `aggregator.ingest(event)`，随后把 effects 中的 `authenticated_activity` 转交 `CodexActivityReporter`；reporter 不再读取第二个时钟，只更新 `lastEventAt/sources/hookState/phase` 并发布完整监听状态。每次 effects 先发布完整快照，再发布 soft interrupt；重复 revision 不发布状态事件。
+  Actor 同时选择 event receiver、命令 receiver、一秒 `interval` 与 shutdown；所有分支只调用同一个聚合器实例。interval 使用 `MissedTickBehavior::Skip`，防止恢复后批量重放过期 Tick。每个 event 分支只调用一次 `aggregator.ingest(event)`，随后把 effects 中的 `authenticated_activity` 与捕获的 runtime generation 转交 `CodexActivityReporter`。每次 effects 若 draft_changed，先 `store.commit(aggregator.draft())` 并发布完整快照，再用该 snapshot.revision 构造 soft interrupt；没有变化不发布。clear 命令同样只能通过 Actor 改聚合器并提交 Store。
 
-  publisher 错误只记错误码，不终止 Actor。snapshot 查询使用 oneshot，不让命令直接锁内部 HashMap；这样并发命令不会绕过事件顺序。
+  publisher 错误只记错误码，不终止 Actor。snapshot 查询不再进入 Actor，而是读取进程级 Store；这样 Runtime dormant 仍可用，同时运行期查询只会看到 Actor 已完成提交的完整快照，绝不会读取内部 HashMap 半状态。
 
   运行：
 
@@ -600,7 +651,7 @@ async fn run_codex_self_check(
 
 - [ ] **步骤 4：实现 Tauri 命令并注册**
 
-  `commands.rs` 从 `State<CodexRuntimeManager>` 取得 Actor handle。所有外部错误映射为不含路径、token 或正文的稳定中文信息；内部测试额外断言错误代码。`lib.rs` 只新增模块 import 和五个 handler 名称，不调整现有命令顺序或职责。
+  `commands.rs` 从 `State<CodexRuntimeManager>` 取得进程级 Store 与可选 Actor handle。`get_codex_snapshot()` 始终只读 Store；clear task/all 仅在 Runtime running 时发 Actor 命令，dormant 按固定空快照语义返回，不把 Actor 缺失映射为服务异常。所有外部错误映射为不含路径、token 或正文的稳定中文信息；内部测试额外断言错误代码。`lib.rs` 只新增模块 import 和五个 handler 名称，不调整现有命令顺序或职责。
 
   运行：
 
@@ -639,7 +690,7 @@ async fn run_codex_self_check(
 
 ## 任务 5：实现 inspection 驱动的 Runtime Manager 与确定的 Tauri 退出桥接
 
-**独立交付物：** Runtime 可按明确原因幂等启动或停止，但应用启动时保持 dormant，等待 04B 的只读 inspection 决策；隐藏窗口不停止服务；托盘退出和正常退出共用“同步阻止退出、异步最多两秒关闭、第二次退出放行”的同一路径。
+**独立交付物：** Runtime 可按明确原因幂等启动或停止，每次真实创建都使用新的 generation、token 与 Discovery owner；应用启动时 Store 可查询但 HTTP/Actor 保持 dormant，等待 04B 的只读 inspection 决策；隐藏窗口不停止服务；托盘退出和正常退出共用“同步阻止退出、异步最多两秒关闭、第二次退出放行”的同一路径。
 
 **Files:**
 
@@ -650,7 +701,7 @@ async fn run_codex_self_check(
 - Create: `src-tauri/src/codex/exit_tests.rs`
 - Modify: `src-tauri/src/lib.rs`（`run()` builder/build/run 区域、`initialize_app()`、`create_system_tray()` 的 quit handler）
 
-**消费接口：** 阶段一 `CodexIntegrationPaths`、`start_codex_http(paths, event_tx)`、`CodexHttpHandle::{stop_accepting,invalidate_discovery,wait}`、Actor start/shutdown 和 publisher。Tauri API 以仓库锁定的 `tauri 2.11.5` 为准：`PathResolver::local_data_dir() -> Result<PathBuf>` 返回 Windows LocalAppData 根目录；`PathResolver::resource_dir() -> Result<PathBuf>` 返回资源根目录；`App::run(FnMut(&AppHandle, RunEvent))` 提供同步回调；`RunEvent::ExitRequested { code: Option<i32>, api: ExitRequestApi }`；`ExitRequestApi::prevent_exit(&self)`；`AppHandle::exit(&self, i32)` 会再次触发 `ExitRequested` 和 `Exit`。`RunEvent` 与其字段均为 non-exhaustive，匹配必须保留 `..` 和 `_` 分支。
+**消费接口：** 阶段一 `CodexIntegrationPaths`、`start_codex_http(paths, event_tx)`、`CodexHttpHandle::{stop_accepting,invalidate_discovery,wait}`、`DiscoveryOwner`、`remove_discovery_if_owned()`，以及任务 1 的进程级 `Arc<CodexSnapshotStore>`、Actor start/shutdown 和 publisher。Tauri API 以仓库锁定的 `tauri 2.11.5` 本地 crate 源码为准：`PathResolver::local_data_dir() -> Result<PathBuf>` 返回 Windows LocalAppData 根目录；`PathResolver::resource_dir() -> Result<PathBuf>` 返回资源根目录；`Manager::manage<T: Send + Sync + 'static>()`/`state<T>()` 管理进程状态；`App::run(FnMut(&AppHandle, RunEvent))` 提供同步回调；`RunEvent::ExitRequested { code: Option<i32>, api: ExitRequestApi }`；`ExitRequestApi::prevent_exit(&self)`；`AppHandle::exit(&self, i32)` 会再次触发 `ExitRequested` 和 `Exit`。`RunEvent` 与其字段均为 non-exhaustive，匹配必须保留 `..` 和 `_` 分支；restart code 下 prevent 会被忽略。
 
 **产生接口：**
 
@@ -667,11 +718,30 @@ pub enum CodexRuntimeStopReason {
     StartupInspectionDisallows,
     InstallFailed,
     Uninstalled,
+    RuntimeGenerationReplaced,
+    RuntimeErrorStateCleared,
+}
+
+pub struct CodexRuntimeFacts {
+    pub runtime_generation: Option<u64>,
+    pub authenticated_generation: Option<u64>,
+    pub service_state: CodexServiceState,
+    pub port: Option<u16>,
+    pub using_fallback_port: bool,
+    pub last_event_at: Option<i64>,
+    pub sources: Vec<CodexSource>,
+    pub error_code: Option<String>,
 }
 
 #[derive(Clone)]
 pub struct CodexRuntimeManager {
     inner: Arc<CodexRuntimeManagerInner>,
+}
+
+pub struct CodexRuntimeManagerInner {
+    snapshot_store: Arc<CodexSnapshotStore>,
+    next_runtime_generation: AtomicU64,
+    // 其余状态由 mutex 保护，且 guard 不跨 await/publisher。
 }
 
 impl CodexRuntimeManager {
@@ -689,6 +759,7 @@ impl CodexRuntimeManager {
     ) -> Result<(), CodexRuntimeError>;
     pub async fn shutdown(&self) -> Result<(), CodexRuntimeError>;
     pub async fn listening_status(&self) -> CodexListeningStatus;
+    pub fn snapshot_store(&self) -> Arc<CodexSnapshotStore>;
     pub fn cleanup_owned_discovery_file_sync(&self);
 }
 
@@ -721,11 +792,15 @@ impl CodexExitCoordinator {
 }
 ```
 
-`CodexExitCoordinator` 的共享内部状态必须精确包含 `shutdown_started: AtomicBool`、`shutdown_finished: AtomicBool`、`exit_code: AtomicI32`。manager 内部状态机固定为 `Stopped -> Starting -> Running -> Stopping -> Stopped`，错误转 `Error`；`ensure_started()`、`stop_if_unused()`、`shutdown()` 均幂等。显示偏好和任何 Vue 命令都不得调用 start/stop 接口。
+`CodexExitCoordinator` 的共享内部状态必须精确包含 `shutdown_started: AtomicBool`、`shutdown_finished: AtomicBool`、`exit_code: AtomicI32`。manager 内部状态机固定为 `Stopped -> Starting -> Running -> Stopping -> Stopped`，错误转 `Error`；`ensure_started()`、`stop_if_unused()`、`shutdown()` 均幂等。`next_runtime_generation` 从 1 开始，只增不减、不复用；允许失败启动消耗编号。显示偏好和任何 Vue 命令都不得调用 start/stop 接口。
 
 - [ ] **步骤 1：先写按原因启停与路径消费失败测试**
 
-  通过注入 fake server/actor/publisher 覆盖：manager 构造只保存同一个 `CodexIntegrationPaths`，不启动 listener；`ensure_started(StartupInspection)` 顺序为 event channel → actor → HTTP；三种 start reason 重复调用都不创建第二 listener；HTTP 启动失败关闭 actor并进入 service_error；`stop_if_unused(StartupInspectionDisallows|InstallFailed|Uninstalled)` 都按当前所有权幂等停止；停止顺序为拒绝新 HTTP → 删除属于当前 PID/token 的发现文件 → 关闭 HTTP sender → 请求 Actor shutdown → 等待 HTTP task 和 Actor task；窗口 hide 和 `idlePersistent` 变化都不调用启动或停止。
+  通过注入 fake server/actor/publisher 覆盖：manager 构造只保存同一个 `CodexIntegrationPaths` 与同一个进程级 Store，不启动 listener；Store 初始 revision=0 且 dormant 可查询。`ensure_started(StartupInspection)` 每次真实创建先分配非零 generation，再把同一个 generation 绑定 event channel/Actor/reporter/HTTP token/DiscoveryOwner；三种 start reason 在已运行时重复调用不创建第二 listener或新 generation；启动失败允许消耗 generation、关闭 actor、current generation 保持 None并进入 service_error。
+
+  generation 表格必须覆盖：generation=1 收到真实事件 → authenticatedGeneration=1 → running；generation=1 stop → generation=2 start → authenticatedGeneration=None、lastEventAt=None、sources=[]、旧 error/port/fallback 清空 → awaiting_trust；generation=1 Actor 晚到上报或关闭回调且 current=2 → 完全忽略；generation=2 收到真实事件 → authenticatedGeneration=2 → running。running 的必要条件固定为 current generation 非 None 且两个 generation 相等；self-check 不能设置 authenticatedGeneration。
+
+  `stop_if_unused(StartupInspectionDisallows|InstallFailed|Uninstalled|RuntimeGenerationReplaced|RuntimeErrorStateCleared)` 都按当前 generation 幂等停止；顺序固定为：拒绝新 HTTP → 使用 handle 保存的完整 owner 删除 discovery（ReplacedByNewRuntime 不删新文件）→ 关闭 sender并请求旧 Actor shutdown/等待旧 HTTP 与 Actor → `SnapshotStore.clear()` → publisher 发布更高 revision 空快照 → current generation/authenticated facts 置 None → publisher 发布新的 listening status。旧 Runtime 最后 revision=20 时 stop 必须发布 revision=21 空快照；下一 Runtime 首个任务 revision>21。Runtime A revision=15 stop 后 Runtime B 不得从 revision=1 开始。窗口 hide 和 `idlePersistent` 变化都不调用启动或停止。
 
   运行：
 
@@ -739,7 +814,9 @@ impl CodexExitCoordinator {
 
 - [ ] **步骤 2：先写退出协调器失败测试**
 
-  先对 `decide_exit_request()` 写纯状态测试：第一次返回 PreventAndStartShutdown，`requested_code=None` 保存 0、Some(n) 保存 n；第二次在未 finished 时返回 PreventWithoutRestart；`mark_shutdown_finished()` 后返回 AllowExit。再用只在测试中实现的 `ExitCallbackHarness { prevent_count, spawn_count, requested_exit_codes }` 执行与实际回调相同的 decision match，覆盖第一次调用 prevent、shutdown 只 spawn 一次、完成后 request exit、两秒 timeout 后仍 exit、窗口 hide 不触发、托盘 quit 进入同一处理函数。正常退出后 discovery 删除；RunEvent::Exit 同步兜底在文件不存在、内容损坏、PID/token 不属于当前 runtime 时不 panic 且不误删他人文件。
+  先对 `decide_exit_request()` 写纯状态测试：第一次返回 PreventAndStartShutdown，`requested_code=None` 保存 0、Some(n) 保存 n；第二次在未 finished 时返回 PreventWithoutRestart；`mark_shutdown_finished()` 后返回 AllowExit。再用只在测试中实现的 `ExitCallbackHarness { prevent_count, spawn_count, requested_exit_codes }` 执行与实际回调相同的 decision match，覆盖第一次调用 prevent、shutdown 只 spawn 一次、完成后 request exit、两秒 timeout 后仍 exit、窗口 hide 不触发、托盘 quit 进入同一处理函数。
+
+  正常退出后 Store 已发布更高 revision 空快照，discovery 只由完整 Owner 删除。RunEvent::Exit 同步兜底覆盖：文件不存在 AlreadyAbsent；Runtime A owner 面对 Runtime B 替换文件返回 ReplacedByNewRuntime；相同 PID 不同 token 不删；内容损坏不 panic、不盲删并记录 warning。第二个 Runtime 的 discovery 不受第一个 Runtime handle/drop/Exit 清理影响。
 
   运行：
 
@@ -755,7 +832,9 @@ impl CodexExitCoordinator {
 
   `initialize_app()` 使用 `app.path().local_data_dir()?` 取得不带 bundle identifier 的 Windows 本地数据根目录，使用 `app.path().resource_dir()?` 取得资源根目录；Codex Home 按 `CODEX_HOME` 优先、否则 `%USERPROFILE%\.codex`；ProgramData 从 `%ProgramData%` 读取。四个根只传给 `CodexIntegrationPaths::from_local_data_root(...)` 一次，然后把同一个 paths 对象交给 manager。禁止调用会追加 `com.ryen.nsd` 的应用专用本地数据目录 API。
 
-  manager 在 setup 中被 `manage`，但本阶段不调用 `ensure_started()`。构造状态为 `serviceState=stopped`、`hookState=unknown`、`phase=disabled`；04B inspection 才精确发布 not_installed/awaiting_trust/partial/config_conflict/disabled 并决定是否 start。固定端口或 fallback 启动成功为 listening；第一条经过认证的真实事件记录 lastEventAt/sources 并把已经安装且等待信任的状态改为 active/running；模拟 self-check 不能进入 running。任何 mutex guard 都不得跨 publisher 回调或 I/O await。
+  在 setup 中构造一次 `Arc<CodexSnapshotStore>` 并把持有该 Arc 的 manager 通过 Tauri `manage` 注册；不得在 Runtime start/stop 时 remove/re-manage Store。manager 本阶段不调用 `ensure_started()`，构造 facts 为 runtimeGeneration=None、authenticatedGeneration=None、serviceState=stopped、hookState=unknown、phase=disabled。04B 静态 inspection 才精确派生 not_installed/awaiting_trust/partial/config_conflict/disabled 并决定是否 start。
+
+  每次 start 先清空 authenticatedGeneration/lastEventAt/sources/errorCode/port/fallback，再分配并捕获 generation；HTTP/Actor 创建成功后设 current generation，失败保持 None。固定端口或 fallback 启动成功为 listening；`record_authenticated_event(reported_generation, source, received_at)` 先比较 current generation，只有相等才记录 authenticatedGeneration/lastEventAt/sources 并允许 active/running；旧 generation 直接返回。模拟 self-check 不能进入 running。任何 mutex guard 都不得跨 publisher 回调或 I/O await。
 
   运行：
 
@@ -771,7 +850,7 @@ impl CodexExitCoordinator {
 
   把 `Builder::run(context)` 拆成 `Builder::build(context)` 与 `App::run(callback)`。第一次收到 `tauri::RunEvent::ExitRequested { code, api, .. }` 时，协调器以 `compare_exchange(false, true, ...)` 只启动一次：先保存 `code.unwrap_or(0)`，调用 `api.prevent_exit()`，再用 `tauri::async_runtime::spawn` 启动关闭任务。关闭任务用 `tokio::time::timeout(Duration::from_secs(2), runtime.shutdown())` 包围完整顺序；成功或超时都设置 `shutdown_finished=true`，最后调用 `app_handle.exit(saved_code)`。
 
-  第二次 ExitRequested 若 finished=true 则不调用 prevent，让 Tauri 真正退出；若 started=true/finished=false，则继续 prevent 且不创建第二个任务。本项目首版不实现第二次强制退出 UI。`RunEvent::Exit` 只调用 `runtime.cleanup_owned_discovery_file_sync()`，不 spawn、不 await、不阻塞。若请求为 Tauri restart code，记录受 Tauri “prevent ignored for restart”语义限制的安全诊断码，不宣称能延迟 restart。
+  第二次 ExitRequested 若 finished=true 则不调用 prevent，让 Tauri 真正退出；若 started=true/finished=false，则继续 prevent 且不创建第二个任务。本项目首版不实现第二次强制退出 UI。`RunEvent::Exit` 只调用 `runtime.cleanup_owned_discovery_file_sync()`，内部只能使用当前 handle 保存的 `DiscoveryOwner` 调用 `remove_discovery_if_owned()`，不 spawn、不 await、不阻塞；文件损坏或 owner 已替换只记录 warning。若请求为 Tauri restart code，记录受 Tauri “prevent ignored for restart”语义限制的安全诊断码，不宣称能延迟 restart。
 
   托盘 handler 必须使用回调参数 `app_handle.exit(0)`；`register_main_window_close_handler()` 与 `register_widget_window_close_handler()` 继续只执行 `prevent_close() + hide()`。
 
@@ -818,11 +897,15 @@ impl CodexExitCoordinator {
 ## 阶段二完成门禁
 
 - 聚合器无 Tauri/Tokio 定时器依赖，所有分钟级行为用 ManualClock 瞬时验证；墙上时间正反跳变不会改变平滑、保留、提醒或中断边界。
+- 聚合器只产生 `CodexStateDraft`/`CodexSoftInterruptDraft`，不含公开 revision；进程级 `CodexSnapshotStore` 是唯一 revision 分配者，Store 不随 Runtime 重启。
 - 并发输入只由单 Actor 按实际接收顺序改状态；2048 eventId 去重、retired turnId、toolUseId 关联和 agentId 去重全部有测试；当前轮次 `occurredAt` 回拨不会丢事件。
 - 中间命令失败不会直接成为最终失败；Stop 证据不明确且最后操作失败时默认完成并标记未解决问题。
 - 普通状态一秒平滑；授权/失败/完成/中断立即生效；提醒不会在同周期重复。
 - 完成精确保留 5 分钟、失败只手动清除、新轮次清旧失败、10/30 分钟中断、授权不超时。
 - 三个事件、五个命令和公开 DTO 命名与总体路线图一致，公开状态不含 cwd/token/原始 Hook 正文。
-- Runtime 在阶段二 setup 后保持 dormant；只有 `ensure_started(reason)` 能启动，`stop_if_unused(reason)` 能在卸载/失败/inspection 不允许时停止，显示偏好不能启停服务。
-- 首次 ExitRequested 同步 prevent 并只 spawn 一次两秒 shutdown；完成或超时后由 `AppHandle::exit(saved_code)` 触发第二次退出；RunEvent::Exit 只做同步发现文件兜底；托盘退出走相同路径，隐藏窗口不触发 shutdown。
+- Runtime 在阶段二 setup 后保持 dormant；`get_codex_snapshot()` 仍成功返回 revision=0 空快照，dormant clear 不产生 service_error。只有 `ensure_started(reason)` 能启动，`stop_if_unused(reason)` 能在卸载/失败/inspection 不允许时停止，显示偏好不能启停服务。
+- 同一 Store 中验证 revision=20 → stop/clear=21 空快照 → 新 Runtime 首任务>21；Runtime A stop 后 Runtime B 不从 1 开始。
+- 每个 Runtime 使用新的非零 generation、token、Actor/reporter 和 DiscoveryOwner；新 Runtime 清空认证事实，只有 authenticatedGeneration==runtimeGeneration 才 running；旧 Actor 晚到上报/关闭回调被忽略。
+- 所有 stop 原因按“停止接收 → owner-aware 关闭旧 Runtime → Store.clear/发布空快照 → 发布 listening status”执行；Discovery 删除完整比较 version/PID/token/startedAt，第二个 Runtime 不受第一个清理影响。
+- 首次 ExitRequested 同步 prevent 并只 spawn 一次两秒 shutdown；完成或超时后由 `AppHandle::exit(saved_code)` 触发第二次退出；RunEvent::Exit 只做 owner-aware 同步发现文件兜底；托盘退出走相同路径，隐藏窗口不触发 shutdown。
 - 以上全部满足后才执行阶段三；不要自动进入阶段三。

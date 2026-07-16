@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**目标：** 交付可独立构建的 Windows Bridge、双方共用的版本化最小协议、仅回环且带启动令牌的 HTTP 接收器，以及进入 Tauri 安装包的 Bridge 资源。
+**目标：** 交付可独立构建且不弹控制台的 Windows GUI Subsystem Bridge、双方共用的版本化最小协议、仅回环且带启动令牌/完整 Discovery owner 的 HTTP 接收器，以及经过 Machine+Subsystem 校验后进入 Tauri 安装包的 Bridge 资源。
 
 **架构：** Bridge 是由每次 Codex Hook 单独启动的短进程，不保存任务状态；它读取官方 Hook JSON、完成第一层脱敏/分类、读取发现文件并进行一次 HTTP POST。主应用 HTTP 层执行认证、限流、二次校验和有界入队，阶段一不启动聚合器，也不修改真实 Codex 配置。
 
@@ -12,7 +12,7 @@
 
 **本阶段消费：** Codex 官方八种 Hook stdin、Windows 本地数据根目录、Tauri resource 目录、Codex Home、ProgramData 根目录和 Tauri 构建目标三元组。
 
-**本阶段产生：** `codex_protocol::CodexBridgeEvent`、`CodexDiscovery`、唯一的 `CodexIntegrationPaths`、`codex_event_channel()`、`start_codex_http()`、经过 PE/COFF Machine 校验的 `codepulse-codex-bridge.exe` 资源；阶段二只消费这些公开接口。
+**本阶段产生：** `codex_protocol::CodexBridgeEvent`、`CodexDiscovery`、`DiscoveryOwner`、`remove_discovery_if_owned()`、唯一的 `CodexIntegrationPaths`、`codex_event_channel()`、`start_codex_http()`、经过 PE/COFF Machine 与 Windows GUI Subsystem 校验的 `codepulse-codex-bridge.exe` 资源；阶段二只消费这些公开接口。
 
 **固定边界：** 不创建自建 Dispatcher；Bridge 单次进程只转换并投递当前 Hook，用户已有 Hook 的编排与完整保留由 04A planner 负责。
 
@@ -37,7 +37,7 @@
 
 **消费接口：** 总体路线图 3.1 的 wire/发现文件定义；当前 `src-tauri/Cargo.toml` 根包和 `src-tauri/Cargo.lock`。
 
-**产生接口：** `codex_protocol::{CODEX_PROTOCOL_VERSION, CodexSource, CodexEventType, CodexStage, OperationResult, CodexBridgeEvent, CodexDiscovery, ProtocolError, validate_event, truncate_chars}`，以及可独立构建的空 Bridge 二进制目标 `codepulse-codex-bridge.exe`。
+**产生接口：** `codex_protocol::{CODEX_PROTOCOL_VERSION, CodexSource, CodexEventType, CodexStage, OperationResult, CodexBridgeEvent, CodexDiscovery, ProtocolError, validate_event, truncate_chars}`，以及 crate root 固定声明 `#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]` 的 Bridge 二进制目标 `codepulse-codex-bridge.exe`。
 
 **接口约束：**
 
@@ -70,7 +70,13 @@
   resolver = "2"
   ```
 
-  两个新包先只放可编译的空 `lib.rs`/`main.rs`；Bridge 包名固定为 `codepulse-codex-bridge`，二进制名因此固定为 `codepulse-codex-bridge.exe`。
+  两个新包先只放可编译的空 `lib.rs`/`main.rs`；Bridge 包名固定为 `codepulse-codex-bridge`，二进制名因此固定为 `codepulse-codex-bridge.exe`。`main.rs` 第一项 crate attribute 必须是：
+
+  ```rust
+  #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+  ```
+
+  Windows 构建因此使用 GUI Subsystem；这不会关闭父进程显式提供的 stdin/stdout/stderr 管道，后续进程测试仍必须捕获三条管道。
 
 - [ ] **步骤 2：先写协议失败测试**
 
@@ -114,7 +120,7 @@
   git diff -- src-tauri/Cargo.toml src-tauri/crates/codex-protocol src-tauri/crates/codepulse-codex-bridge src-tauri/Cargo.lock
   ```
 
-  预期：格式、Clippy 和 diff 检查通过；未出现 Tauri 或聚合器代码。
+  预期：格式、Clippy 和 diff 检查通过；`main.rs` 包含唯一的 `windows_subsystem = "windows"` crate attribute；未出现 Tauri 或聚合器代码。
 
   建议提交信息：
 
@@ -244,7 +250,7 @@ pub fn convert_hook(
 
 ## 任务 3：实现任何失败都静默成功的单次 Bridge 进程
 
-**独立交付物：** `codepulse-codex-bridge.exe` 在成功、无服务、非法输入、超限、发现文件损坏、HTTP 超时、服务拒绝和内部 panic 下都严格向 stdout 写 `{}`、stderr 为空、退出码为 0；一次调用最多发送一次请求。
+**独立交付物：** Windows GUI Subsystem 的 `codepulse-codex-bridge.exe` 在成功、无服务、非法输入、超限、发现文件损坏、HTTP 超时、服务拒绝和内部 panic 下都能通过重定向管道读取 stdin，并严格向 stdout 写 `{}`、stderr 为空、退出码为 0；一次调用最多发送一次请求且不创建可见控制台窗口。
 
 **Files:**
 
@@ -278,7 +284,9 @@ pub fn run_once(
 
 - [ ] **步骤 1：先写进程黑盒失败测试**
 
-  使用 `CARGO_BIN_EXE_codepulse-codex-bridge` 和 Hook 标记参数 `--codepulse-hook-v1` 启动真实子进程，并逐项输入：合法事件但发现文件缺失、空 stdin、非法 JSON、65 KiB stdin、发现文件非法 JSON、错误版本、零端口、非十六进制 token、已退出 PID、连接拒绝、服务器挂起。每例断言 `stdout == b"{}"`、`stderr.is_empty()`、`status.code() == Some(0)`。库单元测试把一个会 panic 的闭包注入 `run_guarded()`，断言 panic 被转换为静默结果。另以 `--codepulse-self-check` 启动，断言不读 stdin/发现文件、1 秒内返回相同 `{}`/0 契约；无参数或未知参数也必须直接返回 `{}`/0 且不投递。该模式只证明 EXE 可启动和参数分支可执行，不把错误信息编码进退出码。
+  使用 `CARGO_BIN_EXE_codepulse-codex-bridge` 和 `std::process::Command` 启动真实 GUI Subsystem 子进程；每例都显式设置 `stdin(Stdio::piped())`、`stdout(Stdio::piped())`、`stderr(Stdio::piped())`，向 stdin 写入 Hook JSON 后关闭写端。用 `--codepulse-hook-v1` 逐项输入：合法事件且 CodePulse 未运行、空 stdin、非法 JSON、65 KiB stdin、发现文件非法 JSON、错误版本、零端口、非十六进制 token、已退出 PID、连接拒绝、服务器挂起；每例断言 `stdout == b"{}"`、`stderr.is_empty()`、`status.code() == Some(0)`。库单元测试把会 panic 的闭包注入 `run_guarded()`，断言 panic 被转换为静默结果。另以 `--codepulse-self-check` 启动，仍使用三条 piped stream，断言不读 stdin/发现文件、1 秒内返回相同 `{}`/空 stderr/0 契约；无参数或未知参数也直接返回且不投递。
+
+  同一测试读取构建产物 PE metadata，断言 Subsystem 为 `IMAGE_SUBSYSTEM_WINDOWS_GUI`；源码门禁读取 `src/main.rs`，断言 crate root 包含 `windows_subsystem = "windows"`。这样测试同时证明 GUI Subsystem 不破坏重定向管道协议。
 
   运行：
 
@@ -308,7 +316,7 @@ pub fn run_once(
 
   读取 stdin 时最多取 `MAX_STDIN_BYTES + 1`；超限立即返回。发现文件最多读取 4 KiB，校验版本、非零端口、64 位 token、PID 仍存活；PID 检查失败即快速退出。HTTP 客户端使用 `TcpStream::connect_timeout(150ms)`，读写 timeout 取总预算剩余值；只连接 `127.0.0.1`，手工构造不含用户正文的最小 HTTP/1.1 请求，不处理重定向、不重试。
 
-  `main()` 只识别 `--codepulse-hook-v1` 和维护参数 `--codepulse-self-check`：前者执行 `run_once`，后者只走启动契约检查，无参数或其他参数不读取 stdin/发现文件并直接结束。维护参数不读取/写入配置、发现文件或事件。`main()` 不使用 `println!`，防止额外换行；使用 `stdout().write_all(b"{}")`。任何测试注入的 panic 也由最外层捕获；panic hook 在进程范围内临时替换为空 hook，结束前恢复仅用于库测试，生产进程随后退出。
+  `main()` 保留 crate root GUI Subsystem attribute，只识别 `--codepulse-hook-v1` 和维护参数 `--codepulse-self-check`：前者执行 `run_once`，后者只走启动契约检查，无参数或其他参数不读取 stdin/发现文件并直接结束。维护参数不读取/写入配置、发现文件或事件。GUI Subsystem 下仍直接使用父进程提供的标准流句柄；`main()` 不使用 `println!`，防止额外换行，只调用 `stdout().write_all(b"{}")`。任何测试注入的 panic 也由最外层捕获；panic hook 在进程范围内临时替换为空 hook，结束前恢复仅用于库测试，生产进程随后退出。
 
   运行：
 
@@ -335,7 +343,7 @@ pub fn run_once(
   git diff --check
   ```
 
-  预期：没有重试、事件历史或生产日志；若 `OpenOptions` 仅用于读取发现文件，应由代码差异直接证明没有写事件。
+  预期：没有重试、事件历史或生产日志；crate root GUI Subsystem attribute 存在；若 `OpenOptions` 仅用于读取发现文件，应由代码差异直接证明没有写事件。
 
   建议提交信息：
 
@@ -401,8 +409,28 @@ impl CodexIntegrationPaths {
 
 pub struct CodexHttpHandle {
     pub discovery: CodexDiscovery,
+    pub discovery_owner: DiscoveryOwner,
     pub using_fallback_port: bool,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiscoveryOwner {
+    pub version: u16,
+    pub pid: u32,
+    pub token: String,
+    pub started_at: i64,
+}
+
+pub enum DiscoveryRemovalOutcome {
+    Removed,
+    AlreadyAbsent,
+    ReplacedByNewRuntime,
+}
+
+pub fn remove_discovery_if_owned(
+    path: &Path,
+    owner: &DiscoveryOwner,
+) -> Result<DiscoveryRemovalOutcome, CodexServerError>;
 
 pub async fn start_codex_http(
     paths: &CodexIntegrationPaths,
@@ -423,7 +451,9 @@ impl CodexHttpHandle {
 
   在 `paths_tests.rs` 用四个互不相关的 TempDir 根构造 `CodexIntegrationPaths`，逐项断言：`codepulse_root = local_data_root/CodePulse`；runtime、发现文件和事务文件都在 `runtime` 下；稳定 Bridge 和安装记录都在 `bin` 下；打包资源只从 `resource_dir/bin` 推导；用户配置只从 `codex_home` 推导；企业要求只从 `program_data/OpenAI/Codex` 推导。传入的本地数据根目录名即使不是 `AppData` 也必须原样生效，所有字段都不得包含 bundle identifier `com.ryen.nsd`。
 
-  在 `runtime_tests.rs` 使用同一个路径对象和可注入的 `RuntimeFacts { pid, started_at }` 覆盖：令牌恰好 32 随机字节/64 hex；发现文件精确写入 `paths.discovery_file`；临时文件与目标同目录；写入完成后没有临时残留；覆盖旧文件；模拟替换失败保留旧文件；handle 正常 shutdown 删除文件；服务任务错误退出也删除；固定端口占用时得到非 47653 的回环端口；非 `AddrInUse` 绑定错误不降级。
+  在 `runtime_tests.rs` 使用同一个路径对象和可注入的 `RuntimeFacts { pid, started_at }` 覆盖：令牌恰好 32 随机字节/64 hex；发现文件精确写入 `paths.discovery_file`；handle/guard 保存由该文件完整转换的 `DiscoveryOwner`；临时文件与目标同目录；写入完成后没有临时残留；覆盖旧文件；模拟替换失败保留旧文件；handle 正常 shutdown 删除自己文件；服务任务错误退出也只删除自己文件；固定端口占用时得到非 47653 的回环端口；非 `AddrInUse` 绑定错误不降级。
+
+  增加 owner 竞态矩阵：Runtime A 写 discovery A，Runtime B 原子替换为 discovery B，随后 A 的 invalidate/serve error/drop 都返回 `ReplacedByNewRuntime` 且 B 文件仍存在；相同 PID/startedAt 但 token 不同不得删除；相同 PID/token 但 version 或 startedAt 不同不得删除；文件不存在返回 `AlreadyAbsent`；文件损坏时旧 Guard 返回稳定错误且不得无条件删除。所有删除入口都必须能从测试记录中证明调用了 `remove_discovery_if_owned()`。
 
   运行：
 
@@ -483,7 +513,7 @@ impl CodexHttpHandle {
 
   先绑定 `127.0.0.1:47653`；只有 `io::ErrorKind::AddrInUse` 才绑定 `127.0.0.1:0`。绑定成功后生成 token，再把发现文件写到临时文件、flush、重新读取反序列化验证，最后通过 Windows `MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)` 原子替换。Win32 块写中文安全注释，保证 UTF-16 缓冲区在调用期间存活。
 
-  `DiscoveryGuard` 由实际 server task 持有，并只使用 `paths.discovery_file`；正常 shutdown、serve 错误和 task drop 都尝试删除发现文件。发现文件写入失败时立即释放 listener 并返回错误，不留下一个 Bridge 无法认证的服务。
+  `DiscoveryGuard` 由实际 server task 持有，并保存 `paths.discovery_file` 与本 Runtime 完整 `DiscoveryOwner`。正常 shutdown、handle invalidate、serve 错误和 task drop 都只调用 `remove_discovery_if_owned(path, owner)`：文件不存在返回 AlreadyAbsent；完整 version/PID/token/startedAt 相等才删除；任一字段不同返回 ReplacedByNewRuntime 并保持文件；读取或解析失败由旧 Guard 返回错误且不盲删。发现文件写入失败时立即释放 listener 并返回错误，不留下一个 Bridge 无法认证的服务。
 
   运行：
 
@@ -494,7 +524,7 @@ impl CodexHttpHandle {
   Pop-Location
   ```
 
-  预期：固定/动态端口、发现文件原子替换、写入失败释放 listener 和三类清理路径测试通过；HTTP router 测试仍保持红色，留给下一步实现。
+  预期：固定/动态端口、发现文件原子替换、写入失败释放 listener、A/B Runtime 替换、相同 PID 不同 token、损坏文件和全部 owner-aware 清理路径测试通过；HTTP router 测试仍保持红色，留给下一步实现。
 
 - [ ] **步骤 5：实现认证、限制、二次脱敏和 try_send**
 
@@ -540,7 +570,7 @@ impl CodexHttpHandle {
 
 ## 任务 5：把 Bridge 作为 Windows 资源随 Tauri 构建
 
-**独立交付物：** `pnpm run tauri build` 会先为当前 Windows MSVC target 构建 Bridge，把固定文件名暂存并作为 `bin/codepulse-codex-bridge.exe` 资源交给 Tauri bundler；该阶段不把资源复制到用户稳定路径。
+**独立交付物：** `pnpm run tauri build` 会先为当前 Windows MSVC target 构建 GUI Subsystem Bridge，把固定文件名暂存，并在 Machine+Subsystem 完整验证后作为 `bin/codepulse-codex-bridge.exe` 资源交给 Tauri bundler；该阶段不把资源复制到用户稳定路径。
 
 **Files:**
 
@@ -558,7 +588,7 @@ impl CodexHttpHandle {
 
 - [ ] **步骤 1：先写资源验证失败脚本**
 
-  `verify-codex-bridge-resource.ps1` 固定参数为 `-ResourcePath <path>`、`-TargetTriple <triple>` 和可选 `-SkipTauriConfigCheck`。脚本必须：读取至少 64 字节 DOS Header；校验 `MZ`；从偏移 `0x3C` 读取 little-endian `e_lfanew`；验证该偏移非负且 `e_lfanew + 6 <= fileLength`；校验四字节 `PE\0\0`；从 `e_lfanew + 4` 读取 little-endian COFF `Machine`。目标映射固定为 `x86_64-pc-windows-msvc -> 0x8664`、`aarch64-pc-windows-msvc -> 0xAA64`，其他 triple 直接失败。未跳过配置检查时，还要验证 resources 映射与 `beforeBuildCommand`。
+  `verify-codex-bridge-resource.ps1` 固定参数为 `-ResourcePath <path>`、`-TargetTriple <triple>` 和可选 `-SkipTauriConfigCheck`。脚本必须：读取至少 64 字节 DOS Header；校验 `MZ`；从偏移 `0x3C` 读取 little-endian `e_lfanew`；验证该偏移非负且 COFF/Optional Header 均在文件范围内；校验四字节 `PE\0\0`；从 `e_lfanew + 4` 读取 little-endian COFF `Machine`；读取 COFF `SizeOfOptionalHeader`；从 `e_lfanew + 24` 读取 Optional Header Magic 并只接受 Windows x64/ARM64 的 PE32+ `0x20B`；要求 Optional Header 至少覆盖偏移 68 的两字节 Subsystem；读取 Subsystem 并只接受 `IMAGE_SUBSYSTEM_WINDOWS_GUI = 2`。目标 Machine 映射固定为 `x86_64-pc-windows-msvc -> 0x8664`、`aarch64-pc-windows-msvc -> 0xAA64`；Console Subsystem=3、未知 Subsystem、非法 Magic、Optional Header 太短和其他 triple 直接失败。未跳过配置检查时，还要验证 resources 映射与 `beforeBuildCommand`。
 
   运行：
 
@@ -566,7 +596,7 @@ impl CodexHttpHandle {
   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-codex-bridge-resource.ps1 -ResourcePath .\src-tauri\binaries\codepulse-codex-bridge.exe -TargetTriple x86_64-pc-windows-msvc
   ```
 
-  预期：脚本以非 0 退出，并明确报告暂存资源尚不存在、PE 签名/Machine 不合法或配置尚未接线；只看见 `MZ` 不得判定通过。
+  预期：脚本以非 0 退出，并明确报告暂存资源尚不存在、PE 签名/Machine/Optional Header/Subsystem 不合法或配置尚未接线；只看见 `MZ` 或 Machine 匹配不得判定通过。
 
 - [ ] **步骤 2：实现目标感知构建脚本和 pnpm 接线**
 
@@ -595,11 +625,11 @@ impl CodexHttpHandle {
   Get-Item -LiteralPath .\src-tauri\binaries\codepulse-codex-bridge.exe | Select-Object FullName,Length,LastWriteTimeUtc
   ```
 
-  预期：命令以 0 退出；暂存文件存在、长度大于 0，且 DOS Header、PE 签名和 COFF Machine 与目标 triple 一致。
+  预期：命令以 0 退出；暂存文件存在、长度大于 0，且 DOS Header、PE 签名、COFF Machine 与目标 triple 一致，Optional Header Subsystem 为 WindowsGui。
 
 - [ ] **步骤 3：运行 PE 架构失败矩阵**
 
-  `test-codex-bridge-resource-validation.ps1` 在独立临时目录生成最小字节 fixture，并逐项启动验证脚本：只有 `MZ` 但 `e_lfanew` 越界；`MZ` 合法但没有 `PE\0\0`；x64 triple 配 ARM64 Machine；ARM64 triple 配 x64 Machine；不支持的 triple；在 x64 与 ARM64 旧 target 目录同时放 EXE 后确认构建路径选择只读取本次 `$target` 目录。每个负例都必须断言子进程退出码非 0，两个匹配架构正例退出码为 0。
+  `test-codex-bridge-resource-validation.ps1` 在独立临时目录生成最小字节 fixture，并逐项启动验证脚本：只有 `MZ` 但 `e_lfanew` 越界；`MZ` 合法但没有 `PE\0\0`；x64 triple 配 ARM64 Machine；ARM64 triple 配 x64 Machine；Optional Header 太短；PE Magic 非 0x20B；x64+Console Subsystem；ARM64+Console Subsystem；未知 Subsystem；不支持的 triple；在 x64 与 ARM64 旧 target 目录同时放 EXE 后确认构建路径选择只读取本次 `$target` 目录。每个负例都必须断言子进程退出码非 0；x64+WindowsGui 和 ARM64+WindowsGui 两个正例退出码为 0。
 
   运行：
 
@@ -607,7 +637,7 @@ impl CodexHttpHandle {
   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-codex-bridge-resource-validation.ps1
   ```
 
-  预期：六个错误场景均被拒绝；x64/ARM64 匹配场景通过；旧 target 目录不会被误复制。
+  预期：全部 Machine/Magic/长度/Subsystem 错误场景均被拒绝；x64/ARM64+WindowsGui 匹配场景通过；旧 target 目录不会被误复制。
 
 - [ ] **步骤 4：运行构建和资源红绿验证**
 
@@ -635,7 +665,7 @@ impl CodexHttpHandle {
   git status --short
   ```
 
-  预期：Tauri bundler 完成至少一个 Windows 安装包；解包或资源目录检查确认 EXE 的 PE Machine 与当前 `CODEPULSE_TARGET_TRIPLE` 一致；资源缺失或架构错误不会被 bundler 静默忽略；暂存 EXE 因 `.gitignore` 不出现在 `git status`。
+  预期：Tauri bundler 完成至少一个 Windows 安装包；解包或资源目录检查确认 EXE 的 PE Machine 与当前 `CODEPULSE_TARGET_TRIPLE` 一致且 Subsystem=WindowsGui；资源缺失、架构错误或 Console Subsystem 不会被 bundler 静默忽略；暂存 EXE 因 `.gitignore` 不出现在 `git status`。
 
 - [ ] **步骤 6：阶段一全量验证并提交**
 
@@ -669,9 +699,9 @@ impl CodexHttpHandle {
 - `CodexBridgeEvent` 与发现文件契约只在共享包定义一次。
 - `CodexIntegrationPaths` 是唯一目录构造对象；所有路径从传入根目录推导，功能模块不再自行拼接 CodePulse/runtime/bin。
 - 八种 Hook fixture 与实施日官方文档一致；未知字段安全忽略，未知事件明确拒绝。
-- 所有 Bridge 黑盒失败路径精确输出 `{}`、stderr 为空、退出 0，且没有重试或状态落盘。
-- HTTP 服务只绑定回环地址；固定端口仅在冲突时降级；每次启动 token 不同；发现文件在正常和错误关闭后清理。
+- Bridge crate root 使用 `windows_subsystem = "windows"`；所有 GUI Subsystem piped 黑盒失败路径精确输出 `{}`、stderr 为空、退出 0，且没有重试、状态落盘或可见控制台窗口。
+- HTTP 服务只绑定回环地址；固定端口仅在冲突时降级；每次启动 token 不同；所有发现文件清理比较完整 DiscoveryOwner，旧 Runtime/相同 PID 不同 token/损坏文件不会误删新文件。
 - 16 KiB、认证、协议、字段、队列与日志安全测试通过。
-- 构建脚本和资源验证都校验 DOS Header、PE 签名和 x64/ARM64 COFF Machine；不支持 triple 与错架构资源必定失败。
+- 构建脚本和资源验证都校验 DOS Header、PE 签名、x64/ARM64 COFF Machine、Optional Header Magic/长度和 WindowsGui Subsystem；Console/未知 Subsystem、不支持 triple 与错架构资源必定失败。
 - Tauri bundle 构建已消费 Bridge resource；尚未修改用户 Hook，也尚未在 `setup` 启动服务。
 - 以上全部满足后才执行阶段二；不要自动进入阶段二。
