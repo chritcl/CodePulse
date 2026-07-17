@@ -4,7 +4,7 @@
 
 **目标：** 在 04B 命令与生命周期已审核通过后，实现设置卡、手动启用全局 Hooks 的两阶段引导、预览确认、空闲常驻/命令摘要显示偏好，并完成自动化与 Windows 原生 App/CLI 真实验收。
 
-**架构：** `useCodexIntegration` 分别维护静态 inspection 与唯一动态 listeningStatus，只编排 04B inspect/preview/apply/retry/self-check 和权威 listening event；设置卡不读写文件，事务 Conflict 时只显示安全恢复重试；前端偏好只进入 localStorage 与跨窗口事件；Widget 使用阶段三统一投影 `toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)`。自动 E2E 使用 TempDir/loopback/ManualClock 覆盖跨 Runtime revision/generation、Prepared 后 CAS与逐 MoveFileExW前后校验、Integration Transaction 四阶段逐文件恢复、孤立 Journal temp、action-specific invariant、标准 Fixture 统一 AST loader/稳定 Bridge路径绑定投影与 Discovery owner，真实验收单独记录 GUI Bridge 无控制台闪烁。
+**架构：** `useCodexIntegration` 分别维护静态 inspection 与唯一动态 listeningStatus，只编排 04B inspect/preview/apply/retry/self-check 和权威 listening event；设置卡不读写文件，事务 Conflict 时只显示安全恢复重试；前端偏好只进入 localStorage 与跨窗口事件；Widget 使用阶段三统一投影 `toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)`。自动 E2E 使用 TempDir/loopback/ManualClock 覆盖跨 Runtime revision/generation、Prepared 后 optimistic precondition check、Existing 的 `ReplaceFileW` 原子替换与实际旧版本捕获、Absent 的 no-replace 原子发布、Removal 的 tombstone 原子捕获、Integration Transaction 四阶段恢复、孤立 Journal temp、action-specific invariant、标准 Fixture 统一 AST loader/稳定 Bridge路径绑定投影与 Discovery owner，真实验收单独记录 GUI Bridge 无控制台闪烁。
 
 **技术栈：** Vue 3 Composition API、Pinia/localStorage、Tauri JS API、Vitest、`@vue/test-utils`、Rust TempDir/ManualClock、PowerShell、pnpm 10.33.2。
 
@@ -21,6 +21,8 @@
 - 真实验收记录只在执行本计划时创建于 `docs/superpowers/verifications/2026-07-16-codex-status-island-e2e.md`。
 - CLI 环境阻塞必须如实记录并阻止“正式兼容已通过”声明。
 - 自动 E2E 的路径对象只读取 `integration_transaction_file`；事务 staging 路径由 transactionId+target filename 推导，不扩张 `CodexIntegrationPaths`。范围脚本断言路径对象不存在第二个含 `transaction` 的字段、startup 只调用 `recover_interrupted_codex_integration_transaction()`，并确认只有 `paths.rs` 拼接 `codex-integration-transaction.json`。
+- 同一 Integration Journal 必须包含Config/Bridge/Record适用的target temp、prepared backup、replaced snapshot、conflict-preserved-current与removed tombstone路径；所有路径都由transactionId+target filename确定性推导。optimistic precondition check只负责重读分类，不能称为原子CAS；Existing、Absent、Removal必须调用04B统一的三个原子语义接口，writer/installer不得分叉实现。
+- 2026-07-16重新核对Microsoft官方[CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)、[ReplaceFileW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew)、[DeleteFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-deletefilew)与[Closing and Deleting Files](https://learn.microsoft.com/en-us/windows/win32/fileio/closing-and-deleting-files)；E2E和范围门禁按其share-delete、sharing violation、ReplaceFileW备份、no-replace move及延迟删除语义验收。
 - `IntegrationTransactionConflict`/`OrphanTransactionConflict` 时设置页只提供“重新尝试安全恢复”；不得提供强制覆盖、强制删除事务、忽略并继续，也不得展示Token、完整配置正文、用户命令或完整用户目录。
 - 本计划完成后停止，不自动开始后续功能。
 
@@ -409,17 +411,23 @@ export interface CodexDisplayPreferences {
   Integration Transaction E2E 至少逐项覆盖：
 
   - 调用顺序：transactionId 在 `prepare_config_apply`/`prepare_bridge_install` 前分配；两个 prepare 收到同一 ID，且 Prepared Journal 原子持久化前稳定配置/Bridge/记录无变化、无 staging；
-  - Prepared后pre-apply CAS：Prepared已持久化 → 用户修改Config → staging创建前由`verify_artifact_matches_expected_original()`发现变化 → Config/Bridge/Record都不写、不创建新staging；另一个进程在expectedDigest检查后、Prepared写入后修改任一目标也不能被覆盖；
-  - backup与all-staging-ready：每个existedBefore目标的当前摘要先等于originalDigest，再create_new/write/flush/close/重读backup并再次等于originalDigest；existedBefore=false要求backup=None且目标仍缺失；backup摘要错误、任一temp targetDigest错误或当前Prepared Journal transactionId不符时零目标替换；
-  - 每次MoveFileExW前后：所有backup后用户改Bridge → Bridge替换前拒绝覆盖；Bridge已替换后用户改Record → 不覆盖Record且Repair恢复旧Bridge；Bridge/Record已替换后用户改Config → 不覆盖Config且回滚两者；MoveFileExW返回成功但写后targetDigest不符 → 不继续下一文件并进入安全恢复；
-  - Prepared Journal 写入前崩溃：目标不变且无不可追踪 staging；Prepared 写入后只创建一部分 backup/temp时崩溃：只清理 Journal 列出的本 transactionId 文件，另一个 ID 的 temp/backup 同时存在也不得删除；
-  - 孤立Journal temp：无稳定Journal+一个或两个合法Prepared-only temp → 全部删除；文件名/内容ID不符、stage=BridgeApplied、目标已改变或存在同ID Bridge staging/backup → 保留并`OrphanTransactionConflict`、Runtime不启动；稳定Journal ID=A+ID=B Journal temp或普通目标staging → 只处理A，B只诊断不删除；测试显式保持单实例前提；
+  - Optimistic precondition check：Prepared已持久化 → 用户修改Config → staging创建前由`verify_artifact_matches_expected_original()`发现变化 → Config/Bridge/Record都不写、不创建新staging；另一个进程在expectedDigest检查后、Prepared写入后修改任一目标也不能被覆盖；该测试只证明早期发现，不作为原子替换证明；
+  - Prepared backup与all-staging-ready：每个existedBefore目标的当前摘要先等于originalDigest，再create_new/write/flush/close/重读prepared backup并再次等于originalDigest；existedBefore=false要求prepared backup=None且目标仍缺失；prepared backup摘要错误、任一temp targetDigest错误、任一capture路径意外存在或当前Prepared Journal transactionId不符时零目标操作；
+  - Existing正常替换：最后一次检查通过→`ReplaceFileW`成功→replaced snapshot=originalDigest且target=targetDigest→允许继续；snapshot创建或读取失败、target写后摘要异常都停止下一文件并保留可恢复artifact；
+  - Existing最后时刻修改：外部修改发生在最后一次检查之后、系统原子替换内部之前→`ReplaceFileW`捕获的snapshot不等于originalDigest→返回`CapturedLateModification`且外部字节不丢；当前target仍为CodePulse Target时第二次`ReplaceFileW`恢复snapshot并把CodePulse Target保存为conflict-preserved-current；当前target又被外部修改时不覆盖当前target，snapshot与当前target同时保留并Conflict；
+  - Absent最后时刻出现：检查时Bridge、Record或新Hook目标absent→`BeforeAtomicReplace`后外部创建目标→no-replace publish返回`DestinationAppeared`→外部目标字节不变、transaction temp保留且不继续下一文件；
+  - Bridge/Record顺序：Bridge正常替换→Record替换瞬间捕获late modification→不继续Config→Repair按replaced snapshot优先恢复Bridge→Record外部修改保留；
+  - Config顺序：Bridge/Record已Target→Config的`ReplaceFileW`捕获late modification→Config外部修改不丢→Bridge/Record按action-aware规则恢复；prepared backup不得覆盖late snapshot；
+  - Removal原子捕获：Bridge在rename到removed tombstone前发生外部修改→tombstone捕获真实文件且不永久删除；tombstone后目标路径被重新创建→不把tombstone覆盖回目标、两者保留并Conflict；正常Uninstall中Bridge/Record都进入tombstone，Uninstalled invariant通过后推进StructureCommitted，之后才删除tombstone；
+  - 原子故障：覆盖`ReplaceFileW`官方`ERROR_UNABLE_TO_REMOVE_REPLACED`、`ERROR_UNABLE_TO_MOVE_REPLACEMENT`、`ERROR_UNABLE_TO_MOVE_REPLACEMENT_2`及sharing/access等错误，snapshot创建失败、snapshot摘要读取失败、第二次安全恢复失败、no-replace目标已存在、tombstone rename失败、StructureCommitted后tombstone清理失败；任一失败不得丢失当前目标、replaced snapshot、tombstone或prepared backup；
+  - Prepared Journal写入前崩溃：目标不变且无不可追踪staging；Prepared写入后只创建一部分prepared backup/temp时崩溃：只清理Journal列出的本transactionId普通staging，另一个ID的staging/capture artifact同时存在也不得删除；
+  - 孤立Journal temp：无稳定Journal+一个或两个合法Prepared-only temp→全部删除；文件名/内容ID不符、stage=BridgeApplied、目标已改变或存在同ID staging/capture artifact→保留并`OrphanTransactionConflict`、Runtime不启动；稳定Journal ID=A+ID=B Journal temp或普通目标artifact→只处理A，B只诊断不删除；测试显式保持单实例前提；
   - BridgeApplied 混合恢复：Bridge=Target/Record=Original 只恢复 Bridge；Bridge=Original/Record=Target 只恢复 Record；首次 Install Bridge=Target/Record=ExpectedAbsent 删除新 Bridge，最终两者均不存在；
   - ConfigApplied 混合恢复：Config=Target、Bridge=Target、Record=Original 时先回滚 Config，再逐文件恢复 Bridge/记录；反向混合同理；不得把部分结构提升为 StructureCommitted；
   - ConfigApplied 完整目标：Install/Repair 只有 Marker=Exact、Bridge/记录=Target且 PE/hash/piped valid 才返回 InstalledOrRepaired 并提升 StructureCommitted；invariant失败且三者未外改则先配置后逐文件回滚；
   - action-aware rollback：Repair 前 Hook 一直引用稳定路径时仍恢复旧 EXE/旧记录且不返回引用冲突；Install 前 Bridge 不存在但配置仍引用稳定路径时禁止删除新 EXE；
-  - Uninstall 部分删除：Marker=Absent且无引用时，Bridge absent+Record present继续删除记录，Bridge present+Record absent继续删除 Bridge；只有两者 absent才返回 Uninstalled/StructureCommitted，Marker absent但 Bridge仍存在不得提交；
-  - StructureCommitted 清理恢复：只清理 backup/temp/Journal，不回滚正确结构；
+  - Uninstall部分捕获：Marker=Absent且无引用时，Bridge absent+Record present继续把Record原子捕获为tombstone，Bridge present+Record absent继续捕获Bridge；只有两目标absent且tombstone受当前Journal控制才返回Uninstalled/StructureCommitted，Marker absent但Bridge仍存在不得提交；
+  - StructureCommitted清理恢复：只清理prepared backup、正常original snapshot、已提交tombstone、temp与Journal，不回滚正确结构；Conflict的preserved artifacts不得作为普通成功清理删除；
   - ConfigApplied 后用户并发修改配置或 Bridge：Bridge=ExternalModification+Record=Target 返回 Conflict，不覆盖用户字节、不删除仍被引用 Bridge并保留诊断；
   - 每个故障注入点后读取 Hook 与稳定 Bridge，断言永远不出现 Hook 指向缺失 Bridge；
   - StructureCommitted 后 self-check 超时/失败：Hook/Bridge 保留、phase partial/service_error；cleanup 失败仅 warning；首次 install验证失败停止临时 Runtime/发布空快照/删 own discovery；Repair失败保持原合法 Runtime/任务。
@@ -443,7 +451,7 @@ export interface CodexDisplayPreferences {
 
 - [ ] **步骤 3：实现临时目录/内存 harness**
 
-  Bridge 使用库入口和真实 `std::process::Command` piped 进程，HTTP 用真实 loopback，Actor 用 ManualClock，SnapshotStore 由 Manager fixture 只构造一次并跨两个 fake Runtime 共用，配置用 TempDir，publisher/installer/runtime generation/owner/Integration Journal/operation mutex调用序列可断言。文件系统harness必须能在Prepared后staging前、每个backup后、每个MoveFileExW前后注入外改，并验证originalDigest/targetDigest。Fixture注入、目标序列化与Exact反向规范化全部调用04A同一AST loader并传入`paths.installed_bridge`，不复制内容、不做原始文本replace。除loopback不使用真实网络/Home；每例结束TempDir删除，仓库无discovery/Integration Journal/事件文件。
+  Bridge使用库入口和真实`std::process::Command` piped进程，HTTP用真实loopback，Actor用ManualClock，SnapshotStore由Manager fixture只构造一次并跨两个fake Runtime共用，配置用TempDir，publisher/installer/runtime generation/owner/Integration Journal/operation mutex调用序列可断言。文件系统harness必须在统一`AtomicIntegrationFs`抽象中提供`BeforeAtomicReplace`、`AfterTargetOpenedOrPrepared`、`AfterAtomicReplaceBeforeVerification`、`BeforeConflictRestore`、`AfterRemovalCaptureBeforeVerification`精确注入点，并保留Prepared后staging前、每个prepared backup后的早期注入；不能只在调用`MoveFileExW`前注入。每个注入点验证originalDigest/targetDigest以及target、replaced snapshot、conflict-preserved-current、removed tombstone、prepared backup的保留状态。Fixture注入、目标序列化与Exact反向规范化全部调用04A同一AST loader并传入`paths.installed_bridge`，不复制内容、不做原始文本replace。除loopback不使用真实网络/Home；每例结束TempDir删除，仓库无discovery/Integration Journal/事件文件。
 
   运行：
 
@@ -457,7 +465,7 @@ export interface CodexDisplayPreferences {
 
 - [ ] **步骤 4：实现并运行范围脚本**
 
-  `verify-codex-status-scope.ps1` 必须在以下条件失败：package-lock/yarn.lock；生产 WSL/wsl.exe；授权 allow/deny/open-session/pause/terminate API；Bridge 缺少 `windows_subsystem = "windows"`、历史写入/重试/stdout 非 `{}`；PE 校验缺 Machine 或 WindowsGui Subsystem；IslandView 出现聚合生命周期/Stop classifier；Inspection DTO 出现动态 hookState/phase；CodePulse 前端或 planner 自动写 Hooks feature/删除 `codex_hooks`；显示偏好调用 runtime；Codex 模块在 paths.rs 外拼接 CodePulse/runtime/bin或 `codex-integration-transaction.json`；`CodexIntegrationPaths` 出现第二个含 `transaction` 的字段，或 startup 调用的恢复接口不是 `recover_interrupted_codex_integration_transaction()`；transactionId 在 transaction prepare 后分配、Prepared 前创建目标 staging、Prepared后staging前缺`verify_artifact_matches_expected_original`三文件CAS、backup未按originalDigest重读验证、缺all-staging-ready、每个MoveFileExW前缺CAS或写后缺targetDigest验证、temp/backup不能由Journal/transactionId归属；稳定Journal不存在时扫描范围宽于精确`.<journal-filename>.codepulse-<32hex>.tmp`，或异常孤立temp被删除；Manager 构造不显式接收 Store或 setup 另 manage第二份 Store；标准 Fixture 缺任一事件/command Windows override/timeout=2，或出现 matcher/statusMessage/async；`normalize_codepulse_hook_commands_for_exact`未显式接收expected_bridge_path/expected command，CodePulse projection包含用户独立Hook，Fixture loader/Exact/E2E对raw JSON/TOML调用path/placeholder replace，JSON未经serde_json AST、TOML未经toml_edit AST，Inspection/Planner/Repair/E2E存在第二套loader或手写八事件模板；StructureCommitted仍一律要求Marker Exact，或Uninstall未要求Marker Absent+无引用+Bridge/记录 absent；Conflict UI缺安全retry或存在force overwrite/discard/ignore入口；Discovery存在无owner删除；验收路径不唯一。
+  `verify-codex-status-scope.ps1`必须在以下条件失败：package-lock/yarn.lock；生产WSL/wsl.exe；授权allow/deny/open-session/pause/terminate API；Bridge缺少`windows_subsystem = "windows"`、历史写入/重试/stdout非`{}`；PE校验缺Machine或WindowsGui Subsystem；IslandView出现聚合生命周期/Stop classifier；Inspection DTO出现动态hookState/phase；CodePulse前端或planner自动写Hooks feature/删除`codex_hooks`；显示偏好调用runtime；Codex模块在paths.rs外拼接CodePulse/runtime/bin或`codex-integration-transaction.json`；`CodexIntegrationPaths`出现第二个含`transaction`的字段，或startup调用的恢复接口不是`recover_interrupted_codex_integration_transaction()`；transactionId在transaction prepare后分配、Prepared前创建目标staging、Prepared后staging前缺三文件optimistic precondition check、prepared backup未按originalDigest重读验证、缺all-staging-ready、任一capture路径不能由Journal/transactionId归属；Existing target仍使用裸`MoveFileExW(..., MOVEFILE_REPLACE_EXISTING)`、没有transaction-owned replaced snapshot、snapshot摘要不符后继续下一文件、late modification被prepared backup覆盖；Absent target使用`MOVEFILE_REPLACE_EXISTING`或目标出现后仍覆盖；Uninstall直接用`DeleteFileW`删除Bridge/Record、未使用removed tombstone；Conflict artifacts在StructureCommitted前或作为普通成功清理删除；writer与installer各自实现不同替换逻辑；缺少`BeforeAtomicReplace`、`AfterTargetOpenedOrPrepared`、`AfterAtomicReplaceBeforeVerification`、`BeforeConflictRestore`、`AfterRemovalCaptureBeforeVerification`任一精确注入点；稳定Journal不存在时扫描范围宽于精确`.<journal-filename>.codepulse-<32hex>.tmp`，或异常孤立temp被删除；Manager构造不显式接收Store或setup另manage第二份Store；标准Fixture缺任一事件/command Windows override/timeout=2，或出现matcher/statusMessage/async；`normalize_codepulse_hook_commands_for_exact`未显式接收expected_bridge_path/expected command，CodePulse projection包含用户独立Hook，Fixture loader/Exact/E2E对raw JSON/TOML调用path/placeholder replace，JSON未经serde_json AST、TOML未经toml_edit AST，Inspection/Planner/Repair/E2E存在第二套loader或手写八事件模板；StructureCommitted仍一律要求Marker Exact，或Uninstall未要求Marker Absent+无引用+Bridge/Record absent+tombstone受Journal控制；Conflict UI缺安全retry或存在force overwrite/discard/ignore入口；Discovery存在无owner删除；验收路径不唯一。
 
   运行：
 
@@ -634,10 +642,12 @@ export interface CodexDisplayPreferences {
 - 只有 `codex_hooks` 时显示固定弃用提示并按有效值工作；双键同值显示重复 warning；双键冲突或非布尔时显示配置冲突且不渲染 install/repair/uninstall 按钮。
 - local disabled+marker present 同时显示手动启用说明与安全卸载入口；install/repair/自动启用不可用，managed disabled 全只读。
 - idlePersistent 与 showCommandSummary 只控制展示；Widget/设置页使用同一权威 CodexListeningStatus。
-- 自动 E2E 覆盖十四项设计场景、occurredAt/墙钟回拨、dormant 空快照、跨 Runtime revision/generation、disabled uninstall、transactionId 先分配/Prepared 前零 staging、Prepared 部分 staging ownership、Bridge/记录混合状态逐文件恢复、Install/Repair/Uninstall action-specific invariant、Discovery owner 竞态、退出和 PE Machine+WindowsGui。
-- 自动E2E还覆盖Prepared后pre-apply CAS、backup originalDigest完整性、all-staging-ready、每个MoveFileExW前后校验、写后targetDigest失败停止、精确孤立Journal temp清理/Conflict、operation mutex安全retry与NoPendingTransaction；expectedDigest检查后的外改不能被覆盖。
+- 自动E2E覆盖十四项设计场景、occurredAt/墙钟回拨、dormant空快照、跨Runtime revision/generation、disabled uninstall、transactionId先分配/Prepared前零staging、Prepared部分staging ownership、Bridge/Record混合状态逐文件恢复、Install/Repair/Uninstall action-specific invariant、Discovery owner竞态、退出和PE Machine+WindowsGui。
+- 自动E2E明确区分三种原子语义：Existing由`ReplaceFileW`捕获实际旧内容为transaction-owned replaced snapshot；Absent由no-replace move发布并在目标最后时刻出现时返回`DestinationAppeared`；Removal把Bridge/Record原子rename为removed tombstone且StructureCommitted前不永久删除。不存在裸检查后`MOVEFILE_REPLACE_EXISTING`被称为CAS。
+- 自动E2E覆盖Prepared后optimistic precondition check、prepared backup originalDigest完整性、all-staging-ready、Existing正常snapshot、最后一次检查之后的两种late modification安全恢复、Absent目标最后时刻出现、Bridge/Record与Config顺序、Uninstall三种tombstone路径、写后targetDigest失败停止、精确孤立Journal temp清理/Conflict、operation mutex安全retry与NoPendingTransaction；late snapshot优先于prepared backup，所有冲突版本都保留并只进入现有安全retry。
+- `AtomicIntegrationFs`提供`BeforeAtomicReplace`、`AfterTargetOpenedOrPrepared`、`AfterAtomicReplaceBeforeVerification`、`BeforeConflictRestore`、`AfterRemovalCaptureBeforeVerification`；故障矩阵覆盖ReplaceFileW官方失败状态、snapshot创建/读取、第二次恢复、no-replace destination appeared、tombstone rename和提交后tombstone清理。
 - JSON/TOML 实际 Install 与 Repair 结果用04A同一AST loader并显式传入`paths.installed_bridge`，提取CodePulse-owned projection后分别语义等于唯一标准Fixture；空格、中文、单引号路径可解析且命令语义正确，JSON反斜杠/TOML单引号由serializer安全处理。wrong-path/旧路径/双command不一致/extra参数不可能Exact；用户独立Handler不进入projection且前后深度相等，混合group Repair后用户Handler保留、CodePulse group独立；E2E不做原始文本replace，不内嵌第二套loader或八事件模板。
 - UI/composable对`IntegrationTransactionConflict`/`OrphanTransactionConflict`只提供安全重试；重试不改Feature键、不采用外部字节为Original、不忽略摘要。没有强制覆盖、强制删除事务或忽略并继续功能。
-- 范围脚本阻止 WSL、控制 Codex、历史补偿、自动改 Hooks feature、路径分叉和错误验收路径。
+- 范围脚本除阻止WSL、控制Codex、历史补偿、自动改Hooks feature、路径分叉和错误验收路径外，还阻止Existing裸`MOVEFILE_REPLACE_EXISTING`、Absent覆盖发布、Uninstall直接`DeleteFileW`、缺少replaced snapshot、snapshot冲突后继续、prepared backup覆盖late snapshot、提前删除Conflict artifacts及writer/installer替换逻辑分叉。
 - Codex App 真实 Hook 信任与卸载重装通过；多 Hook 全程无可见控制台闪烁且管道协议正常；独立 CLI 通过或明确记录环境阻塞，不冒充正式兼容通过。
 - 全部完成后停止，不自动开展下一版功能。
