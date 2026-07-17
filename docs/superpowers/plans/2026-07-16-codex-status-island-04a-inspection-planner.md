@@ -11,23 +11,25 @@
 ## 全局约束
 
 - 前置门禁：阶段一至三全部通过；阶段四总览已 review。
+- 本计划服从规范层级：设计文档定义产品可见行为，Roadmap定义公共接口与全局不变量，本计划只细化04A执行顺序、失败处理、测试和审核；不得静默改变产品流程，公共接口或全局不变量变化必须同步Roadmap及所有消费者计划。
 - 只消费阶段一 `CodexIntegrationPaths`，禁止重新拼接 CodePulse/runtime/bin。
 - 路径对象字段固定包含 `integration_transaction_file`，04A 只把它纳入 expectedDigest 的路径/存在性输入，不读取、创建或恢复 Journal；只有 `paths.rs` 可以拼接 `codex-integration-transaction.json`。
 - 真实 `%USERPROFILE%\.codex` 与 `%ProgramData%` 只能读；全部自动测试使用 TempDir。
+- CodePulse的配置管理范围只限用户层`%USERPROFILE%\.codex`中的CodePulse Hook。04A不得修改仓库层`.codex`、插件Hook或企业托管配置，不得扫描用户电脑上的全部仓库，也不得根据未扫描层推断“全局不存在其他CodePulse Hook”。Inspection/UI只能陈述用户层事实，不提供“全局唯一Hook”或`DuplicateCodePulseHookAcrossLayers`状态。
 - `features.hooks=false` 时 install/repair planner 返回 HooksDisabled；marker absent 不产生计划；marker present 且 representation/marker 可安全解析时允许生成只删除 CodePulse marker 的 uninstall 计划。
 - 企业托管禁用时返回 ManagedDisabled；不引导修改企业文件。
 - `features.codex_hooks` 只读兼容且永不改写；两个 Feature 键冲突或非布尔时 install/repair/uninstall 全部 ConfigConflict且 Runtime RemainStopped。
-- 2026-07-16 官方 Hooks 文档确认事件→matcher 组→handler 三层、基础 `command` 必需且 `commandWindows` 为 Windows override、TOML 标准字段 `command_windows`、timeout 单位秒/缺省 600、非托管 command Hook 按定义哈希信任；Matcher 仅部分事件生效，省略可匹配全部，UserPromptSubmit/Stop 不支持。官方未明确 managed requirements 接受弃用别名，因此企业文件只识别标准 `[features].hooks` 与 `allow_managed_hooks_only`。04A 实施第一步必须重新核对同一官方 Hooks/Config Reference；任一层级、字段、Matcher、Feature alias、timeout、信任或 managed 规则发生变化时，先停止并同步路线图、04A/04B/04C 与两份标准 Fixture，不能直接按旧计划写源码。
+- 2026-07-17 官方 Hooks/Config 文档确认事件→matcher组→handler三层、基础`command`必需且`commandWindows`为Windows override、TOML标准字段`command_windows`、timeout单位秒/缺省600、非托管command Hook按定义哈希信任；用户层、仓库层、插件等活动配置源会共同加载，多个文件中所有匹配Hook都会执行，同一事件的多个command Hook并发启动。Matcher仅部分事件生效，省略可匹配全部，UserPromptSubmit/Stop不支持。官方未明确managed requirements接受弃用别名，因此企业文件只识别标准`[features].hooks`与`allow_managed_hooks_only`。04A实施第一步必须重新核对同一官方Hooks/Config Reference；任一层级、合并执行、并发、字段、Matcher、Feature alias、timeout、信任或managed规则发生变化时，先停止并同步设计、Roadmap、04A/04B/04C与两份标准Fixture，不能直接按旧计划写源码。
 - 不创建自建 Dispatcher；planner 在 Codex 原生多 Hook 表示上逐项保留用户原 Hook，只增删带 CodePulse marker 的条目。
 - Fixture 路径替换禁止作用于原始 JSON/TOML 文本；JSON 反斜杠只交给 `serde_json` serializer，TOML 引号/反斜杠只交给 `toml_edit`。Inspection Exact、Planner Install/Repair、序列化快照和 04C E2E 必须调用同一个 loader/AST 反向规范化函数，并显式传入 `paths.installed_bridge`；任何其他 EXE 即使携带相同 marker 参数也不能成为 CodePulse-owned handler。
 - `modified` 允许后续 runtime 启动但 ListeningStatus phase 必须 partial，planner 只能通过显式 Repair 处理；Inspection 本身不保存 phase。
-- 每个任务完成后可单独 review；本计划门禁完成后停止，不自动进入 04B。
+- 每个任务完成后可单独review；本计划门禁完成后停止，不自动进入04B-1。
 
 ---
 
 ## 任务 1：实现只读表示方式、Hooks feature 与 marker inspection
 
-**独立交付物：** 任意合法/损坏的临时 Codex Home 都能在零写入前提下得到确定的表示方式、feature、CodePulse marker 与 Bridge 状态。
+**独立交付物：** 任意合法/损坏的临时用户层 Codex Home 都能在零写入前提下得到确定的表示方式、feature、CodePulse marker 与 Bridge 状态；结果明确标记为用户层管理事实，不推断其他活动配置层。
 
 **Files:**
 
@@ -589,7 +591,7 @@ pub fn prepare_codex_hook_change(
 
   固定覆盖：hooks=false + marker absent + install → HooksDisabled；hooks=false + marker present + repair → HooksDisabled；两者都不创建 PreparedCodexHookChange且文件系统不变。hooks=false + representation 可安全解析 + marker present + managedEntry exact → uninstall 成功产生只删除 CodePulse marker 的计划；modified/duplicate 也必须按 marker 精确删除并保留用户其他 handler；该计划 bridgeAction=Remove，不包含安装/更新 Bridge。hooks=false + marker absent/ambiguous 或 representation conflict → uninstall 分别返回 NoManagedEntry/ConfigConflict。用户手动把 config.toml 改为 hooks=true 后重新 inspect，才允许 install/repair preview。
 
-  ManagedDisabled 对 install/repair/uninstall 都返回 ManagedDisabled，不产生修改计划，不引导写 enterprise 文件。增加 Feature alias conflict（两个键相反、任一键非布尔）矩阵：install/repair/uninstall 全部返回 ConfigConflict，不产生 `PreparedCodexHookChange`，target bytes/preview 均不存在；CodePulse 不猜测键优先级、不改写任何 Feature 键。只有旧别名或双键同值时，按 effectiveState 使用上述 enabled/disabled 矩阵并保留弃用/重复 warning。本批次不引用 installer/runtime；uninstall 不启动 HTTP、不安装 Bridge的边界由 04B 命令测试覆盖。
+  ManagedDisabled对install/repair/uninstall都返回ManagedDisabled，不产生修改计划，不引导写enterprise文件。增加Feature alias conflict（两个键相反、任一键非布尔）矩阵：install/repair/uninstall全部返回ConfigConflict，不产生`PreparedCodexHookChange`，target bytes/preview均不存在；CodePulse不猜测键优先级、不改写任何Feature键。只有旧别名或双键同值时，按effectiveState使用上述enabled/disabled矩阵并保留弃用/重复warning。本批次不引用installer/runtime；uninstall不启动HTTP、不安装Bridge的边界由04B-2 coordinator与04B-3命令测试覆盖。
 
   运行：
 
@@ -659,9 +661,10 @@ pub fn prepare_codex_hook_change(
 ## 04A 完成门禁
 
 - inspection 对用户与企业配置只读，路径全部来自 CodexIntegrationPaths；JSON 不含动态 hookState/phase。
+- Inspection只声明用户层CodePulse Hook管理事实；不扫描仓库层/插件层，不修改企业托管配置，不输出无法可靠判断的全局唯一状态。跨层重复执行由阶段二Actor逻辑事件去重负责，04A不承担运行时去重。
 - `features.hooks`/`features.codex_hooks` 原始事实、弃用/重复 Issue、同值/冲突/非布尔、representation、marker、Bridge、generation-aware ListeningStatus 和 runtime startup decision 有完整 TempDir 表格测试；冲突三动作无 Prepared change。
 - `codepulse-hooks-exact.json` 与 `.toml` 完整定义相同八事件、command+Windows override、timeout=2、无 matcher/statusMessage/async；JSON 用 `serde_json` AST、TOML 用 `toml_edit` AST 注入 command。Exact 显式接收 `expected_bridge_path=paths.installed_bridge`，只有两个 command 都精确等于 expected command、参数无附加项且 matcher 结构标准时才进入 CodePulse-owned projection；wrong-path/old-path/单边 command/额外参数均非 Exact。空格、中文、单引号路径均可解析且语义正确；独立用户 group 不影响 Exact，混合 group 为 Modified且 Repair 后用户 handler 保留、CodePulse group 独立；Inspection、Planner Install、Repair、序列化快照、Duplicate/Modified 与 04C E2E 共用同一 loader，没有原始文本 replace或第二套模板。
 - exact/modified/partial+marker 与停止条件精确；idlePersistent 不参与。
 - 本地 disabled 的 install/repair 返回 HooksDisabled；安全 marker 的 uninstall 可生成精确删除计划；managed disabled 和 ambiguous conflict 全部只读。
 - 用户其他 Hook 语义保留；modified 只能显式 Repair；无 writer、installer、Tauri apply 或 Vue UI。
-- 全部通过后停止，未经 review 不得执行 04B。
+- 全部通过后停止，未经review不得执行04B-1。

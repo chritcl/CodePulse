@@ -4,7 +4,7 @@
 
 **目标：** 交付可独立构建且不弹控制台的 Windows GUI Subsystem Bridge、双方共用的版本化最小协议、仅回环且带启动令牌/完整 Discovery owner 的 HTTP 接收器，以及经过 Machine+Subsystem 校验后进入 Tauri 安装包的 Bridge 资源。
 
-**架构：** Bridge 是由每次 Codex Hook 单独启动的短进程，不保存任务状态；它读取官方 Hook JSON、完成第一层脱敏/分类、读取发现文件并进行一次 HTTP POST。主应用 HTTP 层执行认证、限流、二次校验和有界入队，阶段一不启动聚合器，也不修改真实 Codex 配置。
+**架构：** Bridge 是由每次 Codex Hook 单独启动的短进程，不保存任务状态；它读取官方 Hook JSON、生成表示单次投递的随机`eventId`、完成第一层脱敏/分类、读取发现文件并进行一次 HTTP POST。它不扫描用户层/仓库层/插件层配置，不判断Hook来源层，也不持久化任何去重状态；跨层同一逻辑事件由阶段二单线程Actor的第二层有界去重处理。主应用 HTTP 层执行认证、限流、二次校验和有界入队，阶段一不启动聚合器，也不修改真实 Codex 配置。
 
 **技术栈：** Cargo workspace、Rust 2021、serde、serde_json、getrandom 0.4、Windows API、Axum 0.8、Tokio、PowerShell、Tauri 2 resources。
 
@@ -46,6 +46,7 @@
 - `CodexDiscovery` 与总体路线图 3.1 完全一致。
 - wire JSON 字段使用 camelCase，枚举值使用 snake_case；所有时间都是 Unix 毫秒 `i64`。
 - `validate_event(&CodexBridgeEvent) -> Result<(), ProtocolError>` 检查版本、必填字符串、枚举组合、时间非负、NUL/非空白控制字符和长度边界；eventId 固定为 16 个随机字节的 32 位小写十六进制。
+- `eventId`只标识一次Bridge投递，不承诺同一逻辑Hook事件跨配置层相同；Bridge不得为了生成逻辑键而读取或扫描配置层，也不得保存跨进程状态。
 - eventType/stage 组合固定为：SessionStarted/ToolFinished/SubagentStarted/SubagentFinished/TurnStopped 的 stage=None；TurnStarted=Analyzing；PermissionRequested=WaitingApproval；ToolStarted 只允许 Reading/Editing/RunningCommand/RunningTests。TurnStarted 必须有非空 taskSummary；ToolStarted 和 PermissionRequested 必须有非空 operationSummary，清理后为空时分别使用“执行工具”和“等待 Codex 授权”。Subagent 事件必须有 agentId，ToolStarted/ToolFinished 必须有 toolUseId，非 ToolFinished 的 operationResult 必须为 Unknown。
 - `truncate_chars(value, max_chars)` 按 Unicode 标量值截断，不能在 UTF-8 字节中间切断。
 - 常量固定为 `MAX_HTTP_BODY_BYTES = 16 * 1024`、`MAX_STDIN_BYTES = 64 * 1024`、`MAX_ID_CHARS = 256`、`MAX_PROJECT_NAME_CHARS = 120`、`MAX_CWD_CHARS = 2048`、`MAX_TASK_SUMMARY_CHARS = 120`、`MAX_OPERATION_SUMMARY_CHARS = 160`、`MAX_OUTPUT_CHARS = 300`、`MAX_ERROR_CHARS = 300`。
@@ -497,7 +498,7 @@ impl CodexHttpHandle {
   <program_data>\OpenAI\Codex\requirements.toml
   ```
 
-  HTTP runtime、阶段二 manager、04A inspection/planner、04B writer/installer/startup/commands/self-check 与 04C E2E/范围脚本必须持有或借用该对象，不得接收裸 `runtime_dir`、`bin_dir` 后再次拼接。只有 `paths.rs` 可以拼接 `codex-integration-transaction.json`；其他模块只读取 `paths.integration_transaction_file`。本任务不调用 Tauri path API；把根目录解析留给 Tauri 组装层。
+  HTTP runtime、阶段二manager、04A inspection/planner、04B-1事务基础、04B-2 writer/installer、04B-3 startup/commands/self-check与04C自动行为矩阵/范围脚本必须持有或借用该对象，不得接收裸`runtime_dir`、`bin_dir`后再次拼接。只有`paths.rs`可以拼接`codex-integration-transaction.json`；其他模块只读取`paths.integration_transaction_file`。本任务不调用Tauri path API；把根目录解析留给Tauri组装层。
 
   运行：
 
@@ -584,7 +585,7 @@ impl CodexHttpHandle {
 
 **消费接口：** workspace 中 `codepulse-codex-bridge` 二进制；Tauri 的 `TAURI_ENV_TARGET_TRIPLE`。
 
-**产生接口：** 构建期 `src-tauri/binaries/codepulse-codex-bridge.exe`；安装包资源相对路径 `bin/codepulse-codex-bridge.exe`；主应用编译期常量 `env!("CODEPULSE_TARGET_TRIPLE")`。04B 只通过 `CodexIntegrationPaths.packaged_bridge` 读取资源，不读取 Cargo target 目录。
+**产生接口：** 构建期 `src-tauri/binaries/codepulse-codex-bridge.exe`；安装包资源相对路径 `bin/codepulse-codex-bridge.exe`；主应用编译期常量 `env!("CODEPULSE_TARGET_TRIPLE")`。04B-2只通过`CodexIntegrationPaths.packaged_bridge`读取资源，不读取Cargo target目录。
 
 - [ ] **步骤 1：先写资源验证失败脚本**
 
@@ -608,7 +609,7 @@ impl CodexHttpHandle {
 
   构建前删除旧的暂存文件；构建后只能从 `$repoRoot\src-tauri\target\$target\release\codepulse-codex-bridge.exe` 复制到 `$repoRoot\src-tauri\binaries\codepulse-codex-bridge.exe`，随即调用资源验证脚本并传入同一个 `$target`。文件修改时间不再作为架构或目标正确性的证据。
 
-  `src-tauri/build.rs` 在调用 `tauri_build::build()` 前读取 Cargo 提供的 `TARGET`，只接受上述两个 triple，并输出 `cargo:rustc-env=CODEPULSE_TARGET_TRIPLE=<target>`；04B installer 使用同一编译期字符串验证打包资源架构。
+  `src-tauri/build.rs` 在调用`tauri_build::build()`前读取Cargo提供的`TARGET`，只接受上述两个triple，并输出`cargo:rustc-env=CODEPULSE_TARGET_TRIPLE=<target>`；04B-2 installer使用同一编译期字符串验证打包资源架构。
 
   `package.json` 新增：
 
@@ -695,6 +696,8 @@ impl CodexHttpHandle {
   ```
 
 ## 阶段一完成门禁
+
+- Bridge保持无状态：不扫描用户层、仓库层、插件或企业配置，不判断全局唯一Hook，不维护持久去重；随机`eventId`只作为第一层单次投递ID，阶段二负责逻辑事件去重。
 
 - `CodexBridgeEvent` 与发现文件契约只在共享包定义一次。
 - `CodexIntegrationPaths` 是唯一目录构造对象；所有路径从传入根目录推导，功能模块不再自行拼接 CodePulse/runtime/bin。

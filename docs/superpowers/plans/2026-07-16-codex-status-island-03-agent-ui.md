@@ -601,6 +601,8 @@ defineEmits<{
 
 ## 阶段三完成门禁
 
+- Vue只消费阶段二已去重的权威快照；不读取`eventId`、不构造逻辑事件键，也不补做用户层/仓库层/插件层去重。随机投递去重与跨层逻辑事件去重都由Rust单线程Actor独占。
+
 - IPC 类型、函数名、命令和事件与 Rust/总体路线图完全一致；dormant revision=0 空快照是成功结果；旧 revision 和卸载后异步结果不会覆盖新状态。
 - 前端不因 not_installed/disabled/Runtime restart 重置 revision；revision=20 旧任务 → revision=21 空快照 → revision=22 新 Runtime 任务的测试通过。
 - 紧凑态、列表、详情、返回和清除均有组件测试；没有授权、打开 Codex、暂停、终止或继续操作。

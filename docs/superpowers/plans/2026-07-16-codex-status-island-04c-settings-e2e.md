@@ -2,28 +2,30 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**目标：** 在 04B 命令与生命周期已审核通过后，实现设置卡、手动启用全局 Hooks 的两阶段引导、预览确认、空闲常驻/命令摘要显示偏好，并完成自动化与 Windows 原生 App/CLI 真实验收。
+**目标：** 在04B-3命令与生命周期已审核通过后，实现设置卡、外部全局Hooks前置条件说明、独立安装/卸载预览确认、空闲常驻/命令摘要显示偏好，并分别完成A自动行为矩阵、B Codex App真实验收和C独立CLI真实验收。
 
-**架构：** `useCodexIntegration` 分别维护静态 inspection 与唯一动态 listeningStatus，只编排 04B inspect/preview/apply/retry/self-check 和权威 listening event；设置卡不读写文件，事务 Conflict 时只显示安全恢复重试；前端偏好只进入 localStorage 与跨窗口事件；Widget 使用阶段三统一投影 `toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)`。自动 E2E 使用 TempDir/loopback/ManualClock 覆盖跨 Runtime revision/generation、Prepared 后 optimistic precondition check、Existing 的 `ReplaceFileW` 原子替换与target/snapshot双`StableArtifactLease`、Absent publish后的target Lease、Removal tombstone Lease、活动writer/writable mapping/delete access、Lease跨Journal阶段持有、第二次restore重新冻结、Handle-based cleanup、Integration Transaction 四阶段恢复、孤立 Journal temp、action-specific invariant、标准 Fixture 统一 AST loader/稳定 Bridge路径绑定投影与 Discovery owner，真实验收单独记录 GUI Bridge 无控制台闪烁。
+**架构：** `useCodexIntegration` 分别维护静态 inspection 与唯一动态 listeningStatus，只编排04B-3 inspect/preview/apply/retry/self-check和权威listening event；设置卡不读写文件，事务Conflict时只显示安全恢复重试；前端偏好只进入localStorage与跨窗口事件；Widget使用阶段三统一投影`toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)`。A自动行为矩阵使用TempDir/loopback/ManualClock覆盖跨Runtime revision/generation、两层事件去重、事务/恢复/Lease/cleanup等内部不变量，但不证明真实Codex兼容。B App真实验收单独验证官方信任、真实Hook、App来源、GUI无闪烁、多会话和安装/修复/卸载；C独立CLI真实验收必须在PowerShell可独立调用的官方CLI环境完成版本、真实任务、真实Hook、来源、App并行、授权及完成/失败场景。
 
 **技术栈：** Vue 3 Composition API、Pinia/localStorage、Tauri JS API、Vitest、`@vue/test-utils`、Rust TempDir/ManualClock、PowerShell、pnpm 10.33.2。
 
 ## 全局约束
 
-- 前置门禁：04B 全部通过并已单独 review。
+- 前置门禁：04B-1、04B-2、04B-3均已分别审核通过，尤其04B-3已经完成公开commands与Runtime编排；不得把04B内部任一未审部分带入04C。
+- 本计划服从设计→Roadmap→详细计划的规范层级，不改变公共接口、四正式事务阶段、SnapshotStore或Integration Journal。
+- CodePulse只安装、修复和卸载用户层`%USERPROFILE%\.codex`中的CodePulse Hook；不修改仓库层`.codex`、插件Hook或企业托管配置，不扫描全部仓库。UI只显示用户层管理事实，不显示无法证明的“全局唯一Hook”或`DuplicateCodePulseHookAcrossLayers`状态。
 - 设置页与 Widget 使用同一个 `CodexListeningStatus` 类型、命令和 `codex-listening-status-changed` 权威事件，不复制 phase 派生。
 - CodePulse 只能检测和说明 `features.hooks=false`；用户必须在 Codex 配置或官方 UI 手动开启，再返回重新检测。
-- “启用全局 Hooks”和“安装 CodePulse Hook”是两个明确确认项，不能合并成一次 apply。
+- “全局Hooks是否启用”是Codex外部配置前置条件，只能由用户在Codex配置或官方UI中手动修改；它不是CodePulse布尔开关，也不进入apply。“安装CodePulse Hook”和卸载分别是独立的preview/confirm动作。
 - idlePersistent 只影响 running+无任务的显示，不能 invoke install、repair、ensure_started 或 self-check。
 - Inspection 只含静态配置/Bridge 事实，不含 hookState/phase；listening event 不能修改 inspection。
 - 只有 `codex_hooks` 时显示固定弃用提示并按 effectiveState 呈现 enabled/disabled 行为；两个 Feature 键冲突或非布尔时显示配置冲突且无安装、修复、卸载按钮，CodePulse 不改写两键。
 - 本地 hooks=false 且存在安全 CodePulse marker 时，UI 在手动启用说明之外提供“预览卸载 CodePulse Hook”；不得提供安装、修复或自动启用。
 - 真实验收记录只在执行本计划时创建于 `docs/superpowers/verifications/2026-07-16-codex-status-island-e2e.md`。
-- CLI 环境阻塞必须如实记录并阻止“正式兼容已通过”声明。
-- 自动 E2E 的路径对象只读取 `integration_transaction_file`；事务 staging 路径由 transactionId+target filename 推导，不扩张 `CodexIntegrationPaths`。范围脚本断言路径对象不存在第二个含 `transaction` 的字段、startup 只调用 `recover_interrupted_codex_integration_transaction()`，并确认只有 `paths.rs` 拼接 `codex-integration-transaction.json`。
+- CLI环境阻塞必须如实记录为“环境阻塞”。此时文档与实现可以完成、App门禁可以单独通过，但阻止“Windows原生CLI与App完整正式兼容已通过”声明。
+- A自动行为矩阵的路径对象只读取`integration_transaction_file`；事务staging路径由transactionId+target filename推导，不扩张`CodexIntegrationPaths`。范围脚本断言路径对象不存在第二个含`transaction`的字段、startup只调用`recover_interrupted_codex_integration_transaction()`，并确认只有`paths.rs`拼接`codex-integration-transaction.json`。
 - 同一 Integration Journal 必须包含Config/Bridge/Record适用的target temp、prepared backup、replaced snapshot、conflict-preserved-current与removed tombstone路径；所有路径都由transactionId+target filename确定性推导。optimistic precondition check只负责重读分类，不能称为原子CAS；Existing、Absent、Removal必须调用04B统一的三个原子语义接口，writer/installer不得分叉实现。
-- `StableArtifactLease`只存在于04B进程内事务句柄，不进入IPC、UI、Journal或SnapshotStore；04C只验证其外部行为与公开Conflict，不建立第二套前端状态。
-- 2026-07-17重新核对Microsoft官方[CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[ReplaceFileW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew)、[MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)、[SetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle)、[GetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle)、[GetFileInformationByHandleEx](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getfileinformationbyhandleex)、[FILE_ID_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info)、[CreateFileMappingW](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-createfilemappingw)、[MapViewOfFile](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffile)、[DeleteFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-deletefilew)与[Closing and Deleting Files](https://learn.microsoft.com/en-us/windows/win32/fileio/closing-and-deleting-files)；E2E和范围门禁按“仅FILE_SHARE_READ排斥writer/writable mapping/delete access、volume serial+128位file ID、ReplaceFileW实际snapshot、no-replace move、同一DELETE Handle的FileDispositionInfo删除”验收。
+- 普通`StableArtifactLease`只存在于04B进程内事务句柄，不进入IPC、UI、Journal或SnapshotStore；04C只验证其外部行为与公开Conflict，不建立第二套前端状态。StructureCommitted后先释放普通事务Lease，再新开`GENERIC_READ | DELETE`、仅`FILE_SHARE_READ`的cleanup Handle，并使用新取得的同一 cleanup Handle 完成身份校验、摘要校验和删除标记；禁止给原Lease增加`DELETE`或按路径删除。
+- 2026-07-17重新核对Microsoft官方[CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[ReplaceFileW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew)、[MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)、[SetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle)、[GetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle)、[GetFileInformationByHandleEx](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getfileinformationbyhandleex)、[FILE_ID_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info)、[CreateFileMappingW](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-createfilemappingw)、[MapViewOfFile](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffile)、[DeleteFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-deletefilew)与[Closing and Deleting Files](https://learn.microsoft.com/en-us/windows/win32/fileio/closing-and-deleting-files)；A矩阵按“仅FILE_SHARE_READ排斥writer/writable mapping/delete access、volume serial+128位file ID、ReplaceFileW实际snapshot、no-replace move、新cleanup Handle持有DELETE并在该Handle上FileDispositionInfo删除”验收。不同占用场景的生产断言统一为`SharingViolation`/`ActiveArtifactHandleConflict`，UI只显示“目标文件正在被其他程序占用，请关闭相关程序后重新尝试安全恢复。”，不诊断具体来源。
 - `IntegrationTransactionConflict`/`OrphanTransactionConflict` 时设置页只提供“重新尝试安全恢复”；不得提供强制覆盖、强制删除事务、忽略并继续，也不得展示Token、完整配置正文、用户命令或完整用户目录。
 - 本计划完成后停止，不自动开始后续功能。
 
@@ -42,7 +44,7 @@
 - Create: `src/composables/useCodexIntegration.ts`
 - Create: `src/composables/useCodexIntegration.test.ts`
 
-**消费接口：** 04B 四个 integration Tauri commands、阶段二 `getCodexListeningStatus()`/`runCodexSelfCheck()` 与 listening event。
+**消费接口：** 04B-3四个integration Tauri commands、阶段二`getCodexListeningStatus()`/`runCodexSelfCheck()`与listening event。
 
 **产生接口：**
 
@@ -374,9 +376,9 @@ export interface CodexDisplayPreferences {
 
 ---
 
-## 任务 4：建立自动化 E2E、PE 与范围门禁
+## 任务4（A）：建立自动行为矩阵、PE与范围门禁
 
-**独立交付物：** TempDir/loopback/ManualClock 全链路可重复验证设计十四项场景、Feature alias/disabled action matrix、跨 Runtime revision/generation、Integration Transaction ID-first/四阶段逐文件恢复、action-specific invariant、标准 Fixture AST 语义、Discovery owner 竞态、墙钟回拨与完整 PE metadata，不触碰真实用户配置。
+**独立交付物：** TempDir/loopback/ManualClock可重复验证十四项设计场景对应的协议、聚合状态、优先级、生命周期、文件事务、恢复、generation/revision、端口fallback、用户Hook保留、等待信任、Bridge更新与卸载等内部行为和不变量，不触碰真实用户配置。该矩阵不能证明真实Codex App/CLI的信任、触发或正式兼容。
 
 **Files:**
 
@@ -389,9 +391,11 @@ export interface CodexDisplayPreferences {
 
 **产生接口：** 无生产接口；范围脚本作为发布门禁。
 
-- [ ] **步骤 1：先写十四项核心 E2E 失败测试**
+- [ ] **步骤1：先写十四项设计场景自动行为失败测试**
 
-  明确测试名覆盖 CLI/App 普通任务、两端并行、读取/编辑/命令/测试、PermissionRequest、测试先失败后成功 Stop、最终失败、完成 5 分钟删除、失败 clear、server 退出无历史补偿、47653 冲突 fallback、用户 Hook 保留、exact 无真实事件 awaiting_trust、新资源修复旧 Bridge。
+  明确测试名覆盖模拟CLI/App来源的普通任务、两端并行、读取/编辑/命令/测试、PermissionRequest、测试先失败后成功Stop、最终失败、完成5分钟删除、失败clear、server退出无历史补偿、47653冲突fallback、用户Hook保留、exact无当前generation事件时awaiting_trust、新资源修复旧Bridge。这里的模拟来源只证明内部行为，不作为B/C真实环境证据。
+
+  增加跨配置层逻辑事件去重用例：用两个模拟活动Hook文件分别向Bridge投递相同`sessionId`、`turnId`、`eventType`以及适用的`toolUseId`/`agentId`，但使用不同随机`eventId`；断言第一层eventId去重与第二层逻辑事件去重共同作用，最终只更新一次状态、只提醒一次且子智能体只计数一次。再分别改变turnId、toolUseId、agentId，断言合法连续事件不会被误去重；填满并越过缓存容量，断言两层缓存都有界且只由单线程Actor维护。逻辑键不得包含prompt正文、cwd、文件路径、命令正文、tool input/output或用户内容摘要；实施前必须按最新官方Hook字段重新确认各eventType的键字段。
 
   运行：
 
@@ -407,9 +411,9 @@ export interface CodexDisplayPreferences {
 
   覆盖：editing 事件后墙钟/occurredAt 回拨两小时再收到 running_tests，必须进入 running_tests；较小 occurredAt 的 PermissionRequested 立即 waiting_approval；未安装 Hook/Runtime dormant 时 get snapshot 成功且 tasks=[]、不产生 service_error；HooksDisabled install/repair 无 prepared/Bridge/runtime，safe marker uninstall 允许且不启动 Runtime；只有旧 alias 按有效值工作并带弃用 Issue；双键同值带 Duplicate warning；双键冲突/非布尔使三动作 ConfigConflict、Runtime RemainStopped且无 Prepared/Journal；手动消除冲突重新 inspect 后才恢复动作；exact/modified/safe marker 启动；idlePersistent 不启动。
 
-  固定 Runtime 重启序列共用同一个进程级 `CodexSnapshotStore`：安装并运行任务至 revision=20、后端 `runtime_generation=1`/`authenticated_generation=1`/running → 卸载 → stop 发布 revision=21 空快照、UI 清旧任务、not_installed → 重新安装 `runtime_generation=2`/`authenticated_generation=None`/awaiting_trust → generation=1 晚到事件忽略 → 第一条 generation=2 真实事件后 running且任务 revision>21。断言新事件不被旧 revision 拒绝，第一条真实新 Hook 前不直接 running。
+  固定Runtime重启序列共用同一个进程级`CodexSnapshotStore`：模拟安装并运行任务至revision=20、后端`runtime_generation=1`/`authenticated_generation=1`/running→卸载→stop发布revision=21空快照、UI清旧任务、not_installed→重新安装`runtime_generation=2`/`authenticated_generation=None`/awaiting_trust→generation=1晚到事件忽略→第一条generation=2已认证模拟事件后running且任务revision>21。该用例只证明内部generation不变量；第一条真实Hook由B/C验收，不得由本用例替代。
 
-  Integration Transaction E2E 至少逐项覆盖：
+  Integration Transaction自动行为矩阵至少逐项覆盖：
 
   - 调用顺序：transactionId 在 `prepare_config_apply`/`prepare_bridge_install` 前分配；两个 prepare 收到同一 ID，且 Prepared Journal 原子持久化前稳定配置/Bridge/记录无变化、无 staging；
   - Optimistic precondition check：Prepared已持久化 → 用户修改Config → staging创建前由`verify_artifact_matches_expected_original()`发现变化 → Config/Bridge/Record都不写、不创建新staging；另一个进程在expectedDigest检查后、Prepared写入后修改任一目标也不能被覆盖；该测试只证明早期发现，不作为原子替换证明；
@@ -418,6 +422,7 @@ export interface CodexDisplayPreferences {
   - Existing正常替换：最后一次检查通过→`ReplaceFileW`成功→取得target Lease→取得snapshot Lease→两个file ID不同→Handle snapshot=originalDigest且Handle target=targetDigest→允许继续；snapshot创建、任一Lease、Handle摘要或IdentityChanged失败都停止下一文件并保留可恢复artifact；
   - Existing活动写句柄：外部以`GENERIC_WRITE`和兼容share打开原目标→ReplaceFileW成功→旧Handle继续指向snapshot并写入→snapshot Lease取得失败→不读取不稳定摘要、不清snapshot、Conflict；外部关闭Handle后retry取得Lease并用最终snapshot digest按late modification处理；
   - Writable mapping：原目标存在`PAGE_READWRITE`/`FILE_MAP_WRITE`映射→ReplaceFileW成功或sharing failure均可→不得清映射对应capture；Lease失败立即Conflict，映射释放后retry；
+  - 统一生产错误：活动writer、writable mapping、delete/rename Handle分别建立独立fixture和测试名，但每例只断言`StableArtifactLeaseError::SharingViolation`以及公开`CodexIntegrationError::ActiveArtifactHandleConflict`；UI断言通用占用文案，不断言具体进程、Handle类型或mapping来源；
   - Existing最后时刻修改：外部修改发生在最后一次检查之后、系统原子替换内部之前→`ReplaceFileW`捕获snapshot→两个Lease成功后Handle snapshot不等于originalDigest→返回`CapturedLateModification`且外部字节不丢；只有第一次target/snapshot双Lease稳定才释放相关Lease并执行第二次`ReplaceFileW`，之后重新取得restored target/conflict-current双Lease并验证；第一次snapshot Lease失败不执行第二次，第二次后任一Lease失败不清任何版本并Conflict；
   - Lease排他性：Lease成功后另一线程请求`GENERIC_WRITE`、rename、delete都得到sharing violation；Lease期间两次Handle摘要、volume serial/file ID与路径身份不变，普通只读与Runtime self-check仍成功；
   - Absent最后时刻出现与发布后writer：检查时Bridge、Record或新Hook目标absent→`BeforeAtomicReplace`后外部创建目标→no-replace publish返回`DestinationAppeared`→外部目标字节不变、transaction temp保留；publish成功后外部立即写打开target→target Lease失败或Handle摘要不符→target保留、Journal保留且Conflict；
@@ -434,14 +439,14 @@ export interface CodexDisplayPreferences {
   - Uninstall部分捕获：Marker=Absent且无引用时，Bridge absent+Record present继续把Record原子捕获为tombstone，Bridge present+Record absent继续捕获Bridge；只有两目标absent且tombstone受当前Journal控制才返回Uninstalled/StructureCommitted，Marker absent但Bridge仍存在不得提交；
   - Lease跨阶段：Bridge/Record Lease持有到BridgeApplied Journal持久化，Config/Bridge/Record最终Lease持有到StructureCommitted持久化；`AfterHashBeforeStagePersist`注入阶段写失败时Lease保持且不继续任何后续操作，进程崩溃后recovery重新获取，Lease不出现在Journal/IPC；
   - Rollback/recovery Lease：使用current target、snapshot/conflict-current/tombstone/prepared backup前逐个Lease→identity→Handle摘要；高优先级Lease失败时不降级到prepared backup、不删除任何capture，关闭外部Handle后的安全retry才继续；
-  - StructureCommitted Handle cleanup：正常snapshot用`CreateFileW(GENERIC_READ | DELETE, FILE_SHARE_READ, OPEN_EXISTING)`取得同一Handle→取得file ID→Handle摘要=originalDigest→`SetFileInformationByHandle(FileDispositionInfo)`→close→路径absent；验证后外部尝试替换路径被sharing violation阻止，不会删除错误file ID；cleanup Handle失败或delete pending只Warning、文件和StructureCommitted Journal保留、正确Hook/Bridge不回滚；Conflict artifact永不进入普通cleanup；
+  - StructureCommitted cleanup Handle：先释放普通事务Lease，再用`CreateFileW(GENERIC_READ | DELETE, FILE_SHARE_READ, OPEN_EXISTING)`新开cleanup Handle；使用新取得的同一 cleanup Handle 完成file identity读取、expected digest计算、identity/digest复核和`SetFileInformationByHandle(FileDispositionInfo)`删除标记，close后检查路径absent、delete pending或path reuse；验证后外部尝试替换路径被sharing violation阻止，不会删除错误file ID；cleanup失败只Warning，文件和StructureCommitted Journal保留，正确Hook/Bridge不回滚；Conflict artifact永不进入普通cleanup；
   - ConfigApplied 后用户并发修改配置或 Bridge：Bridge=ExternalModification+Record=Target 返回 Conflict，不覆盖用户字节、不删除仍被引用 Bridge并保留诊断；
   - 每个故障注入点后读取 Hook 与稳定 Bridge，断言永远不出现 Hook 指向缺失 Bridge；
   - StructureCommitted 后 self-check 超时/失败：Hook/Bridge 保留、phase partial/service_error；cleanup 失败仅 warning；首次 install验证失败停止临时 Runtime/发布空快照/删 own discovery；Repair失败保持原合法 Runtime/任务。
 
-  Conflict安全重试E2E固定覆盖：文件未处理或活动writer/mapping/delete Handle仍存在时retry重新获取Lease但仍Conflict且字节不变；外部关闭Handle后retry读取最终Handle摘要并继续；用户手工恢复Config为Original后retry完成回滚并以Handle清理Journal；三者恢复为Target且invariant通过时retry在Lease下提升StructureCommitted；并发点击由operation mutex只执行一次状态机；无Journal/孤立temp返回NoPendingTransaction；成功后重新Inspection并发布ListeningStatus。UI只显示“重新尝试安全恢复”，不显示强制覆盖/丢弃/忽略入口。
+  Conflict安全重试自动行为矩阵固定覆盖：文件未处理或活动writer/mapping/delete Handle仍存在时retry重新获取Lease但仍Conflict且字节不变；外部关闭Handle后retry读取最终Handle摘要并继续；用户手工恢复Config为Original后retry完成回滚并以Handle清理Journal；三者恢复为Target且invariant通过时retry在Lease下提升StructureCommitted；并发点击由operation mutex只执行一次状态机；无Journal/孤立temp返回NoPendingTransaction；成功后重新Inspection并发布ListeningStatus。UI只显示“重新尝试安全恢复”，不显示强制覆盖/丢弃/忽略入口。
 
-  标准 Fixture E2E：分别用 `C:\Users\Test User\AppData\Local\CodePulse\bin\codepulse-codex-bridge.exe`、`C:\Users\测试用户\AppData\Local\CodePulse\bin\codepulse-codex-bridge.exe` 和含单引号的 `C:\Users\O'Connor\AppData\Local\CodePulse\bin\codepulse-codex-bridge.exe` 稳定 Bridge 路径，从空 JSON/TOML 配置执行实际 Install，再读取实际安装结果。JSON 解析为 `serde_json::Value`，TOML 解析为 `toml_edit::DocumentMut`；调用 04A 同一 `normalize_codepulse_hook_commands_for_exact(..., paths.installed_bridge.as_path())`，只提取CodePulse-owned groups并在AST command value中反向规范化具体路径，再与`codepulse-hooks-exact.json`/`.toml`母版AST比较。分别断言JSON/TOML可解析、command语义正确、JSON serializer正确处理反斜杠、TOML单引号不破坏文档、无placeholder残留。Repair modified后重复相同比较；用户已有独立matcher group不进入projection且CodePulse仍Exact；用户handler与CodePulse handler混合同group时为Modified，Repair后用户Handler规范AST深度相等且CodePulse group独立。wrong-path EXE+marker、旧Bridge路径、基础/Windows command任一个错误或缺失、附加`--extra`均不得变成Exact。禁止`actual_text.replace(actual_path, ...)`，测试不得内嵌第二套八事件期望或第二个loader。
+  标准Fixture自动行为矩阵：分别用 `C:\Users\Test User\AppData\Local\CodePulse\bin\codepulse-codex-bridge.exe`、`C:\Users\测试用户\AppData\Local\CodePulse\bin\codepulse-codex-bridge.exe` 和含单引号的 `C:\Users\O'Connor\AppData\Local\CodePulse\bin\codepulse-codex-bridge.exe` 稳定 Bridge 路径，从空 JSON/TOML 配置执行实际 Install，再读取实际安装结果。JSON 解析为 `serde_json::Value`，TOML 解析为 `toml_edit::DocumentMut`；调用 04A 同一 `normalize_codepulse_hook_commands_for_exact(..., paths.installed_bridge.as_path())`，只提取CodePulse-owned groups并在AST command value中反向规范化具体路径，再与`codepulse-hooks-exact.json`/`.toml`母版AST比较。分别断言JSON/TOML可解析、command语义正确、JSON serializer正确处理反斜杠、TOML单引号不破坏文档、无placeholder残留。Repair modified后重复相同比较；用户已有独立matcher group不进入projection且CodePulse仍Exact；用户handler与CodePulse handler混合同group时为Modified，Repair后用户Handler规范AST深度相等且CodePulse group独立。wrong-path EXE+marker、旧Bridge路径、基础/Windows command任一个错误或缺失、附加`--extra`均不得变成Exact。禁止`actual_text.replace(actual_path, ...)`，测试不得内嵌第二套八事件期望或第二个loader。
 
   `DiscoveryOwner` 竞态：Runtime A 写 owner A，Runtime B 原子替换 owner B，A 的 stop/drop/RunEvent::Exit 调用 `remove_discovery_if_owned()` 返回 `ReplacedByNewRuntime` 且不删除 B；相同 PID不同 token、损坏文件均不盲删。PE 覆盖无签名、x64/ARM64 反配、Optional Header 太短、非法 Magic、Console/未知 Subsystem、不支持 triple 和旧 target误复制；x64/ARM64+WindowsGui 通过。正常/超时退出仍只启动一次 shutdown。
 
@@ -454,7 +459,7 @@ export interface CodexDisplayPreferences {
   powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-codex-bridge-resource-validation.ps1
   ```
 
-  预期：审查回归尚未进入 E2E，测试失败。
+  预期：审查回归尚未进入自动行为矩阵，测试失败。
 
 - [ ] **步骤 3：实现临时目录/内存 harness**
 
@@ -468,7 +473,7 @@ export interface CodexDisplayPreferences {
   Pop-Location
   ```
 
-  预期：核心十四项与审查回归全部通过。
+  预期：十四项设计场景的自动行为矩阵、跨层逻辑事件去重与审查回归全部通过；结果不写成真实App/CLI兼容结论。
 
 - [ ] **步骤 4：实现并运行范围脚本**
 
@@ -484,7 +489,7 @@ export interface CodexDisplayPreferences {
 
   预期：脚本逐项输出通过。
 
-- [ ] **步骤 5：全量自动验收并提交**
+- [ ] **步骤5：全量运行A自动行为矩阵并提交**
 
   运行：
 
@@ -516,9 +521,9 @@ export interface CodexDisplayPreferences {
 
 ---
 
-## 任务 5：完成 Windows 原生 App 与独立 CLI 真实验收
+## 任务5（B/C）：分别完成Codex App与独立CLI真实验收
 
-**独立交付物：** 有日期、版本、来源、客观结果与发布影响的验收记录；状态只允许“通过”“失败”“环境阻塞”。
+**独立交付物：** 同一记录中严格分栏保存B Codex App真实验收与C独立CLI真实验收的日期、版本、来源、客观结果和发布影响；状态只允许“通过”“失败”“环境阻塞”。A自动行为测试不得填入B/C证据栏。
 
 **Files:**
 
@@ -557,7 +562,9 @@ export interface CodexDisplayPreferences {
 
   预期：手动启用前返回 False；CodePulse 没有自动改 feature。
 
-- [ ] **步骤 3：用设置页安装并验证真实 Hook 信任**
+### B. Codex App真实验收
+
+- [ ] **步骤3：用设置页安装并验证App真实Hook信任**
 
   在 preview 确认八事件、稳定 Bridge 和警告后 apply；立即读取实际安装结果，按表示方式解析成 JSON/TOML AST，调用 04A 同一 `normalize_codepulse_hook_commands_for_exact(..., paths.installed_bridge.as_path())`只提取并规范化CodePulse-owned projection，再确认matcher组与对应标准Fixture AST语义相等且用户其他独立Handler深度相等。禁止在真实配置原始文本上替换Bridge路径，也不能把wrong-path/extra-arg handler规范化成Exact。状态先为awaiting_trust。启动新Codex App任务，在官方UI信任CodePulse command Hook并提交只读请求；第一条属于当前Runtime generation的真实事件后才变running，来源包含App。不得把token或generation诊断细节写入验收文档。
 
@@ -570,9 +577,9 @@ export interface CodexDisplayPreferences {
 
   预期：稳定 EXE 存在，发现文件 PID/port/version 有效；文档不记录 token。
 
-- [ ] **步骤 4：验证 App 状态、并行与生命周期**
+- [ ] **步骤4：验证App多会话、来源、状态与生命周期**
 
-  两个 App 任务覆盖读取、编辑临时测试仓库、命令、测试、授权、先失败后修复、明确无法完成；记录主/卫星、列表/详情、子任务计数、中间失败、完成 5 分钟、失败 clear、鼠标离开一秒、无授权按钮。10/30 分钟只用 ManualClock 自动证据，不在发布构建暴露调试接口。
+  两个真实App任务覆盖读取、编辑临时测试仓库、命令、测试、授权、先失败后修复、明确无法完成；确认来源识别为App，并记录主/卫星、列表/详情、子任务计数、中间失败、完成5分钟、失败clear、鼠标离开一秒、无授权按钮。10/30分钟只用A矩阵的ManualClock证据，不在发布构建暴露调试接口，也不把该自动证据冒充真实App时长验收。
 
   运行：
 
@@ -585,11 +592,11 @@ export interface CodexDisplayPreferences {
 
   预期：自动证据通过，人工 App 场景逐项记录。
 
-- [ ] **步骤 5：验证 GUI 无闪烁、端口、重装 revision/generation 与精确卸载**
+- [ ] **步骤5：验证App GUI无闪烁、安装/修复/卸载与重装generation**
 
   先让 Codex App 连续触发多个 SessionStart/UserPromptSubmit/PreToolUse/PostToolUse Hook，观察全程无可见黑色控制台窗口或任务栏闪烁；同时确认每个 Hook 行为正常、Bridge stdout 管道仍精确 `{}`、stderr 空、exit 0。把“GUI Subsystem 无控制台闪烁”作为独立验收项记录，不能只用 PE 自动测试代替人工观察。
 
-  占用 47653 后启动 CodePulse，确认 fallback；托盘退出应经过统一 ExitRequested，两秒内 owner-aware 删除自己的 discovery，旧 Runtime 清理不能删除重启后新 discovery；重启只接新事件。Repair 恢复缺失/旧 Bridge。用测试账户制造可逆的事务Conflict，确认设置页只显示固定安全说明与“重新尝试安全恢复”，无强制覆盖/丢弃/忽略；未处理时重试仍Conflict且字节不变，手工恢复到Journal已知Original/Target后重试可完成并清Journal。执行“安装并运行任务 → 记录当前 revision → Uninstall → 观察更高 revision 空快照清旧任务/not_installed → 重新 Install → 第一条真实新 Hook 前 awaiting_trust → 新 Hook 后任务正常显示且 revision 继续递增”，确认旧 generation 认证未沿用。用户其他 Hook 语义不变，删除失败只警告不恢复 Hook。
+  占用47653后启动CodePulse，确认fallback；托盘退出应经过统一ExitRequested，两秒内owner-aware删除自己的discovery，旧Runtime清理不能删除重启后新discovery；重启只接新事件。用真实设置动作完成Install、Repair缺失/旧Bridge与Uninstall。用测试账户制造可逆的事务Conflict，确认设置页只显示固定安全说明与“重新尝试安全恢复”，无强制覆盖/丢弃/忽略；未处理时重试仍Conflict且字节不变，手工恢复到Journal已知Original/Target后重试可完成并清Journal。执行“安装并运行任务→记录当前revision→Uninstall→观察更高revision空快照清旧任务/not_installed→重新Install→第一条当前generation的真实Hook前awaiting_trust→真实Hook后任务正常显示且revision继续递增”，确认旧generation认证未沿用。用户其他Hook语义不变，cleanup失败只警告不恢复Hook。
 
   运行：
 
@@ -610,7 +617,11 @@ export interface CodexDisplayPreferences {
 
   预期：前三项均为 False、事务文件计数为 0；退出/卸载后 discovery、Bridge、安装记录和 Integration Journal 均不存在，非 CodePulse Hook 不变。脚本不拼接 Journal 文件名。
 
-- [ ] **步骤 6：在独立 CLI 环境重复来源与并行门禁**
+### C. 独立CLI真实验收
+
+- [ ] **步骤6：在PowerShell可独立运行的官方CLI环境完成真实验收**
+
+  先读取CLI版本；随后由该独立CLI执行真实任务并触发真实Hook，确认来源识别为CLI。至少覆盖与App并行、授权请求、成功完成和最终失败场景。模拟`source='cli'`、mock父进程链、直接POST事件或A矩阵中的fake CLI都不能替代本步骤。
 
   运行：
 
@@ -619,7 +630,7 @@ export interface CodexDisplayPreferences {
   & $codex.Source --version
   ```
 
-  预期：只有独立 CLI 命令以 0 退出才继续真实任务/授权/App 并行；不可用则记录环境阻塞并明确完整兼容尚未通过。
+  预期：只有独立CLI命令以0退出才继续真实任务、真实Hook、CLI来源、授权、完成/失败和App并行验收；不可用或无法完成真实Hook链路时只记录“环境阻塞”，App门禁可单独通过，但不得声明“Windows原生CLI与App完整正式兼容已通过”。
 
 - [ ] **步骤 7：写验收结论并完成 04C 门禁**
 
@@ -651,13 +662,15 @@ export interface CodexDisplayPreferences {
 - 只有 `codex_hooks` 时显示固定弃用提示并按有效值工作；双键同值显示重复 warning；双键冲突或非布尔时显示配置冲突且不渲染 install/repair/uninstall 按钮。
 - local disabled+marker present 同时显示手动启用说明与安全卸载入口；install/repair/自动启用不可用，managed disabled 全只读。
 - idlePersistent 与 showCommandSummary 只控制展示；Widget/设置页使用同一权威 CodexListeningStatus。
-- 自动E2E覆盖十四项设计场景、occurredAt/墙钟回拨、dormant空快照、跨Runtime revision/generation、disabled uninstall、transactionId先分配/Prepared前零staging、Prepared部分staging ownership、Bridge/Record混合状态逐文件恢复、Install/Repair/Uninstall action-specific invariant、Discovery owner竞态、退出和PE Machine+WindowsGui。
-- 自动E2E明确区分三种原子语义并验证后置Lease：Existing由`ReplaceFileW`捕获实际旧内容后取得target/snapshot双Lease；Absent由no-replace move发布并在成功后取得target Lease；Removal把Bridge/Record原子rename为removed tombstone后取得tombstone Lease且StructureCommitted前不永久删除。关键摘要只经Handle，不存在裸检查后`MOVEFILE_REPLACE_EXISTING`被称为CAS。
-- 自动E2E覆盖Prepared后optimistic precondition check、prepared backup Lease/originalDigest、all-staging-ready、Existing正常双Lease、existing旧写Handle继续写snapshot、writable mapping、Lease阻止新write/rename/delete、最后一次检查之后的late modification、第一次Lease失败禁止第二次ReplaceFileW、第二次恢复后重新取得双Lease、Absent发布后立即writer、Bridge/Record与Config顺序、tombstone旧writer及retry、写后Handle targetDigest失败停止、精确孤立Journal temp清理/Conflict、operation mutex安全retry与NoPendingTransaction；late snapshot优先于prepared backup，高优先级Lease失败不降级，所有冲突版本保留并只进入现有安全retry。
+- A自动行为矩阵覆盖十四项设计场景、occurredAt/墙钟回拨、dormant空快照、跨Runtime revision/generation、disabled uninstall、transactionId先分配/Prepared前零staging、Prepared部分staging ownership、Bridge/Record混合状态逐文件恢复、Install/Repair/Uninstall action-specific invariant、Discovery owner竞态、退出和PE Machine+WindowsGui；这些只属于内部行为证据。
+- A自动行为矩阵覆盖两个模拟活动Hook文件对同一逻辑事件使用不同`eventId`时只处理一次，并覆盖不同turnId/toolUseId/agentId不误去重、有界缓存和Actor独占；逻辑键不含任何用户内容、cwd、路径、命令或tool input/output。
+- A自动行为矩阵明确区分三种原子语义并验证后置Lease：Existing由`ReplaceFileW`捕获实际旧内容后取得target/snapshot双Lease；Absent由no-replace move发布并在成功后取得target Lease；Removal把Bridge/Record原子rename为removed tombstone后取得tombstone Lease且StructureCommitted前不永久删除。关键摘要只经Handle，不存在裸检查后`MOVEFILE_REPLACE_EXISTING`被称为CAS。
+- A自动行为矩阵覆盖Prepared后optimistic precondition check、prepared backup Lease/originalDigest、all-staging-ready、Existing正常双Lease、existing旧写Handle继续写snapshot、writable mapping、Lease阻止新write/rename/delete、最后一次检查之后的late modification、第一次Lease失败禁止第二次ReplaceFileW、第二次恢复后重新取得双Lease、Absent发布后立即writer、Bridge/Record与Config顺序、tombstone旧writer及retry、写后Handle targetDigest失败停止、精确孤立Journal temp清理/Conflict、operation mutex安全retry与NoPendingTransaction；不同占用场景的生产断言统一为`SharingViolation`/`ActiveArtifactHandleConflict`，late snapshot优先于prepared backup，高优先级Lease失败不降级，所有冲突版本保留并只进入现有安全retry。
 - `AtomicIntegrationFs`提供`BeforeAtomicReplace`、`AfterTargetOpenedOrPrepared`、`AfterAtomicReplaceBeforeVerification`、`BeforeConflictRestore`、`AfterRemovalCaptureBeforeVerification`、`BeforeStableLeaseAcquire`、`AfterStableLeaseAcquireBeforeHash`、`AfterHashBeforeStagePersist`、`BeforeVerifiedHandleDelete`；故障矩阵覆盖ReplaceFileW官方失败状态、snapshot创建/Lease/Handle摘要、第二次恢复及后置Lease、no-replace destination appeared/发布后writer、tombstone rename/Lease和提交后cleanup Handle。
 - JSON/TOML 实际 Install 与 Repair 结果用04A同一AST loader并显式传入`paths.installed_bridge`，提取CodePulse-owned projection后分别语义等于唯一标准Fixture；空格、中文、单引号路径可解析且命令语义正确，JSON反斜杠/TOML单引号由serializer安全处理。wrong-path/旧路径/双command不一致/extra参数不可能Exact；用户独立Handler不进入projection且前后深度相等，混合group Repair后用户Handler保留、CodePulse group独立；E2E不做原始文本replace，不内嵌第二套loader或八事件模板。
 - UI/composable对`IntegrationTransactionConflict`/`OrphanTransactionConflict`只提供安全重试；重试不改Feature键、不采用外部字节为Original、不忽略摘要。没有强制覆盖、强制删除事务或忽略并继续功能。
-- Handle-based cleanup E2E证明正常snapshot由同一`GENERIC_READ | DELETE`、仅`FILE_SHARE_READ` Handle完成file ID/摘要验证与`SetFileInformationByHandle(FileDispositionInfo)`删除；验证后路径替换被Lease阻止，Handle失败只Warning并保留StructureCommitted Journal，已提交Hook/Bridge不回滚，Conflict artifact不进入普通cleanup。
+- A自动行为矩阵证明StructureCommitted后先释放普通事务Lease，再使用新取得的同一 cleanup Handle 完成file identity读取、expected digest计算、identity/digest复核和`SetFileInformationByHandle(FileDispositionInfo)`删除标记；路径替换被cleanup Handle阻止，cleanup失败只Warning并保留StructureCommitted Journal，已提交Hook/Bridge不回滚，Conflict artifact不进入普通cleanup。
 - 范围脚本除阻止WSL、控制Codex、历史补偿、自动改Hooks feature、路径分叉和错误验收路径外，还阻止Existing裸`MOVEFILE_REPLACE_EXISTING`、Absent覆盖发布、Uninstall直接`DeleteFileW`、snapshot/tombstone路径型摘要、原子操作后缺Lease、recovery在Lease失败后路径降级、snapshot冲突后继续、prepared backup覆盖late snapshot、Journal阶段落盘前释放Lease、Conflict artifact普通清理、“路径摘要后DeleteFileW”TOCTOU及writer/installer替换逻辑分叉。
-- Codex App 真实 Hook 信任与卸载重装通过；多 Hook 全程无可见控制台闪烁且管道协议正常；独立 CLI 通过或明确记录环境阻塞，不冒充正式兼容通过。
+- B Codex App真实验收单独证明官方信任流程、真实Hook触发、App来源、GUI无控制台闪烁、多会话、实际安装/修复/卸载，以及第一条当前generation真实事件后才running。
+- C独立CLI真实验收单独证明版本读取、真实任务、真实Hook、CLI来源、App并行、授权及完成/失败；模拟source、mock父进程链或直接POST不得替代。CLI不可用只记录“环境阻塞”，此时不得声明Windows原生CLI与App完整正式兼容通过。
 - 全部完成后停止，不自动开展下一版功能。
