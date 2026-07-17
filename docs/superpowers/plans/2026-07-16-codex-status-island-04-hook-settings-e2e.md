@@ -4,9 +4,9 @@
 
 **目标：** 把阶段四拆为三个可独立拒绝、验收和回滚的审核批次，在不破坏用户 Hook、不自动开启全局 Hooks 的前提下完成只读检查、配置写入、Bridge 安装、设置页和真实端验收。
 
-**架构：** 04A 只读文件并产生 Feature 标准键/弃用别名事实、绑定稳定 Bridge 路径的 CodePulse-owned Fixture投影、静态 inspection、generation-aware listening 派生和 planner 结果；04B 才负责统一 Integration Transaction Journal、Prepared后optimistic precondition check/完整staging屏障、existing `ReplaceFileW` snapshot、absent no-replace publish、removal tombstone、精确孤立Journal恢复、安全retry、完整PE installer、Tauri commands、唯一SnapshotStore清空和generation/owner-aware runtime生命周期；04C只消费公开命令与唯一动态`CodexListeningStatus`完成UI、显示偏好和精确竞态E2E。三个批次严格串行，每个批次完成后停止等待review。
+**架构：** 04A 只读文件并产生 Feature 标准键/弃用别名事实、绑定稳定 Bridge 路径的 CodePulse-owned Fixture投影、静态 inspection、generation-aware listening 派生和 planner 结果；04B 才负责统一 Integration Transaction Journal、Prepared后optimistic precondition check/完整staging屏障、existing `ReplaceFileW` snapshot、absent no-replace publish、removal tombstone，以及原子操作后以`StableArtifactLease`冻结target/capture、Handle identity与Handle摘要、跨Journal阶段Lease持有和StructureCommitted后的同Handle验证删除；同时实现精确孤立Journal恢复、安全retry、完整PE installer、Tauri commands、唯一SnapshotStore清空和generation/owner-aware runtime生命周期；04C只消费公开命令与唯一动态`CodexListeningStatus`完成UI、显示偏好和精确句柄竞态E2E。三个批次严格串行，每个批次完成后停止等待review。
 
-**技术栈：** Rust、serde_json、toml_edit 0.25、sha2、Windows `CreateFileW`/`MoveFileExW`/`ReplaceFileW`、Tauri 2.11.5、Vue 3、Pinia/localStorage、Vitest、PowerShell；不新增前端生产依赖。
+**技术栈：** Rust、serde_json、toml_edit 0.25、sha2、Windows `CreateFileW`/`MoveFileExW`/`ReplaceFileW`/`GetFileInformationByHandleEx`/`SetFileInformationByHandle`、Tauri 2.11.5、Vue 3、Pinia/localStorage、Vitest、PowerShell；不新增前端生产依赖。
 
 ## 全局约束
 
@@ -26,7 +26,8 @@
 - 每个 Runtime 使用新的非零 generation、token、Actor/reporter 与 DiscoveryOwner；旧 generation 的事件和清理不得污染新 Runtime。
 - 第一版排除 WSL；自动事件不能冒充 Codex App/CLI 的真实 Hook 信任验收。
 - Transaction Conflict只允许“重新尝试安全恢复”；重试复用operation mutex与统一恢复，不强制覆盖/删除Journal、不忽略摘要、不采用外改字节为新Original、不修改Feature键。
-- 2026-07-16 已重新核对 Microsoft 官方 `CreateFileW`、`MoveFileExW`、`ReplaceFileW`、`DeleteFileW`、Windows文件共享模式与rename/delete sharing violation行为：`FILE_SHARE_DELETE`控制delete/rename访问；`ReplaceFileW`的backup参数捕获实际被替换文件；no-replace move在目标存在时不得覆盖；`DeleteFileW`只标记删除且不能提供Journal受控的旧内容捕获。04B不得把“读取摘要→决定调用”写成原子Compare-And-Swap。
+- `StableArtifactLease`只存在于04B当前进程的事务句柄，不序列化、不写Journal、不改变唯一Journal/唯一SnapshotStore/Runtime generation/DiscoveryOwner所有权；崩溃恢复重新获取Lease。
+- 2026-07-17 已重新核对 Microsoft 官方 [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[ReplaceFileW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew)、[MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)、[SetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle)、[GetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle)、[GetFileInformationByHandleEx](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getfileinformationbyhandleex)、[FILE_ID_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info)、[CreateFileMappingW](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-createfilemappingw)、[MapViewOfFile](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffile)、[DeleteFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-deletefilew)与[Closing and Deleting Files](https://learn.microsoft.com/en-us/windows/win32/fileio/closing-and-deleting-files)。固定结论是：仅`FILE_SHARE_READ`的Handle排斥既有/后续写访问、writable file mapping与delete/rename访问；`FILE_ID_INFO`提供volume serial+128位file ID；`ReplaceFileW`捕获实际旧文件；no-replace move不覆盖；`FileDispositionInfo`把删除标记绑定到同一带`DELETE`的Handle。04B不得把“按路径读取摘要→再按路径恢复/删除”当作同一对象保证。
 
 ## 固定跨批次接口
 
@@ -171,6 +172,49 @@ pub enum TransactionArtifactState {
     ExternalModification,
 }
 
+pub struct StableArtifactIdentity {
+    pub volume_serial_number: u64,
+    pub file_id: [u8; 16],
+    pub size: u64,
+}
+
+pub struct StableArtifactLease {
+    handle: OwnedHandle,
+    identity: StableArtifactIdentity,
+    path: PathBuf,
+}
+
+pub enum StableArtifactLeaseError {
+    ActiveWriter,
+    WritableMapping,
+    DeleteOrRenameAccess,
+    SharingViolation,
+    IdentityChanged,
+    FileMissing,
+    AccessDenied,
+    Io,
+}
+
+pub enum CodexIntegrationError {
+    ActiveArtifactHandleConflict,
+    // 其余既有错误变体保持不变。
+}
+
+pub struct AppliedArtifactLeases {
+    pub target: Option<StableArtifactLease>,
+    pub replaced_snapshot: Option<StableArtifactLease>,
+    pub removed_tombstone: Option<StableArtifactLease>,
+    pub conflict_preserved_current: Option<StableArtifactLease>,
+}
+
+pub fn acquire_stable_artifact_lease(
+    path: &Path,
+) -> Result<StableArtifactLease, StableArtifactLeaseError>;
+
+pub fn hash_artifact_through_lease(
+    lease: &StableArtifactLease,
+) -> Result<String, CodexIntegrationError>;
+
 pub fn verify_artifact_matches_expected_original(
     expectation: TransactionArtifactExpectation<'_>,
     path: &Path,
@@ -186,6 +230,12 @@ pub enum AtomicArtifactApplyOutcome {
 pub struct AtomicArtifactReplaceResult {
     pub outcome: AtomicArtifactApplyOutcome,
     pub replaced_snapshot_path: Option<PathBuf>,
+    pub leases: AppliedArtifactLeases,
+}
+
+pub struct AtomicArtifactApplyResult {
+    pub outcome: AtomicArtifactApplyOutcome,
+    pub leases: AppliedArtifactLeases,
 }
 
 pub fn atomically_replace_existing_artifact(
@@ -200,13 +250,27 @@ pub fn atomically_publish_absent_artifact(
     target: &Path,
     replacement: &Path,
     target_digest: &str,
-) -> Result<AtomicArtifactApplyOutcome, CodexIntegrationError>;
+) -> Result<AtomicArtifactApplyResult, CodexIntegrationError>;
 
 pub fn atomically_capture_artifact_for_removal(
     target: &Path,
     tombstone: &Path,
     expected_digest: &str,
-) -> Result<AtomicArtifactApplyOutcome, CodexIntegrationError>;
+) -> Result<AtomicArtifactApplyResult, CodexIntegrationError>;
+
+pub enum VerifiedArtifactDeleteOutcome {
+    Deleted { identity: StableArtifactIdentity },
+    AlreadyAbsent,
+    RetainedDigestMismatch { identity: StableArtifactIdentity },
+    RetainedActiveHandle,
+    DeletePending { identity: StableArtifactIdentity },
+    PathReusedAfterDelete { deleted_identity: StableArtifactIdentity },
+}
+
+pub fn delete_verified_artifact_by_handle(
+    path: &Path,
+    expected_digest: &str,
+) -> Result<VerifiedArtifactDeleteOutcome, CodexIntegrationError>;
 
 pub enum CodexIntegrationCommitInvariant {
     InstalledOrRepaired,
@@ -253,21 +317,23 @@ pub fn recover_interrupted_codex_integration_transaction(
 
 本地 disabled 的动作矩阵固定为 install=HooksDisabled、repair=HooksDisabled、有安全 marker 的 uninstall=允许；managed disabled 三种 action 全部 ManagedDisabled；Feature alias conflict、representation conflict 与 ambiguous 禁止自动卸载。只有旧别名时按别名有效值运行并显示弃用提示；双键同值增加 `DeprecatedCodexHooksAlias` 与 `DuplicateHooksFeatureKeys`；双键冲突或非布尔进入 ConfigConflict。Install/Repair 在重新 inspection 与双摘要后先分配唯一 transactionId，再调用 `prepare_config_apply(..., transactionId)` 与 `prepare_bridge_install(..., transactionId)`；两个 prepare 只能在内存中构造目标材料、验证 PE/hash/piped 契约并计算确定性 staging/capture 路径。完整 Prepared Journal 原子持久化成功后，必须重新读取三目标并由`verify_artifact_matches_expected_original()`确认均为Original/ExpectedAbsent，才创建prepared backup/temp。这个optimistic precondition check只提前发现变化，不构成原子CAS。所有prepared backup/temp重读摘要、全部replaced snapshot/tombstone/conflict-preserved-current路径与当前Prepared Journal ID形成all-staging-ready屏障后，existing/absent/removal分别调用统一原子接口。两个 handle 共享同一transactionId并由同一Journal推进Prepared→BridgeApplied→ConfigApplied→StructureCommitted；两个`commit()`只终结进程内资源，StructureCommitted才是跨进程提交点，之后self-check失败保留正确结构。
 
-Install/Repair 的正式 19 步顺序固定为：1 重新静态 Inspection；2 重新计算 expectedDigest/previewDigest；3 分配唯一 transactionId；4 先 `prepare_config_apply`、再 `prepare_bridge_install`，纯计算 Config/Bridge目标材料与捕获路径；5 验证 Bridge PE/hash/piped 契约；6 构造完整 Prepared Journal；7 原子持久化 Prepared Journal；8 三目标optimistic precondition check通过后创建本transactionId prepared backup/temp并完成originalDigest/targetDigest/all-staging-ready屏障；9 Bridge/Record按existing调用`ReplaceFileW`并验证snapshot、按absent调用no-replace publish，任一late modification或DestinationAppeared立即停止；10 推进BridgeApplied；11 必要时启动临时Runtime；12 确认Bridge/Record为本事务Target且无late snapshot，Config再次optimistic precondition check后按existing/absent原子语义应用并验证；13 推进ConfigApplied；14 执行action-specific post-write invariant；15 推进StructureCommitted；16 终结进程内句柄并清理正常artifacts；17 发布ListeningStatus；18 运行完整self-check；19 返回结果。任何计划不得再写成prepare handle后分配transactionId，也不得复用expectedDigest时期的旧读取结果执行覆盖，更不得把普通读取检查称为CAS。
+`acquire_stable_artifact_lease()`固定调用`CreateFileW`，DesiredAccess=`GENERIC_READ | FILE_READ_ATTRIBUTES`、ShareMode=`FILE_SHARE_READ`、CreationDisposition=`OPEN_EXISTING`；严禁添加`FILE_SHARE_WRITE | FILE_SHARE_DELETE`。成功后从同一Handle取得volume serial、128位file ID、size与必要属性，`hash_artifact_through_lease()`只通过该Handle读取并在摘要前后复核身份/size；禁止`std::fs::read(path)`或重新按路径打开关键事务摘要。路径随后取得不同file ID时返回`IdentityChanged`并保留证据。`ERROR_SHARING_VIOLATION`无论来自活动writer、writable mapping还是delete/rename access，都稳定映射成`ActiveArtifactHandleConflict`；可复用最多三次、间隔50ms的短重试，仍失败立即停止Runtime、保留Journal/target/capture/prepared backup并发布config_conflict，只允许安全retry。
 
-`target_bridge_exists`/`target_record_exists` 是支持 Uninstall 的附加存在性事实；为 false 时 target digest 固定为 SHA-256(empty bytes)，存在性位区分缺失与零字节文件。配置/Bridge/记录分别按 existedBefore、originalDigest、targetExists、targetDigest、当前存在性与当前 digest 分类成 `Original|Target|ExpectedAbsent|ExternalModification`；分类只服务optimistic precondition check与恢复决策。每个existedBefore prepared backup都必须由当前原字节生成，create_new/write/flush/close/重读后两次等于originalDigest；existedBefore=false必须prepared backup=None且目标仍缺失。Prepared正常分支只清理Journal明确拥有的staging并保持目标不变；阶段落盘滞后时按实际target与捕获artifact进入后续分支。BridgeApplied/ConfigApplied恢复优先级固定为：当前目标→replaced snapshot/removed tombstone/conflict-preserved-current→prepared backup→Journal摘要。snapshot/tombstone表示最后时刻外改时优先于prepared backup，任何ExternalModification或preserved conflict都不覆盖并返回Conflict。
+Install/Repair 的正式 19 步顺序固定为：1 重新静态 Inspection；2 重新计算 expectedDigest/previewDigest；3 分配唯一 transactionId；4 先 `prepare_config_apply`、再 `prepare_bridge_install`，纯计算 Config/Bridge目标材料与捕获路径；5 验证 Bridge PE/hash/piped 契约；6 构造完整 Prepared Journal；7 原子持久化 Prepared Journal；8 三目标optimistic precondition check通过后创建本transactionId prepared backup/temp并完成originalDigest/targetDigest/all-staging-ready屏障；9 Bridge/Record按existing调用`ReplaceFileW`后获取target/snapshot Lease，按absent发布后获取target Lease，全部只以Handle验证并保存在事务句柄，任一late modification、DestinationAppeared或ActiveArtifactHandleConflict立即停止；10 持有Bridge/Record Lease推进BridgeApplied；11 在共享只读兼容的Lease下必要时启动临时Runtime；12 确认Bridge/Record Lease仍为本事务Target且无late snapshot，Config再次optimistic precondition check后按existing/absent原子语义应用并取得结果Lease；13 持有全部最终Lease推进ConfigApplied；14 只以Lease身份/摘要执行action-specific post-write invariant；15 持有Lease推进StructureCommitted；16 释放普通Lease、终结进程内句柄并使用同一DELETE Handle清理正常artifacts；17 发布ListeningStatus；18 运行完整self-check；19 返回结果。任何计划不得再写成prepare handle后分配transactionId，不得复用expectedDigest时期的旧读取结果执行覆盖，不得把普通读取检查称为CAS，也不得在阶段Journal持久化前释放Lease。
 
-Atomic existing-file replacement固定调用`ReplaceFileW(target, replacement_temp, transaction_owned_replaced_snapshot, ...)`。成功后立即验证target=targetDigest且snapshot存在；snapshot=originalDigest才允许继续。snapshot!=originalDigest返回`CapturedLateModification`/`LateConcurrentModification`，不采用为新Original、不继续下一文件。若当前target仍为本事务Target，用第二次`ReplaceFileW(current_target, replaced_snapshot, conflict-preserved-current, ...)`恢复真实外改并保存CodePulse Target；若当前target已经再次外改，则不覆盖当前target，同时保留snapshot、prepared backup和当前target。两条路径都返回Conflict并保留Journal。
+`target_bridge_exists`/`target_record_exists` 是支持 Uninstall 的附加存在性事实；为 false 时 target digest 固定为 SHA-256(empty bytes)，存在性位区分缺失与零字节文件。配置/Bridge/记录分别按 existedBefore、originalDigest、targetExists、targetDigest、当前存在性与当前 digest 分类成 `Original|Target|ExpectedAbsent|ExternalModification`；optimistic precondition check可按路径提前发现变化，但原子操作后的关键分类必须来自Lease。每个existedBefore prepared backup都必须由当前原字节生成，create_new/write/flush/close后取得prepared backup Lease并通过Handle确认originalDigest；existedBefore=false必须prepared backup=None且目标仍缺失。Prepared正常分支只清理Journal明确拥有的staging并保持目标不变；阶段落盘滞后时，所有实际存在的target/capture/prepared backup先获取Lease再分类。BridgeApplied/ConfigApplied恢复优先级固定为：当前目标→replaced snapshot/removed tombstone/conflict-preserved-current→prepared backup→Journal摘要；高优先级文件Lease失败时不得降级到prepared backup，任何`ActiveArtifactHandleConflict`、ExternalModification或preserved conflict都不覆盖并返回Conflict。
 
-Atomic absent-file publication固定为同目录no-replace move/rename，不带`MOVEFILE_REPLACE_EXISTING`。目标在最后一次检查后出现时返回`DestinationAppeared`，外部目标字节与transaction temp都保留；成功后立即验证targetDigest。Atomic removal capture固定把Bridge/Record no-replace原子rename到本transactionId removed tombstone，禁止直接`DeleteFileW`；验证target absent与tombstone摘要。tombstone摘要不符且目标仍absent时只允许no-replace恢复，目标已重建时保留两者并Conflict。
+Atomic existing-file replacement固定调用`ReplaceFileW(target, replacement_temp, transaction_owned_replaced_snapshot, ...)`。成功后固定获取target Lease→snapshot Lease→分别通过Handle计算摘要→验证两个file ID不同；两个Lease均成功、target=`targetDigest`、snapshot=`originalDigest`才允许继续。任一Lease失败直接`ActiveArtifactHandleConflict`，禁止按路径读取、清snapshot或继续下一文件。snapshot稳定但不等于originalDigest时才返回`CapturedLateModification`。只有target/snapshot Lease都成功且摘要稳定，才可决定第二次恢复；执行前释放相关Lease，再以`ReplaceFileW(current_target, replaced_snapshot, conflict-preserved-current, ...)`恢复真实外改并保存CodePulse Target，随后重新获取restored target和conflict-preserved-current Lease并通过Handle验证。第二次操作后任一Lease/摘要失败都保留两版并Conflict；snapshot Lease失败时绝不自动执行第二次ReplaceFileW。
+
+Atomic absent-file publication固定为同目录no-replace move/rename，不带`MOVEFILE_REPLACE_EXISTING`。目标在最后一次检查后出现时返回`DestinationAppeared`，外部目标字节与transaction temp都保留；成功后立即获取target Lease并只通过Handle验证targetDigest，Lease失败或摘要不符时target保留且Conflict。Atomic removal capture固定把Bridge/Record no-replace原子rename到本transactionId removed tombstone，禁止直接`DeleteFileW`；成功后取得tombstone Lease、通过Handle验证摘要并确认target absent。tombstone Lease失败时不按路径读取、不永久删除、不进入Uninstalled invariant；稳定摘要不符且target仍absent时才允许释放Lease后no-replace恢复，并在恢复后重新获取target Lease验证；目标已重建时保留两者并Conflict。
 
 稳定Journal存在时，恢复以其transactionId为唯一权威ID，只处理该ID的Journal temp、三目标staging与backup，其他ID文件仅诊断。稳定Journal不存在时只枚举`.<journal-filename>.codepulse-<32hex>.tmp`：候选必须完整反序列化、文件名ID=内容ID、stage=Prepared、三目标仍Original/ExpectedAbsent且同ID无目标staging/backup，才作为Prepared-only孤立temp删除；一个或多个合法候选都可清理。损坏、ID不符、stage非Prepared、目标变化或同ID staging存在时保留并`OrphanTransactionConflict`，Runtime不启动、目标不改。此算法依赖单实例插件；未来移除单实例前必须先加进程间事务锁。
 
-回滚按 action 区分：Install 的 Bridge 原先不存在，只有确认配置不再引用稳定路径才能处理新 EXE；Repair 的 Bridge 原先存在，优先使用ReplaceFileW实际捕获且摘要等于originalDigest的replaced snapshot恢复同路径旧EXE/旧记录，prepared backup只作低优先级后备；稳定路径仍被 Hook 引用不构成冲突，引用检查只防删除。Uninstall 不经过 BridgeApplied，使用 Prepared→ConfigApplied(marker absent)→stop/clear→capture Bridge/record tombstone→StructureCommitted；部分捕获时继续处理剩余目标，外部修改或配置重新引用稳定路径时Conflict并保留目标与tombstone。
+回滚按 action 区分：Install 的 Bridge 原先不存在，只有确认配置不再引用稳定路径才能处理新 EXE；Repair 的 Bridge 原先存在，优先使用ReplaceFileW实际捕获且摘要等于originalDigest的replaced snapshot恢复同路径旧EXE/旧记录，prepared backup只作低优先级后备；稳定路径仍被 Hook 引用不构成冲突，引用检查只防删除。Uninstall 不经过 BridgeApplied，使用 Prepared→ConfigApplied(marker absent)→stop/clear→capture Bridge/record tombstone→StructureCommitted；只有已经成功取得tombstone Lease并完成Handle摘要验证的部分捕获，才可继续处理仍存在的剩余目标；任一捕获后Lease失败、外部修改或配置重新引用稳定路径时立即停止并Conflict，保留目标与tombstone。
 
-StructureCommitted 使用 action-specific invariant：Install/Repair 要求 Marker=Exact、Bridge/记录=Target、PE/hash/piped 契约有效，返回 `InstalledOrRepaired`；Uninstall 要求 Marker=Absent、配置不再引用稳定 Bridge、Bridge/记录目标路径均 absent且对应tombstone受当前Journal控制，返回 `Uninstalled`。不再以 Marker Exact 统一定义 StructureCommitted。StructureCommitted 只清理prepared backup、正常original snapshot、已提交Uninstall tombstone、temp与Journal，清理失败只Warning；Conflict对应的snapshot/tombstone/conflict-preserved-current不得作为普通成功清理删除。
+StructureCommitted 使用 action-specific invariant：Install/Repair 要求 Marker=Exact、Bridge/记录=Target、PE/hash/piped 契约有效且最终target/snapshot Lease仍持有，返回 `InstalledOrRepaired`；Uninstall 要求 Marker=Absent、配置不再引用稳定 Bridge、Bridge/记录目标路径均 absent且对应tombstone Lease稳定并受当前Journal控制，返回 `Uninstalled`。Bridge相关Lease保持到BridgeApplied落盘，Config/Bridge/Record最终Lease保持到StructureCommitted落盘；阶段推进失败不得提前释放并继续，Lease不写Journal，崩溃恢复重新获取。StructureCommitted落盘后释放普通Lease，正常artifact只调用`delete_verified_artifact_by_handle`：以`GENERIC_READ | DELETE`、仅`FILE_SHARE_READ`、`OPEN_EXISTING`打开，使用同一Handle取得file ID并计算expectedDigest，再`SetFileInformationByHandle(FileDispositionInfo)`标记同一对象删除，关闭后验证路径absent。Handle失败/delete pending/路径复用只Warning并保留StructureCommitted Journal供startup retry，不回滚正确Hook/Bridge；Conflict snapshot/tombstone/conflict-preserved-current永不进入普通cleanup。
 
-Uninstall 使用相同 Journal但不经过 BridgeApplied：Prepared 后先删除 marker并推进 ConfigApplied，验证 marker=Absent且无稳定 Bridge 引用后停止 Runtime/清空 Store，再逐文件原子捕获 Bridge/记录到removed tombstone；Bridge目标absent但Record仍present时继续捕获Record，反向同理；两目标absent且tombstone均受Journal控制后通过`Uninstalled` invariant才推进StructureCommitted，随后才删除tombstone。恢复时若配置被用户修改、Bridge/记录是ExternalModification、tombstone摘要异常、目标路径被重新创建或配置重新引用稳定Bridge，则Conflict并保留所有版本。
+Uninstall 使用相同 Journal但不经过 BridgeApplied：Prepared 后先删除 marker并推进 ConfigApplied，验证 marker=Absent且无稳定 Bridge 引用后停止 Runtime/清空 Store，再逐文件原子捕获 Bridge/记录到removed tombstone并取得tombstone Lease；Bridge目标absent但Record仍present时继续捕获Record，反向同理；两目标absent且tombstone均在Lease下通过Handle摘要验证并受Journal控制后，才通过`Uninstalled` invariant并保持Lease推进StructureCommitted，随后释放普通Lease并通过Handle-based cleanup删除。恢复时若配置被用户修改、Bridge/记录是ExternalModification、tombstone Lease/Handle摘要异常、目标路径被重新创建或配置重新引用稳定Bridge，则Conflict并保留所有版本。
 
 04B 公开给 04C 的命令：
 
@@ -303,7 +369,7 @@ pub async fn retry_codex_integration_recovery(
 ) -> Result<CodexIntegrationRecoveryResult, String>;
 ```
 
-retry与apply共用integration operation mutex。不存在稳定Journal且不存在孤立Journal temp时返回`NoPendingTransaction`；否则只重跑`recover_interrupted_codex_integration_transaction()`，不强制删Journal、不忽略摘要、不采用用户新字节为Original、不改Feature键。成功后重新静态Inspection、执行Runtime启停决策并发布最新ListeningStatus；仍有外改时继续`IntegrationTransactionConflict`/`OrphanTransactionConflict`且保持字节、Journal和备份。用户手工把文件恢复为Journal已知Original/Target/ExpectedAbsent后可再次重试，无需重装CodePulse。
+retry与apply共用integration operation mutex。不存在稳定Journal且不存在孤立Journal temp时返回`NoPendingTransaction`；否则只重跑`recover_interrupted_codex_integration_transaction()`，对实际存在的target/replaced snapshot/conflict-preserved-current/tombstone/prepared backup重新获取Lease并通过Handle分类，不强制删Journal、不忽略摘要、不采用用户新字节为Original、不改Feature键。任一应存在文件的Lease失败继续`IntegrationTransactionConflict`，不得改用路径读取或低优先级prepared backup；外部编辑器/进程关闭writer、writable mapping或delete handle后，用户再次安全retry才可继续。成功后重新静态Inspection、执行Runtime启停决策并发布最新ListeningStatus；仍有外改或活跃句柄时保持字节、Journal和备份。用户手工把文件恢复为Journal已知Original/Target/ExpectedAbsent后可再次重试，无需重装CodePulse。
 
 Widget 投影固定使用：
 
@@ -325,8 +391,8 @@ toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)
 | 批次 | 详细计划 | 独立交付物 | 禁止范围 |
 |---|---|---|---|
 | 04A | `docs/superpowers/plans/2026-07-16-codex-status-island-04a-inspection-planner.md` | TempDir 只读静态 inspection、Feature alias 事实、绑定稳定Bridge路径的标准JSON/TOML Fixture CodePulse-owned projection、generation runtime facts、独立listening派生、action matrix与纯计划 | 不写盘、不安装 Bridge、不注册 apply 命令、不修改 Vue |
-| 04B | `docs/superpowers/plans/2026-07-16-codex-status-island-04b-writer-installer.md` | 统一Integration Journal、ID-first纯prepare、optimistic precondition check、existing ReplaceFileW snapshot、absent no-replace publish、removal tombstone、精确孤立temp恢复、action-specific invariant、四命令与安全retry | 不实现设置页；disabled只开放安全uninstall；无force/discard入口 |
-| 04C | `docs/superpowers/plans/2026-07-16-codex-status-island-04c-settings-e2e.md` | 静态/动态分离设置卡、alias提示/Conflict安全重试、disabled marker卸载、显示偏好、精确原子竞态/孤立Journal/事务混合恢复与路径绑定projection自动/真实E2E | 不新增配置写入逻辑、不宣称环境阻塞的CLI已通过 |
+| 04B | `docs/superpowers/plans/2026-07-16-codex-status-island-04b-writer-installer.md` | 统一Integration Journal、ID-first纯prepare、optimistic precondition check、existing ReplaceFileW双Lease、absent target Lease、removal tombstone Lease、跨阶段Lease持有、Handle-based cleanup、精确孤立temp恢复、action-specific invariant、四命令与安全retry | 不实现设置页；disabled只开放安全uninstall；无force/discard入口 |
+| 04C | `docs/superpowers/plans/2026-07-16-codex-status-island-04c-settings-e2e.md` | 静态/动态分离设置卡、alias提示/Conflict安全重试、disabled marker卸载、显示偏好、active writer/writable mapping/Lease阻写阻删/同Handle cleanup等精确竞态、孤立Journal/事务混合恢复与路径绑定projection自动/真实E2E | 不新增配置写入逻辑、不宣称环境阻塞的CLI已通过 |
 
 ## 审核批次 04A
 
@@ -381,7 +447,7 @@ toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)
   Pop-Location
   ```
 
-  预期：transactionId在Config/Bridge prepare前分配、Prepared前零staging；optimistic precondition check、prepared backup/target temp完整性与all-staging-ready通过；existing ReplaceFileW捕获snapshot、late modification安全恢复、absent no-replace publish、Uninstall tombstone与精确故障注入通过；稳定/孤立Journal精确恢复、Integration Journal四阶段和Bridge/记录混合状态逐文件恢复、Install/Repair/Uninstall rollback与action-specific invariant、Conflict安全retry/NoPendingTransaction、篡改保护、PE Machine+GUI、SnapshotStore/generation/owner生命周期通过；local disabled uninstall不安装Bridge或启动HTTP。
+  预期：transactionId在Config/Bridge prepare前分配、Prepared前零staging；optimistic precondition check、prepared backup/target temp完整性与all-staging-ready通过；existing ReplaceFileW后target/snapshot Lease、late modification第二次ReplaceFileW前释放与后置重新冻结、absent publish后target Lease、Uninstall tombstone Lease、跨Journal阶段持有和同Handle cleanup通过；active writer/writable mapping/delete access均进入可重试Conflict，Lease阻止新write/rename/delete；稳定/孤立Journal精确恢复、Integration Journal四阶段和Bridge/记录混合状态逐文件恢复、Install/Repair/Uninstall rollback与action-specific invariant、Conflict安全retry/NoPendingTransaction、篡改保护、PE Machine+GUI、SnapshotStore/generation/owner生命周期通过；local disabled uninstall不安装Bridge或启动HTTP。
 
 - [ ] **步骤 2：停下来审核 04B**
 
@@ -439,10 +505,11 @@ toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)
 - Runtime stop/uninstall/无旧合法 Runtime 的 install 失败按固定顺序发布更高 revision 空快照；重新安装后的任务 revision 继续递增，旧 Vue 任务被清除。
 - 每个新 Runtime generation 清空认证事实，旧 reporter/关闭回调被忽略；重新安装在第一条真实新 Hook 前保持 awaiting_trust/partial。
 - Discovery 的 shutdown/invalidate/serve/drop/stop/Exit 全部比较 version/PID/token/startedAt；旧 Runtime 不误删新文件。
-- Integration Journal的正式顺序是allocate ID→prepare Config/Bridge→persist Prepared→optimistic precondition check→verified owned staging/all-staging-ready→atomic existing/absent/removal。Prepared前崩溃零staging；Prepared后提前发现变化时不创建新staging。每个prepared backup两次匹配originalDigest；existing文件必须由ReplaceFileW捕获replaced snapshot，absent文件必须no-replace发布，Uninstall必须原子rename到removed tombstone。snapshot不符不得继续下一文件，replaced snapshot优先于prepared backup；BridgeApplied/ConfigApplied按当前目标和捕获artifact恢复。StructureCommitted只清正常snapshot/tombstone，Conflict artifacts保留；cleanup失败只warning。
+- Integration Journal的正式顺序是allocate ID→prepare Config/Bridge→persist Prepared→optimistic precondition check→verified owned staging/all-staging-ready→atomic existing/absent/removal→StableArtifactLease/Handle摘要→持Lease推进阶段。Prepared前崩溃零staging；Prepared后提前发现变化时不创建新staging。每个prepared backup通过Lease匹配originalDigest；existing文件必须由ReplaceFileW捕获replaced snapshot并同时冻结target/snapshot，absent文件no-replace发布后冻结target，Uninstall原子rename后冻结tombstone。任一Lease/摘要不符不得继续下一文件，active writer/mapping/delete access进入`ActiveArtifactHandleConflict`；BridgeApplied/ConfigApplied按Lease稳定的当前目标和捕获artifact恢复。StructureCommitted后只对正常artifact使用同一`GENERIC_READ | DELETE` Handle验证file ID/摘要并`SetFileInformationByHandle(FileDispositionInfo)`，Conflict artifacts保留；cleanup Handle失败只warning并由startup recovery重试。
 - 稳定Journal存在时只处理其权威ID；无稳定Journal时仅合法Prepared-only孤立Journal temp可清理，异常temp保留并OrphanTransactionConflict、Runtime停止。Conflict UI只提供“重新尝试安全恢复”；retry共用operation mutex、无事务返回NoPendingTransaction、成功后重新Inspection/Runtime决策/ListeningStatus，不存在force overwrite/discard/ignore功能。
 - 用户其他 Hook 在 install/repair/uninstall 后语义保持；卸载不恢复整份旧备份。
 - idlePersistent 不启动服务，也不把未安装、禁用、冲突或服务错误伪装为已就绪。
 - Bridge crate root 与打包/安装同时验证 Windows GUI Subsystem 和目标 PE Machine；旧 target、错架构或 Console Subsystem 不能通过门禁，真实多 Hook 验收无控制台闪烁。
+- `AtomicIntegrationFs`除既有五个注入点外还提供`BeforeStableLeaseAcquire`、`AfterStableLeaseAcquireBeforeHash`、`AfterHashBeforeStagePersist`、`BeforeVerifiedHandleDelete`；范围脚本阻止snapshot/tombstone路径型关键摘要、原子操作后缺Lease、recovery在Lease失败后降级、阶段落盘前释放Lease、路径型`DeleteFileW` cleanup及Conflict artifact进入普通cleanup。
 - 验收记录路径唯一为 `docs/superpowers/verifications/2026-07-16-codex-status-island-e2e.md`。
 - 全部完成后停止，不自动开展下一版功能。
