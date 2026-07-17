@@ -13,7 +13,7 @@
 - 本总览只索引阶段四，不承载可直接实施的混合任务。
 - 规范层级固定为：设计文档负责产品目标、用户行为、功能范围和可见状态；Roadmap负责跨阶段架构、公开接口、状态所有权和全局不变量；详细计划负责具体顺序、失败处理、测试和审核门禁。详细计划不能静默违背设计；安全顺序变化必须同步设计，公共接口或全局不变量变化必须同步Roadmap及全部消费者计划。
 - CodePulse只管理用户层`%USERPROFILE%\.codex`中的CodePulse Hook；不修改仓库层`.codex`、插件Hook或企业托管配置，也不扫描全部仓库。Inspection只能陈述用户层管理事实，UI不得声称“全局唯一Hook”，也不创建`DuplicateCodePulseHookAcrossLayers`状态。
-- 多个活动配置层中的匹配Hook可同时执行，多个command Hook可并发启动。Bridge的随机`eventId`只表示单次投递；阶段二Actor再以允许进入`CodexBridgeEvent`的稳定标识构造有界逻辑事件键，消除不同配置层、不同`eventId`的同一逻辑事件。Bridge不扫描配置层或持久化去重状态，Vue不承担任何去重。
+- 多个活动配置层中的匹配Hook可同时执行，多个command Hook可并发启动。Bridge的随机`eventId`只表示单次投递；阶段二Actor仅对稳定标识完整的Tool/Subagent/Turn事件构造有界逻辑事件键，对SessionStarted执行幂等元数据更新，对PermissionRequested执行等待状态幂等与`非等待→等待`提醒边沿抑制。Bridge不扫描配置层或持久化去重状态，Vue不承担任何去重。
 - 所有模块消费阶段一唯一的 `CodexIntegrationPaths`；不得自行拼接 CodePulse/runtime/bin。
 - 本地数据根目录由 `app.path().local_data_dir()?` 获得，再由路径对象生成 `%LOCALAPPDATA%\CodePulse`。
 - 应用启动顺序固定为：构造路径对象与唯一 `Arc<CodexSnapshotStore>`并显式注入 Manager → 恢复 Integration Transaction → 只读静态 inspection → inspection 决定 runtime 启停 → 单独派生并发布 listening status。
@@ -399,7 +399,7 @@ toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)
 | 04B-1 | `docs/superpowers/plans/2026-07-16-codex-status-island-04b-writer-installer.md` | 唯一Integration Journal、transactionId与owned staging、四正式阶段、optimistic precondition check、all-staging-ready、`ReplaceFileW`、absent no-replace publish、removal tombstone、普通Lease/file identity/Handle摘要、recovery、孤立Journal temp与fault injection | 禁止Tauri commands、Runtime启停、设置页和真实Bridge安装编排；完成后强制review |
 | 04B-2 | 同上 | `ConfigApplyTransaction`、`BridgeInstallTransaction`、Bridge PE Machine/WindowsGui/hash/piped契约、Install/Repair/Uninstall coordinator、action-specific invariant、rollback优先级和StructureCommitted清理边界 | 依赖04B-1审核通过；禁止Tauri commands、Runtime和设置页；完成后强制review |
 | 04B-3 | 同上 | inspect/preview/apply/retry commands、operation mutex、startup recovery、Inspection驱动Runtime、SnapshotStore clear、generation/DiscoveryOwner、ListeningStatus、self-check与公开错误映射 | 依赖04B-2审核通过；完成后强制review，之后才允许04C |
-| 04C | `docs/superpowers/plans/2026-07-16-codex-status-island-04c-settings-e2e.md` | 静态/动态分离设置卡、alias提示/Conflict安全重试、disabled marker卸载、显示偏好、不同句柄场景统一冲突、使用新取得的同一 cleanup Handle、跨配置层逻辑事件去重、事务恢复的A自动行为矩阵，以及B App/C CLI真实验收 | 不新增配置写入逻辑；自动测试不冒充真实环境；环境阻塞的CLI不得声明通过 |
+| 04C | `docs/superpowers/plans/2026-07-16-codex-status-island-04c-settings-e2e.md` | 静态/动态分离设置卡、alias提示/Conflict安全重试、disabled marker卸载、显示偏好、不同句柄场景统一冲突、使用新取得的同一 cleanup Handle、稳定事件跨层逻辑键与Session/Permission幂等公开行为、事务恢复的A自动行为矩阵，以及B App/C CLI真实验收 | 不新增配置写入逻辑；自动测试不冒充真实环境；环境阻塞的CLI不得声明通过 |
 
 04B-1、04B-2、04B-3只是同一详细计划内的三个实施与审核停点，继续复用唯一Journal、`Prepared → BridgeApplied → ConfigApplied → StructureCommitted`状态机和已固定的公开接口；不得派生第二套Journal、动态phase、SnapshotStore或公开命令。
 
@@ -564,7 +564,7 @@ toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)
 - 每个新 Runtime generation 清空认证事实，旧 reporter/关闭回调被忽略；重新安装在第一条真实新 Hook 前保持 awaiting_trust/partial。
 - Discovery 的 shutdown/invalidate/serve/drop/stop/Exit 全部比较 version/PID/token/startedAt；旧 Runtime 不误删新文件。
 - Integration Journal的正式顺序是allocate ID→prepare Config/Bridge→persist Prepared→optimistic precondition check→verified owned staging/all-staging-ready→atomic existing/absent/removal→StableArtifactLease/Handle摘要→持Lease推进阶段。Prepared前崩溃零staging；Prepared后提前发现变化时不创建新staging。每个prepared backup通过Lease匹配originalDigest；existing文件必须由ReplaceFileW捕获replaced snapshot并同时冻结target/snapshot，absent文件no-replace发布后冻结target，Uninstall原子rename后冻结tombstone。任一Lease/摘要不符不得继续下一文件；活动writer、writable mapping、delete/rename Handle等测试场景的生产结果统一为`SharingViolation`并映射`ActiveArtifactHandleConflict`。BridgeApplied/ConfigApplied按Lease稳定的当前目标和捕获artifact恢复。StructureCommitted后释放普通事务Lease，只对普通artifact新开`GENERIC_READ | DELETE`、仅`FILE_SHARE_READ`的Handle，并使用新取得的同一 cleanup Handle 完成身份校验、摘要校验和删除标记；Conflict artifacts保留。cleanup失败只warning并由startup recovery重试，不回滚正确提交。
-- CodePulse只管理用户层Hook；跨用户层、仓库层或插件层重复启动的同一逻辑事件由阶段二Actor的第二层有界去重消除，不显示无法证明的全局唯一状态，也不扫描仓库。
+- CodePulse只管理用户层Hook；跨用户层、仓库层或插件层重复启动时，Tool/Subagent/Turn由阶段二Actor的第二层有界逻辑键消除重复，Session/Permission由Actor的事件级幂等策略抑制重复副作用。不承诺Permission可通过现有字段无损精确去重，不显示无法证明的全局唯一状态，也不扫描仓库。
 - 验收证据固定分为A自动行为矩阵、B Codex App真实验收、C独立CLI真实验收。直接POST、模拟`source='cli'`或mock父进程链不能替代真实CLI；CLI不可用只能记录“环境阻塞”，此时可单独通过App门禁，但不得声明Windows原生CLI与App完整正式兼容。
 - 稳定Journal存在时只处理其权威ID；无稳定Journal时仅合法Prepared-only孤立Journal temp可清理，异常temp保留并OrphanTransactionConflict、Runtime停止。Conflict UI只提供“重新尝试安全恢复”；retry共用operation mutex、无事务返回NoPendingTransaction、成功后重新Inspection/Runtime决策/ListeningStatus，不存在force overwrite/discard/ignore功能。
 - 用户其他 Hook 在 install/repair/uninstall 后语义保持；卸载不恢复整份旧备份。

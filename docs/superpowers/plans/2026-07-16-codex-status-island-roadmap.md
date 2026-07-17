@@ -16,7 +16,7 @@
 - JavaScript 依赖和脚本只通过 `pnpm` 管理和执行。
 - 第一版明确排除 WSL、打开或定位 Codex 会话、灵动岛授权操作、暂停/终止/继续 Codex、历史事件补偿、完整日志与工具审计、云端任务和编辑器扩展。
 - 不引入自建 Dispatcher。CodePulse 只安装、修复和卸载用户层 `%USERPROFILE%\.codex` 中的 CodePulse Hook；不修改仓库级 `.codex`、插件 Hook 或企业托管配置，不扫描全部仓库。Inspection 只能声明用户层管理事实，UI 不提供“全局唯一 Hook”状态。
-- 多个活动配置层可能并发启动同一逻辑 Hook。随机 `eventId` 去重保留为第一层；单线程 Actor 独占维护第二层有界逻辑事件去重。Bridge 不扫描配置层、不持久化状态，Vue 不承担任何去重职责。
+- 多个活动配置层可能并发启动语义相同的 Hook。只有通过协议与认证校验、并被当前 Runtime generation 接受的事件才能进入单线程 Actor 的第一层随机 `eventId` 有界去重；随后 Actor 对稳定标识完整的 Tool、Subagent、Turn 事件维护第二层有界逻辑事件键，对 `SessionStarted` 和 `PermissionRequested` 分别执行幂等元数据更新、状态转换幂等与提醒边沿抑制。Bridge 不扫描配置层、不持久化状态，Vue 不承担任何去重职责。
 - 不在 `IslandView.vue` 中实现分类、去重、乱序过滤、平滑切换、超时、完成保留或失败判断。
 - Vue 不重新判断超时和失败，只消费 Rust 发布的权威快照与监听状态。
 - CodePulse 未运行时不补偿历史事件；重新启动只接收本次启动后通过当前 token 认证的 Hook。
@@ -65,7 +65,7 @@
 ### 1.4 官方 Hooks 与本机核验结论（2026-07-16）
 
 - 2026-07-17 重新核对的官方 [Codex Hooks 文档](https://developers.openai.com/codex/hooks/) 与 [Config Reference](https://developers.openai.com/codex/config-reference/) 说明：Hook 可来自同一配置层的 `hooks.json` 或 `config.toml` 内联 `[hooks]`；两者同时存在会合并并警告；非托管 command Hook 以当前 Hook 定义哈希为信任单位，新建或修改后必须重新 review/trust；当前只有 `type = "command"` 会执行，`prompt`/`agent` 会被解析后跳过。
-- 用户层、受信任仓库层、启用插件和企业托管层都可能提供 Hook；多个活动文件中的匹配 Hook 会全部执行，同一事件下多个匹配 command Hook 会并发启动。高优先级配置不会替换低优先级 Hook。因此用户层管理范围不等于全局唯一性，跨层重复必须由聚合器逻辑事件去重吸收。
+- 用户层、受信任仓库层、启用插件和企业托管层都可能提供 Hook；多个活动文件中的匹配 Hook 会全部执行，同一事件下多个匹配 command Hook 会并发启动。高优先级配置不会替换低优先级 Hook。因此用户层管理范围不等于全局唯一性：具有足够稳定标识的跨层重复由 Actor 的第二层逻辑键吸收，缺乏无歧义稳定标识的事件由 Actor 的事件级幂等状态转换吸收，不承诺所有事件都能精确逻辑去重。
 - 官方字段以实际文档为准：公共字段使用 `session_id`、`transcript_path`、`cwd`、`hook_event_name`、`model`、`permission_mode`；轮次事件提供 `turn_id`；工具事件提供 `tool_name`、`tool_use_id`、`tool_input`，授权说明仅在部分工具的 `tool_input.description` 出现，`PostToolUse.tool_response` 是无固定子字段的 JSON 值；`SubagentStop` 另有禁止读取的 `agent_transcript_path`，SubagentStop/Stop 提供 `stop_hook_active` 与 `last_assistant_message`。
 - 官方结构固定为“事件 → matcher 组 → 一个或多个 handler”三层。`commandWindows` 是基础 `command` 的可选 Windows override，因此 CodePulse 的标准 JSON/TOML Fixture 同时提供 `command` 与 Windows 字段；JSON 写 `commandWindows`，TOML 标准输出写 `command_windows`，Inspection 读取 TOML 时兼容 `command_windows`/`commandWindows`。`async` 虽可解析但命令 Hook 尚不支持，因此 CodePulse 条目不设置它；`timeout` 单位为秒，缺省值为 600，CodePulse 固定显式写 `2`；不设置 `statusMessage`。
 - 官方 matcher 核对结果：省略 matcher、`""` 或 `"*"` 都表示匹配支持该字段的事件的全部发生；`PreToolUse`、`PermissionRequest`、`PostToolUse` 按工具名匹配，`SessionStart` 按启动来源匹配，`SubagentStart`/`SubagentStop` 按子智能体类型匹配；`UserPromptSubmit` 与 `Stop` 不支持 matcher，配置值会被忽略。CodePulse 需要接收八种事件的全部发生，因此标准 Fixture 对八种事件统一省略 matcher，不用 matcher 缩小工具范围。
@@ -219,7 +219,26 @@ pub struct CodexBridgeEvent {
 
 约束固定为：Hook stdin 最大 `64 KiB`；HTTP 请求体最大 `16 KiB`；eventId 是 16 个随机字节的 32 位小写十六进制；sessionId/turnId/toolUseId/agentId 各最多 `256` 个 Unicode 标量值；项目名 `120`；cwd `2048`；任务摘要 `120`；操作摘要 `160`；最新输出和错误摘要各 `300`。所有标识/文本拒绝 NUL 和非空白控制字符。`transcript_path`、完整提示词、完整 `tool_input`/`tool_response`、文件正文、代码片段和完整命令输出绝不进入该 DTO。
 
-`occurredAt` 只验证为非负整数，并只允许用于诊断或必要公开展示。它不得用于当前轮次事件排序/淘汰、任务列表/代表任务排序、一秒平滑、完成保留、10/30 分钟中断或 attention 过期。当前轮次状态按 Actor 实际接收顺序更新。随机`eventId`标识单次Bridge投递并作为第一层去重；第二层逻辑事件键只能从`sessionId`、`turnId`、`eventType`、`toolUseId`、`agentId`中按事件类型选取稳定字段。每种事件的确切字段组合必须在阶段二实施前根据最新官方Hook字段重新确认。逻辑键禁止包含prompt正文、cwd、文件路径、命令正文、tool input/output或任何用户内容摘要。
+`occurredAt` 只验证为非负整数，并只允许用于诊断或必要公开展示。它不得用于当前轮次事件排序/淘汰、任务列表/代表任务排序、一秒平滑、完成保留、10/30 分钟中断、attention 过期或逻辑事件键。当前轮次状态按 Actor 实际接收顺序更新。随机 `eventId` 标识单次 Bridge 投递并作为第一层去重，但认证和 generation 拒绝必须先于缓存插入：HTTP 层完成请求体大小、JSON/协议结构和认证校验后才入当前 Runtime 私有队列，Actor 再确认其捕获的 generation 仍是 Manager 接受的当前 generation；只有全部通过的事件才能检查并登记 `eventId`。第一层命中立即停止，不执行第二层处理，不更新任务、attention、提醒或活动时间，不提交 Snapshot、不分配 revision；只可记录不含用户内容的重复事件 Debug 原因。未命中时才进入下表的事件级策略：
+
+| 事件 | 第一层 `eventId` | 第二层策略 | 稳定字段 | 稳定字段缺失时 |
+|---|---|---|---|---|
+| `ToolStarted` | 使用 | 精确逻辑键 | `sessionId + turnId + eventType + toolUseId` | 缺 `turnId` 或 `toolUseId` 时，Actor 拒绝任务状态变更并保持旧状态；只保留当前 generation 的已认证活动，记录不含正文的 `MissingStableIdentifier` 原因，不进入第二层缓存 |
+| `ToolFinished` | 使用 | 精确逻辑键 | `sessionId + turnId + eventType + toolUseId` | 与 `ToolStarted` 相同，不更新操作结果或阶段 |
+| `SubagentStarted` | 使用 | 精确逻辑键 | `sessionId + turnId + eventType + agentId` | 缺 `turnId` 或 `agentId` 时，Actor 拒绝计数变更并保持旧集合；只记录已认证活动与无正文原因，不进入第二层缓存 |
+| `SubagentFinished` | 使用 | 精确逻辑键 | `sessionId + turnId + eventType + agentId` | 与 `SubagentStarted` 相同，不减少计数 |
+| `TurnStarted` | 使用 | 精确逻辑键 | `sessionId + turnId + eventType` | 缺 `turnId` 时，Actor 不创建或替换任务、不清理旧终态；只记录已认证活动与无正文原因，不进入第二层缓存 |
+| `TurnStopped` | 使用 | 精确逻辑键 | `sessionId + turnId + eventType` | 缺 `turnId` 时，Actor 不执行完成/失败转换；只记录已认证活动与无正文原因，不进入第二层缓存 |
+| `SessionStarted` | 使用 | 幂等 session 元数据更新，不进入第二层缓存 | `sessionId` | `sessionId` 是协议必填字段；缺失、为空或格式非法时由协议层拒绝。不同 `eventId` 的重复到达只安全刷新不敏感元数据，不创建任务、attention、提醒或子智能体计数 |
+| `PermissionRequested` | 使用 | 状态转换幂等与提醒边沿抑制，不进入第二层缓存 | `sessionId + turnId + 当前任务状态` | 缺 `turnId` 时不改变任务或 attention，只允许幂等刷新不敏感 session 元数据并记录无正文原因；不得用内容或时间补键 |
+
+`PermissionRequested` 的提醒边沿固定为 `非 waiting_approval → waiting_approval`。同一 `sessionId + turnId` 已经处于 `waiting_approval` 时，现有非敏感稳定字段无法区分跨配置层重复投递与尚未解除等待状态的另一条合法授权投递，因此首版明确选择只刷新安全活动时间和脱敏说明，不创建第二个 attention、不重复播放强提醒、不增加计数；这不是无损精确事件识别。后续有效工具事件、新轮次或 `TurnStopped` 退出等待状态后，新的授权事件可以再次产生提醒。它不得使用固定时间窗口把同一轮全部授权请求无条件合并，也不得使用 `tool_input`、授权说明正文或其摘要作为持久键。
+
+正式处理顺序固定为：`HTTP 请求接收 → 请求体大小与 JSON/协议结构校验 → 认证校验 → Actor 检查当前 Runtime generation → eventId 有界去重 → 事件级精确逻辑键或幂等状态处理 → 产生 draft 变化时提交 Snapshot → SnapshotStore 分配并发布 revision`。协议非法、认证失败、HTTP 拒绝、旧 generation、失效 Runtime 和第一层重复事件都不能提交 Store 或消耗新 revision。
+
+协议层固定区分四种情况：`eventId`/`sessionId` 缺失、为空或格式非法均返回 `422`；`turnId`/`toolUseId`/`agentId` 字段存在但为空、含非法控制字符或超限同样返回 `422`；后三者缺失保持现有 `Option` wire 形状并交给上表的 Actor 策略；字段完整但事件本身无法无歧义去重（当前即 `PermissionRequested`）使用状态幂等而不是逻辑键。逻辑键与 Debug 输出禁止包含 prompt 正文、cwd、文件路径、命令正文、tool input/output、授权说明正文、任何用户内容摘要或 `occurredAt`。
+
+本轮不改变 `CodexBridgeEvent` 的字段名、类型、单位、serde 表示或枚举值，现有 `turnId`/`toolUseId`/`agentId` 仍为可选字段，因此 `CODEX_PROTOCOL_VERSION` 保持 `1`。Bridge 与主应用继续通过同一 `codex-protocol` 包同步构建；若实施时新增/删除 wire 字段、收紧为新的 wire 必填性或改变接收兼容规则，必须先重新评估协议版本、Bridge/Tauri 同步升级、旧 Bridge 兼容与 Repair 判定，不能沿用本结论。
 
 HTTP 接口固定为 `POST /v1/codex/events`，请求头为 `Authorization: Bearer <token>` 与 `Content-Type: application/json`。响应码固定为：`202` 接收入队、`400` JSON 语法错误、`401` 认证失败、`404` 路径错误、`405` 方法错误、`413` 超限、`415` 内容类型错误、`422` 协议或字段校验失败、`429` 有界队列已满、`503` 聚合接收端已关闭。
 
@@ -877,8 +896,9 @@ pub async fn retry_codex_integration_recovery(
 
 - HTTP 并发只进入有界队列；一个 Actor 顺序处理 `Event`、`Tick`、`ClearTask`、`ClearFailures`、`GetSnapshot`、`Shutdown` 消息。
 - `CodexAggregator<C: Clock>` 是无 Tauri、无 Tokio 定时器、无公开 revision 的纯状态对象；每次 `ingest()`/`tick()` 只读取一次同时含 Unix 墙上毫秒和进程内单调毫秒的 `ClockReading`，变化后产生 `CodexStateDraft`。生产 `SystemClock` 用 `SystemTime` 生成公开展示时间、用 `Instant` 生成生命周期时间；测试 `ManualClock` 可分别推进单调时间和跳变墙上时间。
-- Actor独占两层有界去重缓存：第一层最多保存`2048`个随机`eventId`，第二层最多保存`2048`个逻辑事件键，均用`VecDeque + HashSet`淘汰最旧项。相同逻辑事件即使来自用户层和仓库层、拥有不同`eventId`，也只改变一次任务、提醒和子智能体计数；不同turnId、toolUseId或agentId的合法连续事件不得误去重。重复投递仍可记为当前generation的已认证活动，但不得再次提交draft。每个session另保存最近`8`个retired turnId；toolUseId关联工具开始/完成，agentId做子智能体计数去重。
-- 逻辑键构造器在阶段二实施第一步重新核对最新官方Hook字段，并按事件类型只使用`sessionId`、`turnId`、`eventType`、`toolUseId`、`agentId`中的可用稳定标识。Bridge不扫描配置层或维护缓存，Vue不重新去重；不新增无法可靠判断的`DuplicateCodePulseHookAcrossLayers`状态。
+- Actor独占两层有界缓存：第一层最多保存`2048`个随机`eventId`；第二层最多保存`2048`个Tool/Subagent/Turn逻辑事件键；均用`VecDeque + HashSet`淘汰最旧项。HTTP协议/认证与Actor当前generation门禁全部通过后才能访问第一层；只有Roadmap第3.1节表中稳定字段完整的事件进入第二层缓存。相同稳定键、不同`eventId`只改变一次任务或计数；不同turnId、toolUseId或agentId的合法连续事件不得误去重。第一层重复投递只记无正文Debug，不返回认证活动、不刷新活动时间、不提交draft或分配revision。
+- `SessionStarted`与`PermissionRequested`不进入第二层缓存。前者只幂等刷新session元数据；后者只在`非 waiting_approval → waiting_approval`时创建强提醒，同轮已等待时只刷新安全活动时间和脱敏说明。后续有效工具事件、新轮次或Stop退出后可再次进入并提醒；不使用固定时间窗、内容摘要或`occurredAt`合并授权请求。
+- 稳定字段缺失的Tool/Subagent/Turn事件按第3.1节表拒绝对应状态变更并保持旧状态，不使用内容补键；缺失`turnId`的Permission只更新安全session元数据。Bridge不扫描配置层或维护缓存，Vue不重新去重；不新增无法可靠判断的`DuplicateCodePulseHookAcrossLayers`状态。
 - 新轮次事件先于 UserPromptSubmit 到达时建立临时轮次，后到的同 turnId UserPromptSubmit 只补任务摘要而不把阶段倒退为分析；retired turnId 的事件直接丢弃。当前轮次无论 wire occurredAt 增大、相等或减小都按 Actor 实际接收顺序处理；墙钟回拨两小时后的 running_tests 和 PermissionRequested 必须生效。
 - wire occurredAt 只校验合法并可用于诊断/必要展示；它与公开墙上时间都不参与任务排序、代表任务排序、平滑、完成保留、10/30 分钟中断或 attention 期限。所有这些规则只使用服务端单调接收时间，因此客户端漂移与 Windows 校时不能提前、延后或淘汰状态转换。
 - 一秒平滑通过一个待提交普通阶段实现：同一秒只保留最后一个普通阶段；等待授权、失败、完成和中断立即提交。真实定时器只每秒向 Actor 发送 `Tick`，所有判断仍在纯聚合器内。
@@ -915,7 +935,7 @@ pub async fn retry_codex_integration_recovery(
 | Bridge 未进入安装包、目标架构/Subsystem 错误或 Hook 闪控制台 | crate root 强制 windows_subsystem=windows；构建/验证/installer 三层解析 DOS Header、PE 签名、COFF Machine、Optional Header Magic/Subsystem；piped 黑盒验证 stdout/stderr | Console/未知 Subsystem 或错架构直接拒绝；未写 Hook 时不影响 Codex |
 | Tauri 隐藏窗口或托盘强退绕过清理 | 窗口只 hide；托盘使用 AppHandle::exit；ExitRequested 同步 prevent 后只 spawn 一次两秒 shutdown；Exit 只做同步兜底 | 超时仍发起第二次 exit；Bridge 遇到残留 PID/连接失败仍静默退出 |
 | 固定端口被占用、旧 Runtime 清理新 discovery 或本机进程伪装 | 仅 `AddrInUse` 降级动态端口；每次 generation 随机令牌；发现文件原子替换；完整 DiscoveryOwner 比较；Bridge 校验版本、PID 和回环端口 | 切换动态端口不算故障；旧 owner 返回 ReplacedByNewRuntime；发现文件无法安全写入则关闭服务 |
-| 并发、跨轮次迟到或墙钟回拨产生间歇错误 | 单 Actor 实际接收顺序、eventId/retired turnId/toolUseId/agentId、可注入手动时钟；不以 occurredAt 淘汰当前轮次 | 保留 HTTP/快照接口，回退聚合器提交；旧版本不会持久化任务状态 |
+| 并发、跨层重复、授权重复提醒、跨轮次迟到或墙钟回拨产生间歇错误 | 单 Actor 实际接收顺序；eventId第一层；Tool/Subagent/Turn稳定键第二层；Session幂等更新；Permission状态边沿；可注入手动时钟；不以内容或occurredAt构键/淘汰 | 稳定标识缺失时按事件表拒绝状态变更或只更新安全元数据；保留HTTP/快照接口；旧版本不会持久化任务状态 |
 | Runtime 重启后 revision 回到 1 导致 Vue 拒绝新状态 | 进程级 SnapshotStore 独占 revision；stop 先发布更高 revision 空快照；dormant 查询 Store | 清理 Runtime 不销毁 Store；卸载/失败后 Vue 必须先收到空快照 |
 | 旧 Runtime 的真实事件把新 Runtime 误报 running | generation-aware reporter；authenticatedGeneration 只接受当前 generation；新启动清空来源/时间/错误 | 旧上报直接忽略，新 Runtime 维持 awaiting_trust/partial 直到真实新 Hook |
 | Hook 配置格式或字段与官方版本变化 | 实施时再次查官方文档；完整解析；真实 App/CLI 门禁；记录协议版本 | 检查到未知结构只读报冲突；不写文件；卸载只删精确签名 |
@@ -961,7 +981,7 @@ pub async fn retry_codex_integration_recovery(
 | 2 | Codex App普通任务 | 协议、聚合和来源DTO模拟 | 官方信任、真实Hook与App来源 | 不适用 |
 | 3 | App与CLI并行 | 多会话Actor与优先级 | 真实App会话作为并行一侧 | 独立CLI与App同时运行并正确区分来源 |
 | 4 | 读取、修改、命令、测试阶段 | 八事件映射、聚合与UI投影 | 真实App阶段变化 | 真实CLI阶段变化 |
-| 5 | 请求授权 | waiting_approval、强提醒、不超时 | App官方授权流程 | CLI官方授权流程 |
+| 5 | 请求授权 | waiting_approval、`非等待→等待`提醒边沿、同轮重复抑制、退出后可再次提醒、不超时 | App官方授权流程 | CLI官方授权流程 |
 | 6 | 测试先失败后修复成功 | 中间失败不终止、Stop完成判定 | App真实任务 | CLI真实任务 |
 | 7 | 最终失败 | Stop保守失败判定、失败保留 | App真实失败任务 | CLI真实失败任务 |
 | 8 | 完成保留5分钟 | ManualClock边界 | App可观察留存与消失 | 不作为CLI兼容必需证据 |
@@ -986,7 +1006,7 @@ pub async fn retry_codex_integration_recovery(
 | 5.3 一秒平滑 | 02 任务 3 | `ManualClock` 无等待测试 |
 | 5.4 五分钟完成、失败保留与手动清除 | 02 任务 3/4 | 生命周期与命令测试 |
 | 5.5 10/30 分钟中断、授权不超时 | 02 任务 3 | 手动时钟边界测试 |
-| 6 总体架构、6.1 不接管原 Hook | 01 任务 1–5、02 任务 2、04A 任务 1–3、04B-1/2/3 | 用户层管理范围、配置保留、跨层逻辑事件去重和单向接口测试 |
+| 6 总体架构、6.1 不接管原 Hook | 01 任务 1–5、02 任务 2、04A 任务 1–3、04B-1/2/3 | 用户层管理范围、配置保留、稳定事件跨层逻辑键、Session/Permission幂等策略和单向接口测试 |
 | 7.1 半自动安装 | 04A 任务 1–3、04B-1/2/3、04C 任务 1/2/5 | inspection/preview/confirm/统一事务/self-check/真实事件验收 |
 | 7.2 表示方式选择 | 04A 任务 1/3 | `hooks.json`、TOML、双表示冲突矩阵 |
 | 7.3 八种 Hook | 01 任务 2、04A 任务 1/3、04C 任务 5 | 八事件解析和配置测试 |
@@ -1009,14 +1029,14 @@ pub async fn retry_codex_integration_recovery(
 | Discovery 完整 Owner 与 A/B 清理竞态 | 01 任务 4、02 任务 5、04C 任务 4 | ReplacedByNewRuntime、相同 PID 不同 token、损坏文件和 RunEvent::Exit owner-aware 测试 |
 | 10.2 HTTP 处理顺序与 202 | 01 任务 4 | 路由/认证/限制/过载集成测试 |
 | 10.3 回环、令牌、二次脱敏和安全日志 | 01 任务 4、02 任务 5 | 网络绑定、重启令牌、日志捕获测试 |
-| 多配置层与逻辑事件去重 | 01任务2/3、02任务2/4、04A任务1、04C任务4 | 用户层管理事实；相同逻辑事件不同eventId只处理一次；不同turn/toolUse/agent不误去重；两层缓存有界且仅Actor维护 |
+| 多配置层与事件级去重 | 01任务2/3、02任务2/4、04A任务1、04C任务4 | 协议/认证/current generation门禁先于eventId缓存且拒绝路径不污染；第一层重复无活动刷新/attention/revision；Tool/Subagent/Turn相同稳定键不同eventId只处理一次且不同ID不误合并；Session重复只幂等更新；Permission同轮重复无第二次提醒、退出后可再次提醒；缺失标识行为明确；两层缓存有界且仅Actor维护 |
 | 11 Rust 模块边界 | 01 任务 1/4、02 任务 1–5、04A 任务 1–3、04B-1/2/3 | 模块 API 编译和职责审查 |
 | 12 聚合数据结构 | 02 任务 1/2 | DTO 序列化快照测试 |
 | 13 Hook 到状态映射 | 01 任务 2、02 任务 2 | 八事件表驱动测试 |
 | 14 工具分类 | 01 任务 2 | 读取/编辑/测试/命令表驱动测试 |
 | 15 中间失败与 Stop 保守判定 | 02 任务 1/2 | 明确成功/失败/未知组合测试 |
-| 16 等待授权 | 02 任务 2/3、03 任务 3/4 | 强打断、不超时、无授权按钮测试 |
-| 17 子智能体计数 | 01 任务 2、02 任务 2、03 任务 3 | start/stop 去重与计数展示测试 |
+| 16 等待授权 | 02 任务 2/3、03 任务 3/4、04C任务4 | `非等待→等待`强提醒边沿、同轮重复抑制、退出后重新提醒、不超时、无授权按钮测试 |
+| 17 子智能体计数 | 01 任务 2、02 任务 2、03 任务 3 | 相同agentId不同eventId精确去重、不同agentId不误合并、缺失agentId拒绝计数变更与计数展示测试 |
 | 18 Rust/Vue 边界及三个事件 | 02 任务 4、03 任务 1/2 | IPC 契约、revision 防旧写和清理测试 |
 | 进程级 SnapshotStore、显式 Manager 注入、dormant 查询与跨 Runtime revision | 02 任务 1/4/5、03 任务 2、04B-3、04C 任务 4 | `Arc::ptr_eq`、setup 单次构造、Actor/stop/restart 同一 Arc、revision 20→stop 21 空→新任务 >21、dormant 命令只读注入 Store |
 | Runtime generation 与真实事件认证 | 02 任务 4/5、04A 任务 2、04B-3、04C 任务 4/5 | `[自动行为测试]` generation 1/2与旧上报忽略；`[App真实验收]` App第一条真实Hook；`[CLI真实验收]` CLI第一条真实Hook |
@@ -1062,7 +1082,7 @@ pub async fn retry_codex_integration_recovery(
 
 - [ ] **审核阶段二：聚合、Runtime Manager 与退出协调器**
 
-  执行 `docs/superpowers/plans/2026-07-16-codex-status-island-02-aggregator-tauri.md`。预期当前轮次按Actor接收顺序、随机eventId与逻辑事件两层有界去重由Actor独占、相同逻辑事件不同eventId只处理一次且不同turn/toolUse/agent不误去重、SnapshotStore显式注入Manager且setup只构造一次、Actor/stop/restart/dormant命令使用同一Arc、跨Runtime保持revision、generation过滤旧reporter/Owner、两秒退出只启动一次shutdown；完成后停止review。
+  执行 `docs/superpowers/plans/2026-07-16-codex-status-island-02-aggregator-tauri.md`。预期当前轮次按Actor接收顺序；协议/认证与当前generation门禁先于eventId缓存，未认证、协议非法、旧generation和失效Runtime不污染缓存；第一层重复不刷新活动、不提交Store或分配revision；随机eventId缓存与仅含Tool/Subagent/Turn稳定键的逻辑缓存由Actor独占且有界；相同稳定键不同eventId只处理一次，不同turn/toolUse/agent不误合并；Session重复只幂等更新；Permission同轮重复无第二次强提醒、退出后可再次提醒；缺失稳定标识按事件表处理且Debug不含用户内容；SnapshotStore显式注入Manager且setup只构造一次、Actor/stop/restart/dormant命令使用同一Arc、跨Runtime保持revision、generation过滤旧reporter/Owner、两秒退出只启动一次shutdown；完成后停止review。
 
 - [ ] **审核阶段三：Agent UI 与 listening status 联合投影**
 

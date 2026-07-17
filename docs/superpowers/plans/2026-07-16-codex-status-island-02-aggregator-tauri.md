@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**目标：** 把阶段一的无状态事件流聚合为draft，由进程级`CodexSnapshotStore`生成跨Runtime严格递增的权威快照，实现随机`eventId`投递去重、跨配置层逻辑事件去重、优先级、跨轮次迟到过滤、平滑显示、完成/失败/中断生命周期，并提供generation-aware、由inspection显式驱动且可安全退出的Tauri runtime；本阶段不在应用启动时自行开启HTTP。
+**目标：** 把阶段一的无状态事件流聚合为draft，由进程级`CodexSnapshotStore`生成跨Runtime严格递增的权威快照，实现随机`eventId`投递去重、稳定事件的跨配置层逻辑键去重、Session幂等更新、Permission等待状态幂等与提醒边沿抑制、优先级、跨轮次迟到过滤、平滑显示、完成/失败/中断生命周期，并提供generation-aware、由inspection显式驱动且可安全退出的Tauri runtime；本阶段不在应用启动时自行开启HTTP。
 
 **架构：** `CodexAggregator<C: Clock>`是不依赖Tokio/Tauri、也不持有公开revision的纯状态对象；`ClockReading`同时提供只用于公开时间戳的Unix墙上毫秒和只用于状态转换的进程内单调毫秒；一个Actor按实际接收顺序独占处理聚合器与阶段一Receiver，把变化后的`CodexStateDraft`提交给进程级`CodexSnapshotStore`。可注入publisher只发布Store返回的完整快照和绑定该全局revision的边沿提醒。`CodexRuntimeManager`持有同一个`CodexIntegrationPaths`、同一个SnapshotStore、单调generation、HTTP/Actor/Discovery owner与监听事实，只响应`ensure_started(reason)`、`stop_if_unused(reason)`和应用退出；04B-3才把startup inspection结果接入这些接口。
 
@@ -250,7 +250,7 @@ pub fn classify_stop(evidence: StopEvidence<'_>) -> StopOutcome;
 
 ## 任务 2：实现顺序聚合、会话合并、去重与乱序过滤
 
-**独立交付物：** 纯聚合器可将任意多会话事件流稳定归并为排序后的任务快照；同一逻辑Hook事件即使从用户层和仓库层分别启动Bridge并产生不同随机`eventId`也只处理一次；没有定时器和Tauri依赖。
+**独立交付物：** 纯聚合器可将任意多会话事件流稳定归并为排序后的任务快照；稳定标识完整的Tool/Subagent/Turn事件即使从用户层和仓库层分别启动Bridge并产生不同随机`eventId`也只处理一次，Session/Permission重复则按事件级幂等策略处理；没有定时器和Tauri依赖。
 
 **Files:**
 
@@ -288,7 +288,22 @@ impl<C: Clock> CodexAggregator<C> {
 
 内部 `CodexTaskRecord` 允许保存 `cwd`、`last_received_monotonic_ms`、当前/待提交普通阶段、`visible_since_monotonic_ms`、`completed_monotonic_ms`、`attention_expires_monotonic_ms`、最近 8 个 retired turnId、按 `toolUseId` 关联的活动工具集合、`HashSet<agentId>` 和提醒周期标记；这些字段不得序列化到 Vue。`occurredAt` 只在共享协议校验非负并可用于诊断/必要展示，不保存为当前轮次淘汰游标。公开草稿的 `startedAt`、`lastActivityAt`、`completedAt`、`expiresAt`、`generatedAt` 取同一次 `ClockReading.wall_time_ms`，内部期限和排序只取 `monotonic_ms`。Aggregator 不引用 `CodexSnapshotStore`，不含 AtomicU64，不生成 version/revision。
 
-聚合器内部增加第二个有界逻辑事件缓存，与随机`eventId`缓存相互独立且都由单线程Actor独占维护。逻辑键只能从已经允许进入`CodexBridgeEvent`的稳定标识字段中选择：`sessionId`、`turnId`、`eventType`以及事件适用时的`toolUseId`、`agentId`。不得加入prompt正文、cwd、文件路径、命令正文、tool input/output或任何用户内容摘要。每种eventType具体使用哪些字段不得在本计划凭旧字段猜测；任务实施第一步必须重新核对最新官方Hook输入字段并同步协议测试，若稳定标识不足以安全构键则停止并更新Roadmap及消费者计划。
+聚合器内部增加第二个有界逻辑事件缓存，与随机`eventId`缓存相互独立且都由单线程Actor独占维护。协议层已经拒绝缺失/非法`eventId`与`sessionId`，以及存在但为空、超限或含非法控制字符的`turnId`/`toolUseId`/`agentId`；Actor看到的稳定标识不足只指对应Option为None或无法关联当前轮次，必须按下表执行，不得留到实施时决定：
+
+| 事件 | 第二层处理 | 完整稳定字段 | 稳定字段不足时的Actor行为 |
+|---|---|---|---|
+| `ToolStarted` | 进入逻辑键缓存 | `sessionId + turnId + eventType + toolUseId` | 缺`turnId`或`toolUseId`：拒绝工具状态转换，保持旧任务/attention/工具集合；仍返回当前generation的authenticated activity，记录仅含eventType、缺失字段名和`MissingStableIdentifier`的Debug原因，不进入第二层缓存 |
+| `ToolFinished` | 进入逻辑键缓存 | `sessionId + turnId + eventType + toolUseId` | 与ToolStarted相同，且不得更新operationResult、摘要或退出等待状态 |
+| `SubagentStarted` | 进入逻辑键缓存 | `sessionId + turnId + eventType + agentId` | 缺`turnId`或`agentId`：拒绝计数/集合变更，保持旧状态；只保留authenticated activity与无正文Debug原因，不进入第二层缓存 |
+| `SubagentFinished` | 进入逻辑键缓存 | `sessionId + turnId + eventType + agentId` | 与SubagentStarted相同，不得减少计数 |
+| `TurnStarted` | 进入逻辑键缓存 | `sessionId + turnId + eventType` | 缺`turnId`：不创建/替换任务，不清旧终态或等待状态；只保留authenticated activity与无正文Debug原因，不进入第二层缓存 |
+| `TurnStopped` | 进入逻辑键缓存 | `sessionId + turnId + eventType` | 缺`turnId`：不执行Stop分类或终态转换；只保留authenticated activity与无正文Debug原因，不进入第二层缓存 |
+| `SessionStarted` | 不进入逻辑键缓存 | 协议必填`sessionId` | 不存在Actor层缺失分支；不同`eventId`重复到达只幂等刷新source、脱敏projectName等不敏感session元数据，不刷新cwd，不创建任务、attention、提醒或子智能体计数 |
+| `PermissionRequested` | 不进入逻辑键缓存；执行状态转换幂等和提醒边沿抑制 | `sessionId + turnId + 当前任务状态` | 缺`turnId`：不创建/修改任务或attention，只允许幂等刷新不敏感session元数据，记录无正文Debug原因；不得使用说明、命令、摘要、路径或时间补键 |
+
+`PermissionRequested`在turnId完整时按当前session/turn记录处理：任务尚未处于同一轮`waiting_approval`时执行`非 waiting_approval → waiting_approval`并创建一次strong attention；已经处于同一轮等待时，现有非敏感稳定字段无法区分跨配置层重复投递与尚未解除等待状态的另一条合法授权投递，因此首版明确选择只刷新`lastActivityAt`和已经脱敏的`operationSummary`，不创建第二个attention、不重复播放强提醒、不增加任何计数；这不是无损精确事件识别。后续稳定标识完整且有效的`ToolStarted`/`ToolFinished`、新的`TurnStarted`或`TurnStopped`退出等待状态；退出后新的Permission可以再次产生提醒边沿。禁止用固定时间窗口无条件合并同一轮全部授权请求。
+
+逻辑键与Debug均不得加入prompt正文、cwd、文件路径、命令正文、tool input/output、授权说明正文、任何用户内容摘要或`occurredAt`。第一层与第二层容量都固定为2048；Session/Permission状态幂等不消耗第二层容量。
 
 - [ ] **步骤 1：先写会话与轮次归并失败测试**
 
@@ -306,9 +321,13 @@ impl<C: Clock> CodexAggregator<C> {
 
 - [ ] **步骤 2：先写去重、接收顺序和跨轮次迟到失败测试**
 
-  覆盖：相同eventId只处理一次；eventId缓存上限2048且淘汰最旧ID；相同逻辑事件使用不同随机eventId、模拟用户层与仓库层两个活动Hook文件分别投递时，只改变一次draft、只产生一次提醒且子智能体只计数一次；逻辑缓存上限2048且淘汰最旧key。分别改变turnId、toolUseId、agentId，断言合法连续事件不会被误去重。断言逻辑键序列化/Debug不含prompt正文、cwd、文件路径、命令正文、tool input/output或内容摘要。同一当前turn内无论`occurredAt`增大、相等或减小都严格按Actor实际接收顺序处理；PreToolUse先于同turnId UserPromptSubmit到达时先建立“Codex任务”临时轮次，后到prompt只补摘要且阶段仍为工具阶段；新TurnStarted可正式确认临时轮次或替换当前轮；最近8个retired turnId的晚到Tool/Stop全部丢弃；明确属于旧session generation的事件丢弃；第9个retired ID被有界淘汰。
+  覆盖：相同eventId只处理一次；第一层重复时不返回authenticated activity、不刷新活动时间、不产生attention、不改变draft，也不触发Store commit/revision；只记录无正文DuplicateEventId Debug原因。eventId缓存上限2048且淘汰最旧ID。ToolStarted/ToolFinished分别使用相同toolUseId、不同eventId时只处理一次，不同toolUseId不误合并；SubagentStarted/SubagentFinished分别使用相同agentId、不同eventId时只处理一次，不同agentId不误合并；TurnStarted/TurnStopped分别使用相同turnId、不同eventId时只处理一次，不同turnId不误合并。逻辑缓存上限2048且只包含上述三类稳定事件，淘汰最旧key；Session/Permission不写入该缓存。逻辑键序列化与Debug不含prompt正文、cwd、文件路径、命令正文、tool input/output、授权说明、内容摘要或occurredAt。
 
-  `toolUseId` 用例必须覆盖 started/finished 精确关联、重复 finished 不二次改变 operation result、未知 finished 不把阶段倒退；`agentId` 用例覆盖 SubagentStart 重复不加二、未知 SubagentStop 不减到负数、新轮次清空 agent ID 集合。
+  缺失稳定标识表格测试逐事件覆盖：ToolStarted/ToolFinished缺turnId或toolUseId时旧任务、operationResult、attention和工具集合不变；SubagentStarted/SubagentFinished缺turnId或agentId时计数/集合不变；TurnStarted缺turnId时不创建或替换卡片，TurnStopped缺turnId时不终结；PermissionRequested缺turnId时只幂等刷新安全session元数据且不创建任务/attention；以上均不进入第二层缓存，只产生无正文`MissingStableIdentifier` Debug原因并仍可上报authenticated activity。另在阶段一协议测试固定字段存在但为空/非法时422，证明它与Actor收到None的分支不同。
+
+  同一当前turn内无论`occurredAt`增大、相等或减小都严格按Actor实际接收顺序处理；ToolStarted先于同turnId TurnStarted到达时先建立“Codex任务”临时轮次，后到TurnStarted只补摘要且阶段仍为工具阶段；新TurnStarted可正式确认临时轮次或替换当前轮；最近8个retired turnId的晚到Tool/Stop全部丢弃；明确属于旧session generation的事件丢弃；第9个retired ID被有界淘汰。
+
+  `toolUseId` 用例必须覆盖 started/finished 精确关联、重复 finished 不二次改变 operation result、未知 finished 不把阶段倒退；`agentId` 用例覆盖 SubagentStart 重复不加二、未知 SubagentStop 不减到负数、新轮次清空 agent ID 集合。SessionStarted以不同eventId重复到达只刷新不敏感元数据，不创建任务、attention或计数。PermissionRequested同一session/turn重复到达时只有第一次`非等待→等待`产生strong attention，后续只刷新安全活动时间/脱敏说明；有效工具事件退出等待后再次Permission产生新的attentionId，新TurnStarted或TurnStopped退出后同样可再次提醒。
 
   增加两个固定回归序列：`ToolStarted(editing, occurredAt=T)` → Windows 墙上时间回拨 2 小时 → `ToolStarted(running_tests, occurredAt=T-2h)`，最终阶段必须为 `running_tests`；当前轮次收到更小 `occurredAt` 的 `PermissionRequested` 必须立即进入 `waiting_approval`。这两个用例分别改变 `ManualClock.wall_time_ms` 和 wire `occurredAt`，且都不得被淘汰。
 
@@ -324,7 +343,7 @@ impl<C: Clock> CodexAggregator<C> {
 
 - [ ] **步骤 3：先写 Hook 映射与中间失败失败测试**
 
-  覆盖八种 eventType：SessionStarted 只更新 session 元数据；TurnStarted 分析；ToolStarted 使用 wire stage；PermissionRequested 授权；ToolFinished 更新结果/摘要但默认保持当前阶段；Subagent 只更新计数；TurnStopped 用聚合记录中的最后 operationResult、最后错误摘要和该 Stop 的 latestOutput 调用 Stop 分类。明确断言 `ToolFinished(operationResult=failed)` 后仍是运行测试或执行命令，不是最终 failed；TurnStopped 自身的 operationResult 固定为 unknown，不能覆盖记录证据。
+  覆盖八种 eventType：SessionStarted 只幂等更新 session 元数据；TurnStarted 分析；ToolStarted 使用 wire stage；PermissionRequested 只按等待状态边沿授权；ToolFinished 更新结果/摘要但默认保持当前阶段；Subagent 只更新计数；TurnStopped 用聚合记录中的最后 operationResult、最后错误摘要和该 Stop 的 latestOutput 调用 Stop 分类。明确断言 `ToolFinished(operationResult=failed)` 后仍是运行测试或执行命令，不是最终 failed；TurnStopped 自身的 operationResult 固定为 unknown，不能覆盖记录证据。每种事件再重复一次缺失稳定标识分支，结果必须与上表完全一致。
 
   运行：
 
@@ -338,11 +357,11 @@ impl<C: Clock> CodexAggregator<C> {
 
 - [ ] **步骤 4：实现 Map 所有权与确定性规则**
 
-  使用`HashMap<sessionId, CodexTaskRecord>`；一个`VecDeque + HashSet`实现2048个随机eventId去重，另一个独立`VecDeque + HashSet`实现2048个逻辑事件键去重。两套缓存都只在Aggregator/Actor内存中维护，不持久化、不进入Bridge或Vue。每次`ingest()`只调用一次`clock.now()`：`wall_time_ms`写入draft的`startedAt/lastActivityAt`并作为本次`authenticated_activity.received_at`，`monotonic_ms`写入内部`last_received_monotonic_ms`并用于任务排序。重复eventId或逻辑键仍可返回authenticated activity，因为进程确实收到已认证请求，但不得再次改变任务、产生提醒或改变子智能体计数。
+  使用`HashMap<sessionId, CodexTaskRecord>`；一个`VecDeque + HashSet`实现2048个随机eventId去重，另一个独立`VecDeque + HashSet`实现2048个Tool/Subagent/Turn逻辑事件键去重。两套缓存都只在Aggregator/Actor内存中维护，不持久化、不进入Bridge或Vue；Session/Permission幂等策略不写第二层缓存。`ingest()`先检查eventId；第一层命中时不调用`clock.now()`、不返回authenticated activity或draft变化，只返回无正文Debug原因。未命中并登记后才调用一次`clock.now()`：`wall_time_ms`写入draft的`startedAt/lastActivityAt`并作为本次`authenticated_activity.received_at`，`monotonic_ms`写入内部`last_received_monotonic_ms`并用于任务排序，然后选择精确逻辑键、Session幂等更新、Permission状态边沿或缺失标识分支。精确逻辑键重复仍可返回authenticated activity，因为它是当前generation收到的另一条已认证HTTP投递，但不得再次改变任务、产生提醒或改变子智能体计数。
 
-  当前轮次状态严格以Actor收到事件的顺序更新；不得比较wire`occurredAt`来排序或淘汰。`occurredAt`只在协议层验证为非负整数，并允许进入不含正文的诊断元数据；它不得控制任务列表/代表任务排序、一秒平滑、完成保留、10/30分钟中断或attention过期。允许丢弃的事件只有重复eventId、重复逻辑事件、属于retired turnId的迟到事件，以及session内部轮次generation明确不兼容的旧事件；这里的session generation不得与Runtime Manager的runtime_generation共用字段或含义。Bridge不扫描配置层或维护持久去重状态，Vue不做补充去重。
+  当前轮次状态严格以Actor收到事件的顺序更新；不得比较wire`occurredAt`来排序、淘汰或构键。允许丢弃或拒绝状态变更的情况固定为：重复eventId、重复的Tool/Subagent/Turn逻辑键、上表所列稳定标识不足、属于retired turnId的迟到事件，以及session内部轮次generation明确不兼容的旧事件；这里的session generation不得与Runtime Manager的runtime_generation共用字段或含义。Permission重复不按逻辑键丢弃，而是在同轮waiting状态下执行幂等刷新。Bridge不扫描配置层或维护持久去重状态，Vue不做补充去重。
 
-  新 TurnStarted 是轮次边界；若工具/授权事件先到，同 turnId 可先建立 `turn_boundary_seen=false` 的临时记录，后到 TurnStarted 只补 taskSummary 并设为 true，不覆盖临时记录的首次服务端接收时间或更新后的可见阶段。真正替换轮次时把旧 turnId 放进最多 8 项的 retired deque；retired 轮次的任何晚到事件都丢弃。若缺少 `turnId`，仍以收到 TurnStarted 为新轮边界并清空旧终态。`toolUseId` 维护当前轮次工具关联，`agentId` 维护当前轮次子智能体去重。SessionStarted 可缓存 session 元数据，但 draft 只输出活跃任务。所有 draft 构造集中在一个函数，按内部单调接收时间排序后再选代表任务；公开 `lastActivityAt` 和 wire `occurredAt` 都不参与排序。
+  新 TurnStarted 是轮次边界；若稳定标识完整的工具/授权事件先到，同 turnId 可先建立 `turn_boundary_seen=false` 的临时记录，后到 TurnStarted 只补 taskSummary 并设为 true，不覆盖临时记录的首次服务端接收时间或更新后的可见阶段。真正替换轮次时把旧 turnId 放进最多 8 项的 retired deque；retired 轮次的任何晚到事件都丢弃。缺少turnId的TurnStarted不得作为新轮边界，也不得清空旧终态。`toolUseId` 维护当前轮次工具关联，`agentId` 维护当前轮次子智能体集合；二者不是Permission去重键。SessionStarted只缓存/刷新session元数据，draft只输出活跃任务。所有 draft 构造集中在一个函数，按内部单调接收时间排序后再选代表任务；公开 `lastActivityAt` 和 wire `occurredAt` 都不参与排序。
 
   运行：
 
@@ -442,7 +461,7 @@ pub struct CodexSoftInterrupt {
 
 - [ ] **步骤 3：先写提醒边沿失败测试**
 
-  覆盖：PermissionRequest 产生持续 strong attention；后续工具/Stop/新轮次退出；首次 failed 产生 5 秒 strong，过期后任务保留且 acknowledged=true；首次 completed 产生 5 秒 soft attention 和一次 `CodexSoftInterruptReason::Completed`；首次 interrupted 产生 5 秒 soft attention 和一次 `CodexSoftInterruptReason::Interrupted`；同一终态或中断周期后续 tick 不重复；恢复后再次超时可产生新 attentionId；attentionId 严格递增。等待授权和失败不得产生 `CodexSoftInterrupt`。
+  覆盖：PermissionRequest只在`非 waiting_approval → waiting_approval`时产生持续strong attention；同一session/turn用不同eventId重复到达不产生第二个attention、不重复强提醒、不增加计数，只刷新安全活动时间和脱敏说明；不使用固定时间窗口或内容摘要判断重复。稳定标识完整且有效的后续ToolStarted/ToolFinished、Stop或新轮次退出；退出后新的Permission可再次产生更大的attentionId。Permission缺turnId不改变任务/attention。首次 failed 产生 5 秒 strong，过期后任务保留且 acknowledged=true；首次 completed 产生 5 秒 soft attention 和一次 `CodexSoftInterruptReason::Completed`；首次 interrupted 产生 5 秒 soft attention 和一次 `CodexSoftInterruptReason::Interrupted`；同一终态或中断周期后续 tick 不重复；恢复后再次超时可产生新 attentionId；attentionId 严格递增。等待授权和失败不得产生 `CodexSoftInterrupt`。
 
   运行：
 
@@ -609,7 +628,7 @@ async fn run_codex_self_check(
 
 - [ ] **步骤 1：先写 Actor 并发与发布失败测试**
 
-  用容量 256 的 event channel 并发发送多个 session，同时交错 ClearTask 和显式 `CodexActorCommand::Tick`；断言 publisher 收到的快照全部来自同一个注入 Store且 revision 单调递增，最终 `store.current()` 与顺序参考模型相同。Actor fixture 必须保存传入的 `Arc<CodexSnapshotStore>` 并用 `Arc::ptr_eq` 证明它与 Manager 的 `runtime.snapshot_store()` 是同一实例。软提醒只发一次，并且 revision 精确等于产生该提醒的 Store commit revision；不存在 Aggregator revision。每个从已认证 HTTP 队列取出的事件都把 `AggregateEffects.authenticated_activity` 连同 Actor 捕获的 generation 转交 activity reporter 一次，包括被 eventId 去重的重投；自检和 Tick 不得调用。
+  用容量 256 的 event channel 并发发送多个 session，同时交错 ClearTask 和显式 `CodexActorCommand::Tick`；断言 publisher 收到的快照全部来自同一个注入 Store且 revision 单调递增，最终 `store.current()` 与顺序参考模型相同。Actor fixture 必须保存传入的 `Arc<CodexSnapshotStore>` 并用 `Arc::ptr_eq` 证明它与 Manager 的 `runtime.snapshot_store()` 是同一实例。软提醒只发一次，并且 revision 精确等于产生该提醒的 Store commit revision；不存在 Aggregator revision。Actor每次从已认证HTTP队列取出事件后，先通过注入的generation acceptance guard比较捕获generation与Manager当前generation；旧generation、已失效Runtime或停止接收阶段直接丢弃，不调用`aggregator.ingest()`、activity reporter、Store或publisher。门禁通过后才调用聚合器；仅当effects含authenticated_activity时才连同捕获generation上报。第一层eventId重投不得上报activity或分配revision；自检和Tick不得调用reporter。
 
   运行：
 
@@ -637,7 +656,7 @@ async fn run_codex_self_check(
 
 - [ ] **步骤 3：实现 `tokio::select!` 顺序循环**
 
-  Actor 同时选择 event receiver、命令 receiver、一秒 `interval` 与 shutdown；所有分支只调用同一个聚合器实例。interval 使用 `MissedTickBehavior::Skip`，防止恢复后批量重放过期 Tick。每个 event 分支只调用一次 `aggregator.ingest(event)`，随后把 effects 中的 `authenticated_activity` 与捕获的 runtime generation 转交 `CodexActivityReporter`。每次 effects 若 draft_changed，先 `store.commit(aggregator.draft())` 并发布完整快照，再用该 snapshot.revision 构造 soft interrupt；没有变化不发布。clear 命令同样只能通过 Actor 改聚合器并提交 Store。
+  Actor 同时选择 event receiver、命令 receiver、一秒 `interval` 与 shutdown；所有分支只调用同一个聚合器实例。interval 使用 `MissedTickBehavior::Skip`，防止恢复后批量重放过期 Tick。每个event分支先检查注入的generation acceptance guard，只有`accepting=true`且捕获generation等于Manager当前generation时才调用一次`aggregator.ingest(event)`；门禁失败只记无正文错误码，不触碰两层缓存。随后仅在effects含`authenticated_activity`时转交`CodexActivityReporter`。每次 effects 若 draft_changed，先 `store.commit(aggregator.draft())`并由Store分配revision，再发布完整快照，最后用该snapshot.revision构造soft interrupt；没有变化不提交Store、不分配revision、不发布。clear命令同样只能通过Actor改聚合器并提交Store。
 
   publisher 错误只记错误码，不终止 Actor。snapshot 查询不再进入 Actor，而是读取进程级 Store；这样 Runtime dormant 仍可用，同时运行期查询只会看到 Actor 已完成提交的完整快照，绝不会读取内部 HashMap 半状态。
 
@@ -649,7 +668,7 @@ async fn run_codex_self_check(
   Pop-Location
   ```
 
-  预期：事件、显式 Tick 和命令按 Actor 接收顺序处理；每个认证事件只上报一次 activity；快照先于同 revision 的 soft interrupt 发布；Actor 测试通过。
+  预期：事件、显式Tick和命令按Actor接收顺序处理；只有当前generation门禁接受且未被第一层eventId判重的事件才可上报activity，第一层重复与旧generation事件不刷新活动事实、不提交Store或分配revision；快照先于同revision的soft interrupt发布；Actor测试通过。
 
 - [ ] **步骤 4：实现 Tauri 命令并注册**
 
@@ -808,7 +827,7 @@ impl CodexExitCoordinator {
   ));
   ```
 
-  `ensure_started(StartupInspection)` 每次真实创建先分配非零 generation，再把同一个 generation 绑定 event channel/Actor/reporter/HTTP token/DiscoveryOwner，并把 `runtime.snapshot_store()` 的同一 Arc 传给 Actor；三种 start reason 在已运行时重复调用不创建第二 listener或新 generation；启动失败允许消耗 generation、关闭 actor、current generation 保持 None并进入 service_error。增加完整序列：Manager start → Actor 获得同一 Store → Stop 后该 Store revision 增加 → Restart 后新 Actor 仍持有同一 Arc。
+  `ensure_started(StartupInspection)` 每次真实创建先分配非零 generation，再把同一个 generation 绑定 event channel/Actor/reporter/HTTP token/DiscoveryOwner，并把 `runtime.snapshot_store()` 的同一 Arc 与只读generation acceptance guard传给Actor；三种 start reason 在已运行时重复调用不创建第二 listener或新 generation；启动失败允许消耗 generation、关闭 actor、current generation 保持 None并进入 service_error。增加完整序列：Manager start → Actor 获得同一 Store和guard → Stop 后该 Store revision增加 → Restart后新Actor仍持有同一Arc。guard必须在eventId缓存前拒绝旧generation和失效Runtime；测试先向旧generation发送eventId=X，再由当前generation发送同一X，后者必须正常处理，证明旧事件没有污染第一层缓存。
 
   generation 表格必须覆盖：generation=1 收到真实事件 → authenticatedGeneration=1 → running；generation=1 stop → generation=2 start → authenticatedGeneration=None、lastEventAt=None、sources=[]、旧 error/port/fallback 清空 → awaiting_trust；generation=1 Actor 晚到上报或关闭回调且 current=2 → 完全忽略；generation=2 收到真实事件 → authenticatedGeneration=2 → running。running 的必要条件固定为 current generation 非 None 且两个 generation 相等；self-check 不能设置 authenticatedGeneration。
 
@@ -926,7 +945,7 @@ impl CodexExitCoordinator {
 
 - 聚合器无 Tauri/Tokio 定时器依赖，所有分钟级行为用 ManualClock 瞬时验证；墙上时间正反跳变不会改变平滑、保留、提醒或中断边界。
 - 聚合器只产生 `CodexStateDraft`/`CodexSoftInterruptDraft`，不含公开 revision；进程级 `CodexSnapshotStore` 是唯一 revision 分配者，Store 不随 Runtime 重启。
-- 并发输入只由单Actor按实际接收顺序改状态；2048 eventId投递去重与2048逻辑事件去重都由Actor独占且有界。同一逻辑事件不同eventId只处理一次，不同turnId/toolUseId/agentId不误去重；retired turnId、toolUseId关联和agentId计数全部有测试；当前轮次`occurredAt`回拨不会丢事件。
+- 并发输入只由单Actor按实际接收顺序改状态；协议/认证通过且Actor当前generation门禁接受后，才可访问2048 eventId投递缓存与2048 Tool/Subagent/Turn逻辑键缓存。未认证、协议非法、HTTP拒绝、旧generation和失效Runtime均不污染缓存；第一层重复不刷新活动、不提交Store或分配revision。相同稳定键不同eventId只处理一次，不同turnId/toolUseId/agentId不误合并；SessionStarted重复只幂等刷新；PermissionRequested同轮重复不产生第二次强提醒，退出等待状态后可再次提醒；各事件缺失稳定标识按固定表处理且不进入第二层；逻辑键/Debug不含用户内容或occurredAt；retired turnId、toolUseId关联和agentId计数全部有测试。
 - 中间命令失败不会直接成为最终失败；Stop 证据不明确且最后操作失败时默认完成并标记未解决问题。
 - 普通状态一秒平滑；授权/失败/完成/中断立即生效；提醒不会在同周期重复。
 - 完成精确保留 5 分钟、失败只手动清除、新轮次清旧失败、10/30 分钟中断、授权不超时。

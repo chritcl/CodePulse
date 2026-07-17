@@ -4,7 +4,7 @@
 
 **目标：** 交付可独立构建且不弹控制台的 Windows GUI Subsystem Bridge、双方共用的版本化最小协议、仅回环且带启动令牌/完整 Discovery owner 的 HTTP 接收器，以及经过 Machine+Subsystem 校验后进入 Tauri 安装包的 Bridge 资源。
 
-**架构：** Bridge 是由每次 Codex Hook 单独启动的短进程，不保存任务状态；它读取官方 Hook JSON、生成表示单次投递的随机`eventId`、完成第一层脱敏/分类、读取发现文件并进行一次 HTTP POST。它不扫描用户层/仓库层/插件层配置，不判断Hook来源层，也不持久化任何去重状态；跨层同一逻辑事件由阶段二单线程Actor的第二层有界去重处理。主应用 HTTP 层执行认证、限流、二次校验和有界入队，阶段一不启动聚合器，也不修改真实 Codex 配置。
+**架构：** Bridge 是由每次 Codex Hook 单独启动的短进程，不保存任务状态；它读取官方 Hook JSON、生成表示单次投递的随机`eventId`、完成第一层脱敏/分类、读取发现文件并进行一次 HTTP POST。它不扫描用户层/仓库层/插件层配置，不判断Hook来源层，也不持久化任何去重状态；阶段二单线程Actor对稳定标识完整的Tool/Subagent/Turn事件使用第二层有界逻辑键，对Session/Permission使用事件级幂等策略。主应用 HTTP 层执行认证、限流、二次校验和有界入队，阶段一不启动聚合器，也不修改真实 Codex 配置。
 
 **技术栈：** Cargo workspace、Rust 2021、serde、serde_json、getrandom 0.4、Windows API、Axum 0.8、Tokio、PowerShell、Tauri 2 resources。
 
@@ -41,13 +41,14 @@
 
 **接口约束：**
 
-- `CODEX_PROTOCOL_VERSION: u16 = 1`。
+- `CODEX_PROTOCOL_VERSION: u16 = 1`。本轮不改变wire字段名、类型、单位、serde表示或枚举；只明确既有可选标识的校验与阶段二消费策略，因此版本保持1。若实施时改变wire schema、把可选字段收紧为新的wire必填字段或改变接收兼容规则，必须先评估版本升级、Bridge/Tauri同步升级、旧Bridge兼容与Repair判定。
 - `CodexSource`、`CodexEventType`、`CodexStage`、`OperationResult` 和 `CodexBridgeEvent` 与总体路线图 3.1 完全一致。
 - `CodexDiscovery` 与总体路线图 3.1 完全一致。
 - wire JSON 字段使用 camelCase，枚举值使用 snake_case；所有时间都是 Unix 毫秒 `i64`。
-- `validate_event(&CodexBridgeEvent) -> Result<(), ProtocolError>` 检查版本、必填字符串、枚举组合、时间非负、NUL/非空白控制字符和长度边界；eventId 固定为 16 个随机字节的 32 位小写十六进制。
+- `validate_event(&CodexBridgeEvent) -> Result<(), ProtocolError>` 检查版本、wire必填字符串、枚举组合、时间非负、NUL/非空白控制字符和长度边界；eventId 固定为 16 个随机字节的 32 位小写十六进制。
 - `eventId`只标识一次Bridge投递，不承诺同一逻辑Hook事件跨配置层相同；Bridge不得为了生成逻辑键而读取或扫描配置层，也不得保存跨进程状态。
-- eventType/stage 组合固定为：SessionStarted/ToolFinished/SubagentStarted/SubagentFinished/TurnStopped 的 stage=None；TurnStarted=Analyzing；PermissionRequested=WaitingApproval；ToolStarted 只允许 Reading/Editing/RunningCommand/RunningTests。TurnStarted 必须有非空 taskSummary；ToolStarted 和 PermissionRequested 必须有非空 operationSummary，清理后为空时分别使用“执行工具”和“等待 Codex 授权”。Subagent 事件必须有 agentId，ToolStarted/ToolFinished 必须有 toolUseId，非 ToolFinished 的 operationResult 必须为 Unknown。
+- `eventId`与`sessionId`是所有事件的wire必填字段；缺失、为空或格式非法由协议层拒绝。`turnId`、`toolUseId`、`agentId`保持现有`Option`字段形状：字段存在但为空、超限、含NUL或非法控制字符时由协议层拒绝；字段缺失时仍可反序列化并进入阶段二事件级策略，协议层不得用prompt、cwd、路径、命令、内容摘要或`occurredAt`补齐。
+- eventType/stage 组合固定为：SessionStarted/ToolFinished/SubagentStarted/SubagentFinished/TurnStopped 的 stage=None；TurnStarted=Analyzing；PermissionRequested=WaitingApproval；ToolStarted 只允许 Reading/Editing/RunningCommand/RunningTests。TurnStarted 必须有非空 taskSummary；ToolStarted 和 PermissionRequested 必须有非空 operationSummary，清理后为空时分别使用“执行工具”和“等待 Codex 授权”。非 ToolFinished 的 operationResult 必须为 Unknown。Tool/Subagent/Turn缺失Actor所需稳定标识时的拒绝或降级不在Bridge猜测，由阶段二事件策略决定。
 - `truncate_chars(value, max_chars)` 按 Unicode 标量值截断，不能在 UTF-8 字节中间切断。
 - 常量固定为 `MAX_HTTP_BODY_BYTES = 16 * 1024`、`MAX_STDIN_BYTES = 64 * 1024`、`MAX_ID_CHARS = 256`、`MAX_PROJECT_NAME_CHARS = 120`、`MAX_CWD_CHARS = 2048`、`MAX_TASK_SUMMARY_CHARS = 120`、`MAX_OPERATION_SUMMARY_CHARS = 160`、`MAX_OUTPUT_CHARS = 300`、`MAX_ERROR_CHARS = 300`。
 
@@ -81,7 +82,7 @@
 
 - [ ] **步骤 2：先写协议失败测试**
 
-  在 `wire_contract.rs` 写下列测试：完整样本的 JSON key/枚举快照；未知版本拒绝；空 `sessionId` 拒绝；eventId 不是 32 位小写十六进制拒绝；ID/项目名/cwd/五类摘要分别超限拒绝；恰好达到边界接受；NUL 和非空白控制字符拒绝；中文与 emoji 按字符而非字节截断；发现文件 token 必须为 64 位小写十六进制；`cwd` 可序列化但禁止出现 `transcriptPath`。
+  在 `wire_contract.rs` 写下列测试：完整样本的 JSON key/枚举快照；未知版本拒绝；缺失/空/非法 `sessionId` 拒绝；eventId 不是 32 位小写十六进制拒绝；ID/项目名/cwd/五类摘要分别超限拒绝；恰好达到边界接受；NUL 和非空白控制字符拒绝；中文与 emoji 按字符而非字节截断；发现文件 token 必须为 64 位小写十六进制；`cwd` 可序列化但禁止出现 `transcriptPath`。另分别固定 `turnId`/`toolUseId`/`agentId` 缺失可以按现有 Option 形状反序列化、存在但为空或非法时拒绝，避免把“缺失”与“非法值”混为一类。
 
   运行：
 
@@ -193,7 +194,7 @@ pub fn convert_hook(
   - `UserPromptSubmit` 产生 `TurnStarted/analyzing`，去掉代码块、日志、绝对路径、查询参数和礼貌开头；
   - 读/搜工具映射 `reading`，`apply_patch`/Edit/Write 映射 `editing`；
   - `pnpm test`、被观察项目的 `npm test`、vitest、cargo test、pytest、mvn test、gradle test 映射 `running_tests`；构建/Lint/类型检查映射 `running_command` 并保留脱敏动作；
-  - `PermissionRequest` 映射 `waiting_approval`，有 `tool_input.description` 时优先使用，无该字段时安全降级；
+  - `PermissionRequest` 映射 `waiting_approval`，有 `tool_input.description` 时优先使用，无该字段时安全降级；不得从说明、命令或摘要派生逻辑标识，官方输入没有 `tool_use_id` 时保持 `toolUseId=None`；
   - `PostToolUse` 只输出 `success/failed/unknown` 和最多 300 字符摘要；
   - 子智能体事件只携带 `agentId`；`agent_transcript_path` 与子智能体最终正文被丢弃；Stop 只把脱敏后的 `last_assistant_message` 放入 `latestOutput`，保持 `operationResult=unknown`、`errorSummary=null`，本任务不判最终失败；
   - 序列化结果不包含 `transcript_path`、`agent_transcript_path`、完整 `tool_input`/`tool_response`、Authorization、密码、环境变量值、Base64 正文、代码块或完整提示词。
@@ -211,7 +212,7 @@ pub fn convert_hook(
 
 - [ ] **步骤 3：实现可测试的纯转换管线**
 
-  `hook.rs` 先把 stdin 解析为 `serde_json::Value`，再按 `hook_event_name` 提取已确认字段；事件名未知或必填字段缺失返回错误。`sanitizer.rs` 固定执行路径/秘密/URL 查询/代码块/Base64/重定向正文清理和字符裁剪；用户提示清理后为空时 taskSummary 使用“Codex 任务”。`classifier.rs` 用表驱动识别工具名与命令首段，不执行 shell、不展开变量。项目名使用 `Path::file_name(cwd)`，无法提取时为“未知项目”。
+  `hook.rs` 先把 stdin 解析为 `serde_json::Value`，再按 `hook_event_name` 提取已确认字段；事件名未知或wire必填字段缺失返回错误。`turn_id`、`tool_use_id`、`agent_id`缺失时保留为None，不从其他字段猜测；存在但为空或非法时交给共享协议校验拒绝。`sanitizer.rs` 固定执行路径/秘密/URL 查询/代码块/Base64/重定向正文清理和字符裁剪；用户提示清理后为空时 taskSummary 使用“Codex 任务”。`classifier.rs` 用表驱动识别工具名与命令首段，不执行 shell、不展开变量。项目名使用 `Path::file_name(cwd)`，无法提取时为“未知项目”。
 
   `source.rs` 的生产实现用 Windows ToolHelp 快照读取祖先进程名：祖先链出现 `ChatGPT.exe` 为 `app`；否则出现 `codex.exe` 为 `cli`；查询失败或都未命中为 `unknown`。所有 Win32 `unsafe` 块添加中文安全前提，句柄通过 RAII 或显式关闭。
 
@@ -469,7 +470,7 @@ impl CodexHttpHandle {
 
 - [ ] **步骤 2：先写 HTTP 集成失败测试**
 
-  通过真实 `127.0.0.1` socket 覆盖：正确请求返回 202 且 receiver 得到相同事件；错误/缺失 token 为 401；旧启动 token 在重启后为 401；错误版本/字段为 422；JSON 语法为 400；超过 16 KiB 为 413；错误 Content-Type 为 415；错误路径为 404；错误方法为 405；填满 256 容量后为 429；接收端关闭为 503；并发不同 session 全部入队；服务端二次清理超长/敏感摘要；响应与诊断日志不回显正文。
+  通过真实 `127.0.0.1` socket 覆盖：正确请求返回 202 且 receiver 得到相同事件；错误/缺失 token 为 401；旧启动 token 在重启后为 401；错误版本/字段为 422；JSON 语法为 400；超过 16 KiB 为 413；错误 Content-Type 为 415；错误路径为 404；错误方法为 405；填满 256 容量后为 429；接收端关闭为 503；并发不同 session 全部入队；服务端二次清理超长/敏感摘要；响应与诊断日志不回显正文。增加同一`eventId`安全顺序序列：错误token请求不得入队，随后正确token的相同事件必须入队；协议非法请求不得入队，修正其他字段后使用相同`eventId`的合法事件必须入队，证明HTTP拒绝路径不可能提前污染Actor缓存。
 
   为“仅回环”写两层断言：实际 listener 地址必须是 `127.0.0.1`；把非回环 `SocketAddr` 注入 router service 时必须拒绝。不要尝试修改防火墙或开放真实网卡。
 
@@ -529,7 +530,7 @@ impl CodexHttpHandle {
 
 - [ ] **步骤 5：实现认证、限制、二次脱敏和 try_send**
 
-  Axum router 只注册 `POST /v1/codex/events`；先检查 ConnectInfo 回环、Bearer token、Content-Type 和 Content-Length，再用 `DefaultBodyLimit::max(16 * 1024)` 读取 JSON。反序列化后调用 `validate_event()` 和服务端 `sanitize_event()`；后者再次裁剪并移除秘密/路径片段，且不记录正文。
+  Axum router 只注册 `POST /v1/codex/events`。处理顺序固定为：检查ConnectInfo回环、Content-Type、Content-Length并用`DefaultBodyLimit::max(16 * 1024)`限制请求体 → 读取JSON并调用`validate_event()`完成协议结构校验 → 校验Bearer token → 调用服务端`sanitize_event()`二次裁剪并移除秘密/路径片段 → `try_send`。任一前置步骤失败都不得发送到event channel；HTTP层、Bridge和Vue均不得读取或写入Actor的eventId缓存。token、正文和摘要不进入拒绝日志。
 
   使用 `event_tx.try_send(event)`：成功立即 202，`Full` 为 429，`Closed` 为 503 并只记录错误码。诊断日志字段限定为事件类型、接收时间、协议版本、状态码、错误码；测试 logger 捕获输出并断言不含摘要、cwd 或 token。
 
@@ -697,14 +698,14 @@ impl CodexHttpHandle {
 
 ## 阶段一完成门禁
 
-- Bridge保持无状态：不扫描用户层、仓库层、插件或企业配置，不判断全局唯一Hook，不维护持久去重；随机`eventId`只作为第一层单次投递ID，阶段二负责逻辑事件去重。
+- Bridge保持无状态：不扫描用户层、仓库层、插件或企业配置，不判断全局唯一Hook，不维护持久去重；随机`eventId`只作为第一层单次投递ID。阶段二仅对稳定标识完整的Tool/Subagent/Turn事件构造第二层逻辑键，并对Session/Permission执行事件级幂等策略；Bridge不构键、不做提醒抑制。
 
 - `CodexBridgeEvent` 与发现文件契约只在共享包定义一次。
 - `CodexIntegrationPaths` 是唯一目录构造对象；所有路径从传入根目录推导，功能模块不再自行拼接 CodePulse/runtime/bin。
 - 八种 Hook fixture 与实施日官方文档一致；未知字段安全忽略，未知事件明确拒绝。
 - Bridge crate root 使用 `windows_subsystem = "windows"`；所有 GUI Subsystem piped 黑盒失败路径精确输出 `{}`、stderr 为空、退出 0，且没有重试、状态落盘或可见控制台窗口。
 - HTTP 服务只绑定回环地址；固定端口仅在冲突时降级；每次启动 token 不同；所有发现文件清理比较完整 DiscoveryOwner，旧 Runtime/相同 PID 不同 token/损坏文件不会误删新文件。
-- 16 KiB、认证、协议、字段、队列与日志安全测试通过。
+- 16 KiB、认证、协议、字段、队列与日志安全测试通过；未认证、协议非法或HTTP拒绝的请求均不入队，随后相同eventId的合法认证事件仍可被当前Runtime接收。
 - 构建脚本和资源验证都校验 DOS Header、PE 签名、x64/ARM64 COFF Machine、Optional Header Magic/长度和 WindowsGui Subsystem；Console/未知 Subsystem、不支持 triple 与错架构资源必定失败。
 - Tauri bundle 构建已消费 Bridge resource；尚未修改用户 Hook，也尚未在 `setup` 启动服务。
 - 以上全部满足后才执行阶段二；不要自动进入阶段二。

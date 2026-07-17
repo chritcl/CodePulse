@@ -4,7 +4,7 @@
 
 **目标：** 在04B-3命令与生命周期已审核通过后，实现设置卡、外部全局Hooks前置条件说明、独立安装/卸载预览确认、空闲常驻/命令摘要显示偏好，并分别完成A自动行为矩阵、B Codex App真实验收和C独立CLI真实验收。
 
-**架构：** `useCodexIntegration` 分别维护静态 inspection 与唯一动态 listeningStatus，只编排04B-3 inspect/preview/apply/retry/self-check和权威listening event；设置卡不读写文件，事务Conflict时只显示安全恢复重试；前端偏好只进入localStorage与跨窗口事件；Widget使用阶段三统一投影`toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)`。A自动行为矩阵使用TempDir/loopback/ManualClock覆盖跨Runtime revision/generation、两层事件去重、事务/恢复/Lease/cleanup等内部不变量，但不证明真实Codex兼容。B App真实验收单独验证官方信任、真实Hook、App来源、GUI无闪烁、多会话和安装/修复/卸载；C独立CLI真实验收必须在PowerShell可独立调用的官方CLI环境完成版本、真实任务、真实Hook、来源、App并行、授权及完成/失败场景。
+**架构：** `useCodexIntegration` 分别维护静态 inspection 与唯一动态 listeningStatus，只编排04B-3 inspect/preview/apply/retry/self-check和权威listening event；设置卡不读写文件，事务Conflict时只显示安全恢复重试；前端偏好只进入localStorage与跨窗口事件；Widget使用阶段三统一投影`toAgentModuleSnapshot(snapshot, listeningStatus, idlePersistent)`。A自动行为矩阵使用TempDir/loopback/ManualClock覆盖跨Runtime revision/generation、eventId第一层、稳定事件第二层逻辑键、Session/Permission幂等公开行为、事务/恢复/Lease/cleanup等内部不变量，但不证明真实Codex兼容。B App真实验收单独验证官方信任、真实Hook、App来源、GUI无闪烁、多会话和安装/修复/卸载；C独立CLI真实验收必须在PowerShell可独立调用的官方CLI环境完成版本、真实任务、真实Hook、来源、App并行、授权及完成/失败场景。
 
 **技术栈：** Vue 3 Composition API、Pinia/localStorage、Tauri JS API、Vitest、`@vue/test-utils`、Rust TempDir/ManualClock、PowerShell、pnpm 10.33.2。
 
@@ -393,9 +393,9 @@ export interface CodexDisplayPreferences {
 
 - [ ] **步骤1：先写十四项设计场景自动行为失败测试**
 
-  明确测试名覆盖模拟CLI/App来源的普通任务、两端并行、读取/编辑/命令/测试、PermissionRequest、测试先失败后成功Stop、最终失败、完成5分钟删除、失败clear、server退出无历史补偿、47653冲突fallback、用户Hook保留、exact无当前generation事件时awaiting_trust、新资源修复旧Bridge。这里的模拟来源只证明内部行为，不作为B/C真实环境证据。
+  明确测试名覆盖模拟CLI/App来源的普通任务、两端并行、读取/编辑/命令/测试、PermissionRequest等待授权与重复提醒抑制、退出等待后再次提醒、测试先失败后成功Stop、最终失败、完成5分钟删除、失败clear、server退出无历史补偿、47653冲突fallback、用户Hook保留、exact无当前generation事件时awaiting_trust、新资源修复旧Bridge。这里的模拟来源只证明内部行为，不作为B/C真实环境证据。
 
-  增加跨配置层逻辑事件去重用例：用两个模拟活动Hook文件分别向Bridge投递相同`sessionId`、`turnId`、`eventType`以及适用的`toolUseId`/`agentId`，但使用不同随机`eventId`；断言第一层eventId去重与第二层逻辑事件去重共同作用，最终只更新一次状态、只提醒一次且子智能体只计数一次。再分别改变turnId、toolUseId、agentId，断言合法连续事件不会被误去重；填满并越过缓存容量，断言两层缓存都有界且只由单线程Actor维护。逻辑键不得包含prompt正文、cwd、文件路径、命令正文、tool input/output或用户内容摘要；实施前必须按最新官方Hook字段重新确认各eventType的键字段。
+  增加跨配置层事件级去重代表用例：两个模拟活动Hook文件对ToolStarted/ToolFinished使用相同`sessionId + turnId + eventType + toolUseId`但不同随机`eventId`，只处理一次；改变toolUseId时不得误合并。SubagentStarted/SubagentFinished同理使用agentId并验证计数只变化一次/不同agentId独立。TurnStarted/TurnStopped按sessionId+turnId+eventType精确处理。重复SessionStarted使用不同eventId时只幂等刷新不敏感元数据，不创建任务、attention、提醒或计数。PermissionRequested不进入第二层逻辑键缓存：同一session/turn已waiting时不产生第二次attention或强提醒，稳定工具事件或新轮次/Stop退出后新的Permission可以再次提醒；缺turnId时只更新安全session元数据且不改变任务。填满并越过缓存容量，断言eventId缓存与仅含Tool/Subagent/Turn键的逻辑缓存都有界且只由单线程Actor维护。逻辑键与Debug不得包含prompt正文、cwd、路径、命令、tool input/output、授权说明、用户内容摘要或occurredAt；Bridge和Vue均无第二层缓存或构键代码。
 
   运行：
 
@@ -409,7 +409,7 @@ export interface CodexDisplayPreferences {
 
 - [ ] **步骤 2：先写生命周期、事务与 Owner 审查回归失败测试**
 
-  覆盖：editing 事件后墙钟/occurredAt 回拨两小时再收到 running_tests，必须进入 running_tests；较小 occurredAt 的 PermissionRequested 立即 waiting_approval；未安装 Hook/Runtime dormant 时 get snapshot 成功且 tasks=[]、不产生 service_error；HooksDisabled install/repair 无 prepared/Bridge/runtime，safe marker uninstall 允许且不启动 Runtime；只有旧 alias 按有效值工作并带弃用 Issue；双键同值带 Duplicate warning；双键冲突/非布尔使三动作 ConfigConflict、Runtime RemainStopped且无 Prepared/Journal；手动消除冲突重新 inspect 后才恢复动作；exact/modified/safe marker 启动；idlePersistent 不启动。
+  覆盖：editing 事件后墙钟/occurredAt 回拨两小时再收到 running_tests，必须进入 running_tests；较小 occurredAt 的 PermissionRequested 立即 waiting_approval，但occurredAt不得进入逻辑键或提醒去重判断；未安装 Hook/Runtime dormant 时 get snapshot 成功且 tasks=[]、不产生 service_error；HooksDisabled install/repair 无 prepared/Bridge/runtime，safe marker uninstall 允许且不启动 Runtime；只有旧 alias 按有效值工作并带弃用 Issue；双键同值带 Duplicate warning；双键冲突/非布尔使三动作 ConfigConflict、Runtime RemainStopped且无 Prepared/Journal；手动消除冲突重新 inspect 后才恢复动作；exact/modified/safe marker 启动；idlePersistent 不启动。
 
   固定Runtime重启序列共用同一个进程级`CodexSnapshotStore`：模拟安装并运行任务至revision=20、后端`runtime_generation=1`/`authenticated_generation=1`/running→卸载→stop发布revision=21空快照、UI清旧任务、not_installed→重新安装`runtime_generation=2`/`authenticated_generation=None`/awaiting_trust→generation=1晚到事件忽略→第一条generation=2已认证模拟事件后running且任务revision>21。该用例只证明内部generation不变量；第一条真实Hook由B/C验收，不得由本用例替代。
 
@@ -473,7 +473,7 @@ export interface CodexDisplayPreferences {
   Pop-Location
   ```
 
-  预期：十四项设计场景的自动行为矩阵、跨层逻辑事件去重与审查回归全部通过；结果不写成真实App/CLI兼容结论。
+  预期：十四项设计场景的自动行为矩阵、稳定事件跨层逻辑键、Session/Permission幂等公开行为与审查回归全部通过；结果不写成真实App/CLI兼容结论。
 
 - [ ] **步骤 4：实现并运行范围脚本**
 
@@ -663,7 +663,7 @@ export interface CodexDisplayPreferences {
 - local disabled+marker present 同时显示手动启用说明与安全卸载入口；install/repair/自动启用不可用，managed disabled 全只读。
 - idlePersistent 与 showCommandSummary 只控制展示；Widget/设置页使用同一权威 CodexListeningStatus。
 - A自动行为矩阵覆盖十四项设计场景、occurredAt/墙钟回拨、dormant空快照、跨Runtime revision/generation、disabled uninstall、transactionId先分配/Prepared前零staging、Prepared部分staging ownership、Bridge/Record混合状态逐文件恢复、Install/Repair/Uninstall action-specific invariant、Discovery owner竞态、退出和PE Machine+WindowsGui；这些只属于内部行为证据。
-- A自动行为矩阵覆盖两个模拟活动Hook文件对同一逻辑事件使用不同`eventId`时只处理一次，并覆盖不同turnId/toolUseId/agentId不误去重、有界缓存和Actor独占；逻辑键不含任何用户内容、cwd、路径、命令或tool input/output。
+- A自动行为矩阵覆盖两个模拟活动Hook文件对Tool/Subagent/Turn相同稳定键使用不同`eventId`时只处理一次，并覆盖不同turnId/toolUseId/agentId不误合并；SessionStarted重复只幂等刷新；PermissionRequested同轮重复无第二次强提醒、退出等待后可再次提醒且不进入逻辑键缓存；缺失稳定标识按事件表处理；eventId与逻辑键缓存均有界且Actor独占；逻辑键/Debug不含用户内容、cwd、路径、命令、tool input/output、授权说明或occurredAt，Bridge/Vue不实现第二层去重。
 - A自动行为矩阵明确区分三种原子语义并验证后置Lease：Existing由`ReplaceFileW`捕获实际旧内容后取得target/snapshot双Lease；Absent由no-replace move发布并在成功后取得target Lease；Removal把Bridge/Record原子rename为removed tombstone后取得tombstone Lease且StructureCommitted前不永久删除。关键摘要只经Handle，不存在裸检查后`MOVEFILE_REPLACE_EXISTING`被称为CAS。
 - A自动行为矩阵覆盖Prepared后optimistic precondition check、prepared backup Lease/originalDigest、all-staging-ready、Existing正常双Lease、existing旧写Handle继续写snapshot、writable mapping、Lease阻止新write/rename/delete、最后一次检查之后的late modification、第一次Lease失败禁止第二次ReplaceFileW、第二次恢复后重新取得双Lease、Absent发布后立即writer、Bridge/Record与Config顺序、tombstone旧writer及retry、写后Handle targetDigest失败停止、精确孤立Journal temp清理/Conflict、operation mutex安全retry与NoPendingTransaction；不同占用场景的生产断言统一为`SharingViolation`/`ActiveArtifactHandleConflict`，late snapshot优先于prepared backup，高优先级Lease失败不降级，所有冲突版本保留并只进入现有安全retry。
 - `AtomicIntegrationFs`提供`BeforeAtomicReplace`、`AfterTargetOpenedOrPrepared`、`AfterAtomicReplaceBeforeVerification`、`BeforeConflictRestore`、`AfterRemovalCaptureBeforeVerification`、`BeforeStableLeaseAcquire`、`AfterStableLeaseAcquireBeforeHash`、`AfterHashBeforeStagePersist`、`BeforeVerifiedHandleDelete`；故障矩阵覆盖ReplaceFileW官方失败状态、snapshot创建/Lease/Handle摘要、第二次恢复及后置Lease、no-replace destination appeared/发布后writer、tombstone rename/Lease和提交后cleanup Handle。

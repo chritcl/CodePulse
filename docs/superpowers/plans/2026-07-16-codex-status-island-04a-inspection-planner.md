@@ -661,7 +661,7 @@ pub fn prepare_codex_hook_change(
 ## 04A 完成门禁
 
 - inspection 对用户与企业配置只读，路径全部来自 CodexIntegrationPaths；JSON 不含动态 hookState/phase。
-- Inspection只声明用户层CodePulse Hook管理事实；不扫描仓库层/插件层，不修改企业托管配置，不输出无法可靠判断的全局唯一状态。跨层重复执行由阶段二Actor逻辑事件去重负责，04A不承担运行时去重。
+- Inspection只声明用户层CodePulse Hook管理事实；不扫描仓库层/插件层，不修改企业托管配置，不输出无法可靠判断的全局唯一状态。跨层重复执行由阶段二Actor按事件级策略处理：稳定Tool/Subagent/Turn使用逻辑键，Session/Permission使用幂等状态规则；04A不承担运行时去重或提醒抑制。
 - `features.hooks`/`features.codex_hooks` 原始事实、弃用/重复 Issue、同值/冲突/非布尔、representation、marker、Bridge、generation-aware ListeningStatus 和 runtime startup decision 有完整 TempDir 表格测试；冲突三动作无 Prepared change。
 - `codepulse-hooks-exact.json` 与 `.toml` 完整定义相同八事件、command+Windows override、timeout=2、无 matcher/statusMessage/async；JSON 用 `serde_json` AST、TOML 用 `toml_edit` AST 注入 command。Exact 显式接收 `expected_bridge_path=paths.installed_bridge`，只有两个 command 都精确等于 expected command、参数无附加项且 matcher 结构标准时才进入 CodePulse-owned projection；wrong-path/old-path/单边 command/额外参数均非 Exact。空格、中文、单引号路径均可解析且语义正确；独立用户 group 不影响 Exact，混合 group 为 Modified且 Repair 后用户 handler 保留、CodePulse group 独立；Inspection、Planner Install、Repair、序列化快照、Duplicate/Modified 与 04C E2E 共用同一 loader，没有原始文本 replace或第二套模板。
 - exact/modified/partial+marker 与停止条件精确；idlePersistent 不参与。
