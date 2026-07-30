@@ -59,6 +59,7 @@ pub fn run() {
             force_window_topmost,
             set_window_bounds,
             start_island_animation,
+            start_island_drag,
             // 通知命令
             fetch_latest_notification,
             open_app_by_aumid,

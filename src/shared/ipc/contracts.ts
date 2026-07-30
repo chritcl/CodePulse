@@ -176,6 +176,13 @@ export interface WindowBoundsPayload {
   height: number;
 }
 
+/** 灵动岛原生拖拽启动参数 */
+export interface IslandDragStartPayload {
+  targetWidth: number;
+  targetHeight: number;
+  isPinned: boolean;
+}
+
 // ============================================================
 // 通知相关
 // ============================================================

@@ -4,7 +4,7 @@
  * 管理灵动岛窗口的大小、位置和显示状态。
  */
 
-import { ref, computed, type CSSProperties } from 'vue';
+import { computed, getCurrentScope, onScopeDispose, ref, type CSSProperties } from 'vue';
 import {
   getCurrentWindow,
   currentMonitor,
@@ -15,6 +15,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { readBoolean, readEnum, readNumber, writeBoolean } from '@/shared/utils/storage';
 
 const ISLAND_THEMES = ['black', 'white'] as const;
+const DETAIL_LEAVE_DURATION_MS = 160;
+const WINDOW_SHRINK_SAFETY_GAP_MS = 20;
 
 export function useIslandWindow() {
   // ============================================================
@@ -38,6 +40,10 @@ export function useIslandWindow() {
 
   /** 是否锁定位置 */
   const isPositionLocked = ref(readBoolean('nsd_position_locked'));
+  let resizeDelayTimer: number | null = null;
+  let pendingResizeResolve: (() => void) | null = null;
+  let sizeAnimationSuspended = false;
+  let queuedResizeTarget: { width: number; height: number } | null = null;
 
   // ============================================================
   // 计算属性
@@ -180,11 +186,16 @@ export function useIslandWindow() {
   };
 
   /** 动画调整灵动岛大小 */
-  const animateIslandSize = async (targetWidth: number, targetHeight: number) => {
+  const runIslandSizeAnimation = async (
+    startWidth: number,
+    startHeight: number,
+    targetWidth: number,
+    targetHeight: number
+  ) => {
     try {
       await invoke('start_island_animation', {
-        startWidth: currentWidth.value,
-        startHeight: currentHeight.value,
+        startWidth,
+        startHeight,
         targetWidth: targetWidth,
         targetHeight: targetHeight,
         isPinned: isPinnedToTaskbar.value,
@@ -192,6 +203,71 @@ export function useIslandWindow() {
     } catch (err) {
       console.error('呼叫 Rust 动画失败:', err);
     }
+  };
+
+  /** 取消尚未开始的窗口收缩，确保连续交互只执行最后一次调整 */
+  const cancelScheduledResize = () => {
+    if (resizeDelayTimer !== null) {
+      window.clearTimeout(resizeDelayTimer);
+      resizeDelayTimer = null;
+    }
+
+    pendingResizeResolve?.();
+    pendingResizeResolve = null;
+  };
+
+  /** 动画调整灵动岛大小 */
+  const animateIslandSize = (targetWidth: number, targetHeight: number): Promise<void> => {
+    if (sizeAnimationSuspended) {
+      queuedResizeTarget = { width: targetWidth, height: targetHeight };
+      return Promise.resolve();
+    }
+
+    cancelScheduledResize();
+
+    const startWidth = currentWidth.value;
+    const startHeight = currentHeight.value;
+    if (targetHeight >= startHeight) {
+      return runIslandSizeAnimation(startWidth, startHeight, targetWidth, targetHeight);
+    }
+
+    return new Promise((resolve) => {
+      pendingResizeResolve = resolve;
+      resizeDelayTimer = window.setTimeout(() => {
+        resizeDelayTimer = null;
+        pendingResizeResolve = null;
+        void runIslandSizeAnimation(startWidth, startHeight, targetWidth, targetHeight).finally(
+          resolve
+        );
+      }, DETAIL_LEAVE_DURATION_MS + WINDOW_SHRINK_SAFETY_GAP_MS);
+    });
+  };
+
+  /** 暂停尺寸动画，并取消尚未执行的延迟收缩 */
+  const suspendSizeAnimation = () => {
+    if (sizeAnimationSuspended) return;
+
+    sizeAnimationSuspended = true;
+    queuedResizeTarget = null;
+    cancelScheduledResize();
+  };
+
+  /** 恢复尺寸动画，仅应用拖拽期间最后一个真实变化 */
+  const resumeSizeAnimation = (): Promise<void> => {
+    if (!sizeAnimationSuspended) return Promise.resolve();
+
+    sizeAnimationSuspended = false;
+    const target = queuedResizeTarget;
+    queuedResizeTarget = null;
+
+    if (
+      target === null ||
+      (target.width === currentWidth.value && target.height === currentHeight.value)
+    ) {
+      return Promise.resolve();
+    }
+
+    return animateIslandSize(target.width, target.height);
   };
 
   /** 设置透明度 */
@@ -214,6 +290,14 @@ export function useIslandWindow() {
     isPositionLocked.value = locked;
     writeBoolean('nsd_position_locked', locked);
   };
+
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      cancelScheduledResize();
+      queuedResizeTarget = null;
+      sizeAnimationSuspended = false;
+    });
+  }
 
   // ============================================================
   // 导出
@@ -238,6 +322,8 @@ export function useIslandWindow() {
     adjustWindowPosition,
     snapToBottomLeft,
     animateIslandSize,
+    suspendSizeAnimation,
+    resumeSizeAnimation,
     setOpacity,
     setTheme,
     setPinnedToTaskbar,

@@ -7,7 +7,13 @@ const items: IslandSatelliteItem[] = [
   { kind: 'agent', status: 'running', unreadCount: 0, label: 'Codex' },
   { kind: 'notification', status: 'unread', unreadCount: 3, label: '通知' },
   { kind: 'hardware', status: 'error', unreadCount: 0, label: '硬件' },
-  { kind: 'music', status: 'running', unreadCount: 0, label: '音乐' },
+  {
+    kind: 'music',
+    status: 'running',
+    unreadCount: 0,
+    label: '音乐',
+    iconUrl: 'cover.png',
+  },
 ];
 
 describe('IslandSatelliteStrip', () => {
@@ -23,6 +29,10 @@ describe('IslandSatelliteStrip', () => {
     expect(wrapper.findAll('.satellite-button')[3].attributes('data-satellite-kind')).toBe('music');
     expect(wrapper.find('[data-satellite-kind="agent"] svg').exists()).toBe(true);
     expect(wrapper.find('[data-satellite-kind="agent"]').text()).not.toContain('AI');
+    expect(wrapper.findAll('[data-flip-visual]')).toHaveLength(4);
+    expect(wrapper.find('[data-satellite-kind="music"] [data-flip-visual] img').exists()).toBe(
+      true
+    );
     expect(wrapper.find('.satellite-badge').text()).toBe('3');
     expect(wrapper.find('.satellite-button.is-error').exists()).toBe(true);
     expect(wrapper.find('.satellite-more').text()).toBe('+2');

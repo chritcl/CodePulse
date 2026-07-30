@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { codexCommands, mediaCommands } from './index';
+import { codexCommands, mediaCommands, windowCommands } from './index';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
@@ -48,6 +48,28 @@ describe('媒体 IPC 命令封装', () => {
 
     expect(invoke).toHaveBeenCalledWith('seek_system_media', {
       positionMs: 42_000,
+    });
+  });
+});
+
+describe('窗口 IPC 命令封装', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('通过统一命令封装启动原生拖拽并传递稳定尺寸', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+
+    await windowCommands.startIslandDrag({
+      targetWidth: 420,
+      targetHeight: 206,
+      isPinned: false,
+    });
+
+    expect(invoke).toHaveBeenCalledWith('start_island_drag', {
+      targetWidth: 420,
+      targetHeight: 206,
+      isPinned: false,
     });
   });
 });

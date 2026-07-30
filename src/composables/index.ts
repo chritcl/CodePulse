@@ -9,6 +9,7 @@ export { useAutoStart } from './useAutoStart';
 export { useIslandWindow } from './useIslandWindow';
 export { useIslandAnimation } from './useIslandAnimation';
 export { useIslandDrag } from './useIslandDrag';
+export { useExpandedCollapseGuard } from './useExpandedCollapseGuard';
 export { useMusicSpectrum } from './useMusicSpectrum';
 export { usePlaybackTimeline } from './usePlaybackTimeline';
 export { useTrackLyrics } from './useTrackLyrics';

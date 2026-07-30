@@ -17,6 +17,7 @@ interface FlipSpringOptions {
   duration?: number;
   freq?: number;
   decay?: number;
+  visualRevealStart?: number;
 }
 
 export function useIslandAnimation() {
@@ -24,6 +25,47 @@ export function useIslandAnimation() {
 
   const springProgress = (elapsed: number, freq: number, decay: number) =>
     1 - Math.cos(freq * elapsed * 2 * Math.PI) * Math.exp(-decay * elapsed);
+
+  /** 将弹簧反弹折回起终点之间，避免透明窗口边界裁剪越界内容 */
+  const boundedSpringProgress = (elapsed: number, freq: number, decay: number) => {
+    const progress = springProgress(elapsed, freq, decay);
+    return Math.min(1, Math.max(0, 1 - Math.abs(1 - progress)));
+  };
+
+  /** 详情退场后让主岛从轻微压缩状态回弹，且不越过窗口边界 */
+  const playMainCollapseBounce = (el: HTMLElement | null) => {
+    if (!el) return;
+
+    const startScale = 0.96;
+    const duration = 260;
+    const start = performance.now();
+    const previousTransform = el.style.transform;
+    const previousTransformOrigin = el.style.transformOrigin;
+    const previousWillChange = el.style.willChange;
+
+    el.style.transformOrigin = 'center';
+    el.style.willChange = 'transform';
+    el.style.transform = `scale(${startScale})`;
+
+    const animate = (time: number) => {
+      const progress = Math.min(1, (time - start) / duration);
+      const elapsed = (time - start) / 1000;
+      const spring = boundedSpringProgress(elapsed, 3, 14);
+      const scale = startScale + (1 - startScale) * spring;
+      el.style.transform = `scale(${scale})`;
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+        return;
+      }
+
+      el.style.transform = previousTransform;
+      el.style.transformOrigin = previousTransformOrigin;
+      el.style.willChange = previousWillChange;
+    };
+
+    requestAnimationFrame(animate);
+  };
 
   /** 播放按压后弹出的两阶段弹簧动画 */
   const playPressSpring = (
@@ -59,7 +101,7 @@ export function useIslandAnimation() {
         const release = (releaseTime: number) => {
           const elapsed = (releaseTime - releaseStart) / 1000;
           const progressValue = Math.min(1, (releaseTime - releaseStart) / releaseDuration);
-          const spring = springProgress(elapsed, 2.8, 13);
+          const spring = boundedSpringProgress(elapsed, 2.8, 13);
           const scaleValue = targetScale + (1 - targetScale) * spring;
           el.style.transform = `scale(${scaleValue})`;
 
@@ -94,8 +136,9 @@ export function useIslandAnimation() {
 
     const deltaX = fromRect.left + fromRect.width / 2 - (toRect.left + toRect.width / 2);
     const deltaY = fromRect.top + fromRect.height / 2 - (toRect.top + toRect.height / 2);
-    const scaleX = fromRect.width / toRect.width;
-    const scaleY = fromRect.height / toRect.height;
+    // 目标外壳只允许从小尺寸长大，避免卫星按钮被放大成主岛长条。
+    const scaleX = Math.min(1, fromRect.width / toRect.width);
+    const scaleY = Math.min(1, fromRect.height / toRect.height);
     const duration = options.duration ?? 360;
     const freq = options.freq ?? 2.6;
     const decay = options.decay ?? 12;
@@ -103,10 +146,22 @@ export function useIslandAnimation() {
     const previousTransformOrigin = el.style.transformOrigin;
     const previousWillChange = el.style.willChange;
     const previousZIndex = el.style.zIndex;
+    const flipVisual = el.querySelector<HTMLElement>('[data-flip-visual]');
+    const previousTransition = el.style.transition;
+    const previousAnimation = el.style.animation;
+    const previousVisualOpacity = flipVisual?.style.opacity ?? '';
+    const previousVisualWillChange = flipVisual?.style.willChange ?? '';
+    const visualRevealStart = Math.min(0.9, Math.max(0, options.visualRevealStart ?? 0.6));
 
     el.style.transformOrigin = 'center';
     el.style.willChange = 'transform';
     el.style.zIndex = '20';
+    if (flipVisual) {
+      el.style.transition = 'none';
+      el.style.animation = 'none';
+      flipVisual.style.opacity = '0';
+      flipVisual.style.willChange = 'opacity';
+    }
 
     return new Promise((resolve) => {
       const start = performance.now();
@@ -114,7 +169,7 @@ export function useIslandAnimation() {
       const animate = (time: number) => {
         const progress = Math.min(1, (time - start) / duration);
         const elapsed = (time - start) / 1000;
-        const spring = springProgress(elapsed, freq, decay);
+        const spring = boundedSpringProgress(elapsed, freq, decay);
         const rest = 1 - spring;
         const currentX = deltaX * rest;
         const currentY = deltaY * rest;
@@ -122,6 +177,13 @@ export function useIslandAnimation() {
         const currentScaleY = 1 + (scaleY - 1) * rest;
 
         el.style.transform = `translate(${currentX}px, ${currentY}px) scale(${currentScaleX}, ${currentScaleY})`;
+        if (flipVisual) {
+          const revealProgress = Math.min(
+            1,
+            Math.max(0, (progress - visualRevealStart) / (1 - visualRevealStart))
+          );
+          flipVisual.style.opacity = String(easeOutCubic(revealProgress));
+        }
 
         if (progress < 1) {
           requestAnimationFrame(animate);
@@ -132,6 +194,12 @@ export function useIslandAnimation() {
         el.style.transformOrigin = previousTransformOrigin;
         el.style.willChange = previousWillChange;
         el.style.zIndex = previousZIndex;
+        el.style.transition = previousTransition;
+        el.style.animation = previousAnimation;
+        if (flipVisual) {
+          flipVisual.style.opacity = previousVisualOpacity;
+          flipVisual.style.willChange = previousVisualWillChange;
+        }
         resolve();
       };
 
@@ -289,6 +357,10 @@ export function useIslandAnimation() {
   /** 详情面板收起动画 */
   const onDetailLeave = (el: Element, done: () => void) => {
     const htmlEl = el as HTMLElement;
+    const mainFrame =
+      htmlEl
+        .closest<HTMLElement>('.island-stack')
+        ?.querySelector<HTMLElement>('.main-island-frame') ?? null;
     const start = performance.now();
     const duration = 160;
 
@@ -305,6 +377,7 @@ export function useIslandAnimation() {
       }
 
       done();
+      playMainCollapseBounce(mainFrame);
     };
 
     requestAnimationFrame(animate);

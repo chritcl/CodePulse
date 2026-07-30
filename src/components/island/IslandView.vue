@@ -154,6 +154,7 @@ import {
   useIslandWindow,
   useIslandAnimation,
   useIslandDrag,
+  useExpandedCollapseGuard,
   useMusicSpectrum,
   useMusicPlaybackSession,
   usePlaybackTimeline,
@@ -226,7 +227,10 @@ interface IslandShellExpose {
 
 const islandWindow = useIslandWindow();
 const animation = useIslandAnimation();
-const drag = useIslandDrag();
+const drag = useIslandDrag({
+  onDragStart: handleDragStart,
+  onDragEnd: handleDragEnd,
+});
 const contextMenu = useIslandContextMenu();
 const islandShellRef = ref<IslandShellExpose | null>(null);
 const playbackTimeline = usePlaybackTimeline();
@@ -301,7 +305,11 @@ const musicProgressVisible = computed(() =>
 const musicBoxKey = ref(0);
 const expandedKind = ref<IslandDisplayKind | null>(null);
 const isMusicExpanded = computed(() => expandedKind.value === 'music');
-let expandCollapseTimer: number | null = null;
+const expandedCollapse = useExpandedCollapseGuard({
+  isDragging: drag.isDragging,
+  isExpanded: () => expandedKind.value !== null,
+  collapse: () => collapseExpanded(),
+});
 
 /** 消息模式相关 */
 const isMsgModeEnabled = ref(readBoolean('nsd_msg_mode'));
@@ -523,10 +531,7 @@ const refreshLayoutNow = () => {
 /** 收起当前模块详情 */
 const collapseExpanded = () => {
   expandedKind.value = null;
-  if (expandCollapseTimer) {
-    clearTimeout(expandCollapseTimer);
-    expandCollapseTimer = null;
-  }
+  expandedCollapse.cancelScheduledCollapse();
 };
 
 /** 更新硬件强打断状态 */
@@ -853,30 +858,34 @@ const handleMainClick = async (event: MouseEvent) => {
 
 /** 处理鼠标离开 */
 const handleMouseLeave = () => {
-  if (disposed || !expandedKind.value) return;
-
-  if (expandCollapseTimer) clearTimeout(expandCollapseTimer);
-  expandCollapseTimer = window.setTimeout(() => {
-    expandCollapseTimer = null;
-    if (!disposed) collapseExpanded();
-  }, 1000);
+  if (disposed) return;
+  expandedCollapse.handleMouseLeave();
 };
 
 /** 处理鼠标进入 */
 const handleMouseEnter = () => {
-  if (expandCollapseTimer) {
-    clearTimeout(expandCollapseTimer);
-    expandCollapseTimer = null;
-  }
+  expandedCollapse.handleMouseEnter();
 };
+
+/** 拖拽开始时清除自动收起并暂停窗口尺寸动画 */
+function handleDragStart() {
+  expandedCollapse.handleDragStart();
+  islandWindow.suspendSizeAnimation();
+}
+
+/** 拖拽结束后只恢复排队的真实尺寸变化 */
+function handleDragEnd() {
+  void islandWindow.resumeSizeAnimation();
+}
 
 /** 处理鼠标移动 */
 const handleMouseMove = (event: MouseEvent) => {
-  drag.handleMouseMove(
-    event,
-    islandWindow.isPinnedToTaskbar.value,
-    islandWindow.isPositionLocked.value
-  );
+  void drag.handleMouseMove(event, {
+    targetWidth: islandLayout.value.size.width,
+    targetHeight: islandLayout.value.size.height,
+    isPinned: islandWindow.isPinnedToTaskbar.value,
+    isPositionLocked: islandWindow.isPositionLocked.value,
+  });
 };
 
 /** 处理消息点击 */
@@ -1026,7 +1035,7 @@ onMounted(async () => {
   if (disposed) return;
   void codexStatus.start();
   void codexDisplayPreferences.start();
-  window.addEventListener('blur', collapseExpanded);
+  window.addEventListener('blur', expandedCollapse.handleWindowBlur);
   document.addEventListener('contextmenu', preventDocumentContextMenu, true);
   layoutClockTimer = window.setInterval(refreshLayoutNow, 500);
 
@@ -1287,7 +1296,7 @@ onUnmounted(() => {
   codexStatus.dispose();
   codexDisplayPreferences.dispose();
   trackCover.dispose();
-  window.removeEventListener('blur', collapseExpanded);
+  window.removeEventListener('blur', expandedCollapse.handleWindowBlur);
   document.removeEventListener('contextmenu', preventDocumentContextMenu, true);
   eventListeners.dispose();
   musicSession.stop();
@@ -1301,7 +1310,6 @@ onUnmounted(() => {
   if (notifyTimer !== null) window.clearInterval(notifyTimer);
   stopRotation();
   if (msgTimer !== null) window.clearTimeout(msgTimer);
-  if (expandCollapseTimer !== null) window.clearTimeout(expandCollapseTimer);
   if (delayedVisibilityTimer !== null) window.clearTimeout(delayedVisibilityTimer);
   if (delayedMessageHideTimer !== null) window.clearTimeout(delayedMessageHideTimer);
   if (delayedToastHideTimer !== null) window.clearTimeout(delayedToastHideTimer);

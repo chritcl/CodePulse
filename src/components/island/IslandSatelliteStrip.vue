@@ -10,9 +10,11 @@
       :title="item.label"
       @click.stop="$emit('select', item.kind, $event)"
     >
-      <img v-if="item.iconUrl" :src="item.iconUrl" :alt="item.label" class="satellite-img" />
-      <CodexGlyph v-else-if="item.kind === 'agent'" :size="16" />
-      <span v-else class="satellite-symbol">{{ getSymbol(item.kind) }}</span>
+      <span class="satellite-visual" data-flip-visual>
+        <img v-if="item.iconUrl" :src="item.iconUrl" :alt="item.label" class="satellite-img" />
+        <CodexGlyph v-else-if="item.kind === 'agent'" :size="16" />
+        <span v-else class="satellite-symbol">{{ getSymbol(item.kind) }}</span>
+      </span>
       <span v-if="item.unreadCount > 0" class="satellite-badge">
         {{ formatUnread(item.unreadCount) }}
       </span>
@@ -113,6 +115,15 @@ const formatUnread = (count: number) => (count > 99 ? '99+' : String(count));
 .satellite-more:hover {
   transform: translateY(-1px);
   background: rgba(255, 255, 255, 0.18);
+}
+
+.satellite-visual {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .satellite-symbol {

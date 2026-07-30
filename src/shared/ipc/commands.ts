@@ -14,6 +14,7 @@ import type {
   LyricsResponse,
   OpenAppPayload,
   IslandAnimationPayload,
+  IslandDragStartPayload,
   WindowBoundsPayload,
   AppSettings,
   AppSnapshot,
@@ -81,6 +82,13 @@ export const windowCommands = {
    */
   setWindowBounds: (bounds: WindowBoundsPayload): Promise<void> =>
     invoke('set_window_bounds', { bounds }),
+
+  /**
+   * 稳定灵动岛尺寸并启动原生拖拽
+   * @param payload - 拖拽前需要稳定到的尺寸和停靠状态
+   */
+  startIslandDrag: (payload: IslandDragStartPayload): Promise<void> =>
+    invoke('start_island_drag', { ...payload }),
 };
 
 // ============================================================
