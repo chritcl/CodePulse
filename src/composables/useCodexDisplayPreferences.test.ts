@@ -21,10 +21,11 @@ describe('useCodexDisplayPreferences', () => {
     const preferences = useCodexDisplayPreferences({ listenEvent });
 
     await preferences.start();
-    listener?.(event({ idleResident: true, showOperationSummary: false }));
+    listener?.(event({ idleResident: true, showOperationSummary: false, showTaskSummary: true }));
 
     expect(preferences.idleResident.value).toBe(true);
     expect(preferences.showOperationSummary.value).toBe(false);
+    expect(preferences.showTaskSummary.value).toBe(true);
   });
 
   it('释放后解除监听并忽略迟到事件', async () => {
@@ -38,10 +39,11 @@ describe('useCodexDisplayPreferences', () => {
 
     await preferences.start();
     preferences.dispose();
-    listener?.(event({ idleResident: true, showOperationSummary: false }));
+    listener?.(event({ idleResident: true, showOperationSummary: false, showTaskSummary: true }));
 
     expect(unlisten).toHaveBeenCalledTimes(1);
     expect(preferences.idleResident.value).toBe(false);
     expect(preferences.showOperationSummary.value).toBe(true);
+    expect(preferences.showTaskSummary.value).toBe(false);
   });
 });

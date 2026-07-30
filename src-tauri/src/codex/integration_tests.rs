@@ -235,7 +235,7 @@ fn 确认安装后保留其他_hook_并创建_bridge_和配置备份() {
         updated["hooks"]["SessionStart"][0]["hooks"][0]["command"],
         "C:\\tools\\other-hook.exe"
     );
-    assert_eq!(count_codepulse_handlers(&updated), 7);
+    assert_eq!(count_codepulse_handlers(&updated), 9);
     assert_eq!(
         fs::read(bridge_target_path(&app_data_dir)).expect("应读取固定 Bridge"),
         fs::read(source).expect("应读取发布 Bridge")

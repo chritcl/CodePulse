@@ -1,9 +1,17 @@
 <template>
-  <div class="status-indicator">
+  <div v-if="mode !== 'none'" class="status-indicator">
     <!-- 音乐频谱 -->
-    <div v-if="showMusicSpectrum" class="audio-spectrum"
-      :class="{ 'is-playing': isPlaying, expanded: isMusicExpanded }">
-      <span v-for="(scale, index) in barScales" :key="index" class="bar" :style="{ transform: `scaleY(${scale})` }" />
+    <div
+      v-if="mode === 'music'"
+      class="audio-spectrum"
+      :class="{ 'is-playing': isPlaying, expanded: isMusicExpanded }"
+    >
+      <span
+        v-for="(scale, index) in barScales"
+        :key="index"
+        class="bar"
+        :style="{ transform: `scaleY(${scale})` }"
+      />
     </div>
 
     <!-- 网络状态灯 -->
@@ -17,7 +25,7 @@ import { computed } from 'vue';
 const MIN_SPECTRUM = [0.35, 0.35, 0.35, 0.35, 0.35];
 
 interface Props {
-  showMusicSpectrum: boolean;
+  mode: 'music' | 'network' | 'none';
   isPlaying: boolean;
   isMusicExpanded: boolean;
   networkStatus: 'good' | 'warning' | 'error';
@@ -27,7 +35,7 @@ interface Props {
 const props = defineProps<Props>();
 
 const barScales = computed(() => {
-  if (!props.showMusicSpectrum || !props.isPlaying) return MIN_SPECTRUM;
+  if (props.mode !== 'music' || !props.isPlaying) return MIN_SPECTRUM;
   return props.spectrumData.length === 5 ? props.spectrumData : MIN_SPECTRUM;
 });
 </script>

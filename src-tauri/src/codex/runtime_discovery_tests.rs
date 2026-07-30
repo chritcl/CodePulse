@@ -37,6 +37,7 @@ fn discovery(port: u16, token: &str) -> RuntimeDiscovery {
         token: token.to_string(),
         process_id: 1234,
         created_at_ms: 1_784_001_234_567,
+        capture_task_summary: false,
     }
 }
 
@@ -67,4 +68,19 @@ fn rejects_a_malformed_discovery_file() {
     fs::write(&path, "{not-json}").unwrap();
 
     assert!(read_discovery(Path::new(&path)).is_err());
+}
+
+#[test]
+fn reads_an_older_discovery_file_with_task_summary_capture_disabled() {
+    let directory = TestDirectory::new();
+    let path = directory.join("runtime.json");
+    fs::write(
+        &path,
+        r#"{"version":1,"port":41001,"token":"valid-token","processId":1234,"createdAtMs":1784001234567}"#,
+    )
+    .unwrap();
+
+    let value = read_discovery(&path).unwrap();
+
+    assert!(!value.capture_task_summary);
 }

@@ -69,6 +69,7 @@ pub fn run() {
             // Codex 状态命令
             get_codex_status_snapshot,
             clear_failed_codex_task,
+            set_codex_task_summary_capture,
             // Codex 集成设置命令
             get_codex_integration_status,
             preview_codex_integration,

@@ -67,6 +67,9 @@ export const useSettingsStore = defineStore('settings', () => {
   /** 显示 Codex 脱敏操作摘要 */
   const showCodexOperationSummary = ref(readBoolean('nsd_codex_show_operation_summary', true));
 
+  /** 显示 Codex 脱敏任务摘要 */
+  const showCodexTaskSummary = ref(readBoolean('nsd_codex_show_task_summary'));
+
   // ============================================================
   // 持久化监听
   // ============================================================
@@ -129,6 +132,11 @@ export const useSettingsStore = defineStore('settings', () => {
   /** Codex 操作摘要显示偏好变更时持久化 */
   watch(showCodexOperationSummary, (val) => {
     writeBoolean('nsd_codex_show_operation_summary', val);
+  });
+
+  /** Codex 任务摘要显示偏好变更时持久化 */
+  watch(showCodexTaskSummary, (val) => {
+    writeBoolean('nsd_codex_show_task_summary', val);
   });
 
   // ============================================================
@@ -195,6 +203,11 @@ export const useSettingsStore = defineStore('settings', () => {
     showCodexOperationSummary.value = value;
   };
 
+  /** 设置 Codex 脱敏任务摘要显示 */
+  const setShowCodexTaskSummary = (value: boolean) => {
+    showCodexTaskSummary.value = value;
+  };
+
   /** 设置自启动状态 */
   const setAutoStart = (value: boolean) => {
     autoStart.value = value;
@@ -219,6 +232,7 @@ export const useSettingsStore = defineStore('settings', () => {
     enableRotation,
     codexIdleResident,
     showCodexOperationSummary,
+    showCodexTaskSummary,
 
     // 方法
     setThemeMode,
@@ -233,6 +247,7 @@ export const useSettingsStore = defineStore('settings', () => {
     toggleRotation,
     setCodexIdleResident,
     setShowCodexOperationSummary,
+    setShowCodexTaskSummary,
     setAutoStart,
   };
 });

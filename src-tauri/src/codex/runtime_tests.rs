@@ -239,6 +239,44 @@ async fn clearing_a_failed_task_broadcasts_the_updated_snapshot() {
 }
 
 #[tokio::test]
+async fn syncs_the_summary_capture_gate_and_clears_existing_summaries_when_disabled() {
+    let directory = TestDirectory::new();
+    let (snapshot_sender, mut snapshots) = mpsc::unbounded_channel();
+    let runtime = CodexRuntime::with_publisher(8, snapshot_publisher(snapshot_sender));
+    runtime.set_task_summary_capture(true).unwrap();
+    let start = runtime.start(&directory.0).await.unwrap();
+    let _ = timeout(Duration::from_millis(500), snapshots.recv()).await.unwrap();
+    let enabled_discovery = read_discovery(&start.discovery_path).unwrap();
+    let mut event = valid_event();
+    event.task_summary = Some("不得持久化的任务摘要".to_string());
+    let _ = post_json(
+        start.address,
+        &enabled_discovery.token,
+        &serde_json::to_vec(&event).unwrap(),
+    )
+    .await;
+    let captured_snapshot =
+        timeout(Duration::from_millis(500), snapshots.recv()).await.unwrap().unwrap();
+
+    assert!(enabled_discovery.capture_task_summary);
+    assert_eq!(
+        captured_snapshot.tasks[0].task_summary.as_deref(),
+        Some("不得持久化的任务摘要")
+    );
+
+    runtime.set_task_summary_capture(false).unwrap();
+
+    let cleared_snapshot =
+        timeout(Duration::from_millis(500), snapshots.recv()).await.unwrap().unwrap();
+    let disabled_discovery = read_discovery(&start.discovery_path).unwrap();
+    assert!(!disabled_discovery.capture_task_summary);
+    assert!(cleared_snapshot.tasks[0].task_summary.is_none());
+    assert!(runtime.snapshot().tasks[0].task_summary.is_none());
+
+    runtime.stop().await;
+}
+
+#[tokio::test]
 async fn reports_a_failed_listener_snapshot_when_the_receiver_cannot_start() {
     let directory = TestDirectory::new();
     let blocked_path = directory.0.join("not-a-directory");

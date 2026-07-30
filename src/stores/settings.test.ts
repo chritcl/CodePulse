@@ -9,17 +9,20 @@ describe('useSettingsStore 的 Codex 显示偏好', () => {
     setActivePinia(createPinia());
   });
 
-  it('以不常驻、显示脱敏操作摘要为默认值，并独立持久化修改', async () => {
+  it('默认关闭任务摘要，并独立持久化三项偏好', async () => {
     const settings = useSettingsStore();
 
     expect(settings.codexIdleResident).toBe(false);
     expect(settings.showCodexOperationSummary).toBe(true);
+    expect(settings.showCodexTaskSummary).toBe(false);
 
     settings.codexIdleResident = true;
     settings.showCodexOperationSummary = false;
+    settings.showCodexTaskSummary = true;
     await nextTick();
 
     expect(localStorage.getItem('nsd_codex_idle_resident')).toBe('true');
     expect(localStorage.getItem('nsd_codex_show_operation_summary')).toBe('false');
+    expect(localStorage.getItem('nsd_codex_show_task_summary')).toBe('true');
   });
 });

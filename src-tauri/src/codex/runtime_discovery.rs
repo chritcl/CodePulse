@@ -19,6 +19,8 @@ pub struct RuntimeDiscovery {
     pub token: String,
     pub process_id: u32,
     pub created_at_ms: i64,
+    #[serde(default)]
+    pub capture_task_summary: bool,
 }
 
 #[derive(Debug)]

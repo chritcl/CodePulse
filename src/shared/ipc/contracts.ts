@@ -299,6 +299,12 @@ export type CodexTaskPhase =
   | 'editing'
   | 'running_command'
   | 'running_tests'
+  | 'waiting_input'
+  | 'browsing'
+  | 'generating'
+  | 'delegating'
+  | 'waiting'
+  | 'compacting'
   | 'waiting_approval'
   | 'completed'
   | 'failed'
@@ -383,4 +389,5 @@ export interface CodexIntegrationActionResult {
 export interface CodexDisplayPreferencesPayload {
   idleResident: boolean;
   showOperationSummary: boolean;
+  showTaskSummary: boolean;
 }

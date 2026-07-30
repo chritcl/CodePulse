@@ -38,7 +38,9 @@
     <p class="codex-latest-event">
       <span>最近事件：</span>
       <strong>{{ latestEventLabel }}</strong>
-      <small v-if="latestTask?.taskSummary"> · {{ latestTask.taskSummary }}</small>
+      <small v-if="settingsStore.showCodexTaskSummary && latestTask?.taskSummary">
+        · {{ latestTask.taskSummary }}
+      </small>
     </p>
 
     <p v-if="integration.status.value?.message" class="codex-status-message">
@@ -55,6 +57,18 @@
           v-model="settingsStore.codexIdleResident"
           type="checkbox"
           aria-label="Codex 空闲时常驻"
+          @change="void syncDisplayPreferences()"
+        />
+      </label>
+      <label class="codex-preference-row">
+        <span>
+          <strong>显示 Codex 脱敏任务摘要</strong>
+          <small>默认关闭；开启后 Bridge 仅采集当前提示的本机脱敏摘要。</small>
+        </span>
+        <input
+          v-model="settingsStore.showCodexTaskSummary"
+          type="checkbox"
+          aria-label="显示 Codex 脱敏任务摘要"
           @change="void syncDisplayPreferences()"
         />
       </label>
@@ -154,6 +168,7 @@ import {
 } from '@/modules/codex/presentation';
 import { useSettingsStore } from '@/stores';
 import { CODEX_DISPLAY_PREFERENCES_UPDATED } from '@/shared/ipc/events';
+import { codexCommands } from '@/shared/ipc/commands';
 
 const settingsStore = useSettingsStore();
 const integration = useCodexIntegration();
@@ -205,9 +220,11 @@ const previewTitle = computed(() =>
 
 const syncDisplayPreferences = async () => {
   try {
+    await codexCommands.setTaskSummaryCapture(settingsStore.showCodexTaskSummary);
     await emit(CODEX_DISPLAY_PREFERENCES_UPDATED, {
       idleResident: settingsStore.codexIdleResident,
       showOperationSummary: settingsStore.showCodexOperationSummary,
+      showTaskSummary: settingsStore.showCodexTaskSummary,
     });
   } catch (error) {
     console.error('同步 Codex 显示偏好失败:', error);
@@ -217,6 +234,7 @@ const syncDisplayPreferences = async () => {
 onMounted(() => {
   void integration.start();
   void codexStatus.start();
+  void syncDisplayPreferences();
 });
 </script>
 

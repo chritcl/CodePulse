@@ -11,6 +11,7 @@
       @click.stop="$emit('select', item.kind, $event)"
     >
       <img v-if="item.iconUrl" :src="item.iconUrl" :alt="item.label" class="satellite-img" />
+      <CodexGlyph v-else-if="item.kind === 'agent'" :size="16" />
       <span v-else class="satellite-symbol">{{ getSymbol(item.kind) }}</span>
       <span v-if="item.unreadCount > 0" class="satellite-badge">
         {{ formatUnread(item.unreadCount) }}
@@ -35,6 +36,7 @@ import type {
   IslandModuleVisualStatus,
   IslandSatelliteItem,
 } from '@/modules/island/display';
+import CodexGlyph from './CodexGlyph.vue';
 
 interface Props {
   items: IslandSatelliteItem[];
@@ -48,7 +50,7 @@ defineEmits<{
 }>();
 
 const SYMBOLS: Record<IslandDisplayKind, string> = {
-  agent: 'AI',
+  agent: '',
   wechat: '微',
   notification: '铃',
   'system-toast': '提',
@@ -157,19 +159,23 @@ const formatUnread = (count: number) => (count > 99 ? '99+' : String(count));
 }
 
 .satellite-button.is-running {
+  color: #9c9aff;
   box-shadow: inset 0 0 0 1px rgba(88, 86, 214, 0.65);
   animation: satellite-breathe 1.8s ease-in-out infinite;
 }
 
 .satellite-button.is-success {
+  color: #65df82;
   box-shadow: inset 0 0 0 1px rgba(52, 199, 89, 0.65);
 }
 
 .satellite-button.is-warning {
+  color: #ffd84a;
   box-shadow: inset 0 0 0 1px rgba(255, 204, 0, 0.75);
 }
 
 .satellite-button.is-error {
+  color: #ff7770;
   box-shadow:
     inset 0 0 0 1px rgba(255, 59, 48, 0.85),
     0 0 10px rgba(255, 59, 48, 0.28);
@@ -181,6 +187,17 @@ const formatUnread = (count: number) => (count > 99 ? '99+' : String(count));
 
 .satellite-button.is-paused {
   opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .satellite-button,
+  .satellite-more {
+    transition: none;
+  }
+
+  .satellite-button.is-running {
+    animation: none;
+  }
 }
 
 @keyframes satellite-breathe {

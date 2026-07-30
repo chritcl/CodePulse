@@ -194,6 +194,81 @@ fn chooses_a_waiting_approval_task_as_the_representative_over_newer_running_work
 }
 
 #[test]
+fn chooses_a_waiting_input_task_as_the_representative_and_keeps_it_until_a_tool_finishes() {
+    let mut aggregator = CodexAggregator::new(8);
+    let mut waiting_event = session_started_event();
+    waiting_event.event_id = "event-waiting-input".to_string();
+    waiting_event.session_id = "session-waiting-input".to_string();
+    waiting_event.event_type = CodexEventType::ToolStarted;
+    waiting_event.phase = CodexTaskPhase::WaitingInput;
+    waiting_event.occurred_at_ms = 1_784_001_234_500;
+
+    let mut running_event = session_started_event();
+    running_event.event_id = "event-running".to_string();
+    running_event.session_id = "session-running".to_string();
+    running_event.event_type = CodexEventType::ToolStarted;
+    running_event.phase = CodexTaskPhase::Generating;
+    running_event.occurred_at_ms = 1_784_001_234_600;
+
+    assert!(aggregator.apply(waiting_event.clone()));
+    assert!(aggregator.apply(running_event));
+    assert!(!aggregator.expire(waiting_event.occurred_at_ms + INACTIVITY_TIMEOUT_MS));
+
+    let snapshot = aggregator.snapshot(CodexListenerStatus::Running, 1_784_001_534_600);
+    assert_eq!(
+        snapshot.representative_task.as_ref().map(|task| task.session_id.as_str()),
+        Some("session-waiting-input")
+    );
+    assert_eq!(
+        snapshot
+            .tasks
+            .iter()
+            .find(|task| task.session_id == "session-waiting-input")
+            .map(|task| task.phase),
+        Some(CodexTaskPhase::WaitingInput)
+    );
+
+    let mut resumed_event = waiting_event;
+    resumed_event.event_id = "event-resumed".to_string();
+    resumed_event.event_type = CodexEventType::ToolFinished;
+    resumed_event.phase = CodexTaskPhase::Analyzing;
+    resumed_event.occurred_at_ms += INACTIVITY_TIMEOUT_MS + 1;
+    assert!(aggregator.apply(resumed_event));
+
+    let resumed_snapshot = aggregator.snapshot(CodexListenerStatus::Running, 1_784_001_534_601);
+    assert_eq!(
+        resumed_snapshot
+            .representative_task
+            .as_ref()
+            .map(|task| task.session_id.as_str()),
+        Some("session-waiting-input")
+    );
+    assert_eq!(
+        resumed_snapshot.representative_task.as_ref().map(|task| task.phase),
+        Some(CodexTaskPhase::Analyzing)
+    );
+}
+
+#[test]
+fn applies_context_compaction_events_and_clears_all_task_summaries() {
+    let mut aggregator = CodexAggregator::new(8);
+    let mut compacting_event = session_started_event();
+    compacting_event.event_id = "event-compacting".to_string();
+    compacting_event.event_type = CodexEventType::ContextCompactionStarted;
+    compacting_event.phase = CodexTaskPhase::Compacting;
+    compacting_event.occurred_at_ms += 1;
+
+    assert!(aggregator.apply(session_started_event()));
+    assert!(aggregator.apply(compacting_event));
+    assert!(aggregator.clear_task_summaries());
+
+    let snapshot = aggregator.snapshot(CodexListenerStatus::Running, 1_784_001_234_569);
+    assert_eq!(snapshot.tasks[0].phase, CodexTaskPhase::Compacting);
+    assert!(snapshot.tasks[0].task_summary.is_none());
+    assert!(!aggregator.clear_task_summaries());
+}
+
+#[test]
 fn removes_a_completed_task_after_its_retention_period() {
     let mut aggregator = CodexAggregator::new(8);
     let mut completed_event = session_started_event();

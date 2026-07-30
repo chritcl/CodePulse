@@ -171,6 +171,10 @@ export const codexCommands = {
   clearFailedTask: (sessionId: string): Promise<boolean> =>
     invoke('clear_failed_codex_task', { sessionId }),
 
+  /** 同步 Bridge 是否允许捕获脱敏任务摘要 */
+  setTaskSummaryCapture: (enabled: boolean): Promise<void> =>
+    invoke('set_codex_task_summary_capture', { enabled }),
+
   /** 只读检查 Codex Hook 集成状态 */
   getIntegrationStatus: (): Promise<CodexIntegrationStatus> =>
     invoke('get_codex_integration_status'),

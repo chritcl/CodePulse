@@ -17,9 +17,15 @@ const composableMocks = vi.hoisted(() => ({
   useCodexIntegration: vi.fn(),
   useCodexStatus: vi.fn(),
 }));
+const commandMocks = vi.hoisted(() => ({
+  setTaskSummaryCapture: vi.fn(async () => {}),
+}));
 
 vi.mock('@/composables', () => composableMocks);
 vi.mock('@tauri-apps/api/event', () => ({ emit: vi.fn() }));
+vi.mock('@/shared/ipc/commands', () => ({
+  codexCommands: commandMocks,
+}));
 
 interface IntegrationMock {
   status: Ref<CodexIntegrationStatus | null>;
@@ -56,7 +62,7 @@ const integrationPreview = (
   action,
   targetFile: 'C:\\Users\\tester\\.codex\\hooks.json',
   bridgeFile: 'C:\\Users\\tester\\AppData\\Roaming\\CodePulse\\codepulse-codex-bridge.exe',
-  changes: ['新增 7 个 CodePulse Hook 标记'],
+  changes: ['新增或补齐 9 个 CodePulse Hook 标记'],
   warnings: ['需要在 Codex 中确认信任'],
   canConfirm: true,
 });
@@ -127,6 +133,7 @@ describe('CodexIntegrationSettings', () => {
     expect(wrapper.text()).toContain('监听状态：等待事件');
     expect(integration.start).toHaveBeenCalledTimes(1);
     expect(composableMocks.useCodexStatus).toHaveBeenCalledTimes(1);
+    expect(commandMocks.setTaskSummaryCapture).toHaveBeenCalledWith(false);
   });
 
   it('收到真实事件后将等待信任的 Hook 展示为已安装', () => {
@@ -140,7 +147,7 @@ describe('CodexIntegrationSettings', () => {
     expect(wrapper.text()).toContain('监听状态：正常监听');
   });
 
-  it('展示 Rust 快照中最近事件的阶段、来源与脱敏摘要', () => {
+  it('默认隐藏 Rust 快照中的任务摘要，开启后才显示', async () => {
     const latestTask = {
       sessionId: 'session-1',
       source: 'cli' as const,
@@ -156,9 +163,14 @@ describe('CodexIntegrationSettings', () => {
       }),
       start: vi.fn(async () => {}),
     });
-    const { wrapper } = mountSettings();
+    const { wrapper, settings } = mountSettings();
 
     expect(wrapper.text()).toContain('最近事件：运行测试 · Codex CLI');
+    expect(wrapper.text()).not.toContain('验证 Codex 状态岛');
+
+    settings.showCodexTaskSummary = true;
+    await nextTick();
+
     expect(wrapper.text()).toContain('验证 Codex 状态岛');
   });
 
@@ -169,7 +181,7 @@ describe('CodexIntegrationSettings', () => {
     await nextTick();
 
     expect(integration.previewAction).toHaveBeenCalledWith('install_or_repair');
-    expect(wrapper.text()).toContain('新增 7 个 CodePulse Hook 标记');
+    expect(wrapper.text()).toContain('新增或补齐 9 个 CodePulse Hook 标记');
     expect(wrapper.text()).toContain('需要在 Codex 中确认信任');
 
     await wrapper.get('[aria-label="确认 Codex 集成操作"]').trigger('click');
@@ -194,12 +206,16 @@ describe('CodexIntegrationSettings', () => {
 
     await wrapper.get<HTMLInputElement>('[aria-label="Codex 空闲时常驻"]').setValue(true);
     await wrapper.get<HTMLInputElement>('[aria-label="显示 Codex 脱敏操作摘要"]').setValue(false);
+    await wrapper.get<HTMLInputElement>('[aria-label="显示 Codex 脱敏任务摘要"]').setValue(true);
 
     expect(settings.codexIdleResident).toBe(true);
     expect(settings.showCodexOperationSummary).toBe(false);
+    expect(settings.showCodexTaskSummary).toBe(true);
+    expect(commandMocks.setTaskSummaryCapture).toHaveBeenLastCalledWith(true);
     expect(emit).toHaveBeenLastCalledWith('codex-display-preferences-updated', {
       idleResident: true,
       showOperationSummary: false,
+      showTaskSummary: true,
     });
     expect(integration.previewAction).not.toHaveBeenCalled();
     expect(integration.confirmPreview).not.toHaveBeenCalled();

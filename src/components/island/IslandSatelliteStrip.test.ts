@@ -4,6 +4,7 @@ import IslandSatelliteStrip from './IslandSatelliteStrip.vue';
 import type { IslandSatelliteItem } from '@/modules/island/display';
 
 const items: IslandSatelliteItem[] = [
+  { kind: 'agent', status: 'running', unreadCount: 0, label: 'Codex' },
   { kind: 'notification', status: 'unread', unreadCount: 3, label: '通知' },
   { kind: 'hardware', status: 'error', unreadCount: 0, label: '硬件' },
   { kind: 'music', status: 'running', unreadCount: 0, label: '音乐' },
@@ -18,8 +19,10 @@ describe('IslandSatelliteStrip', () => {
       },
     });
 
-    expect(wrapper.findAll('.satellite-button')).toHaveLength(3);
-    expect(wrapper.findAll('.satellite-button')[2].attributes('data-satellite-kind')).toBe('music');
+    expect(wrapper.findAll('.satellite-button')).toHaveLength(4);
+    expect(wrapper.findAll('.satellite-button')[3].attributes('data-satellite-kind')).toBe('music');
+    expect(wrapper.find('[data-satellite-kind="agent"] svg').exists()).toBe(true);
+    expect(wrapper.find('[data-satellite-kind="agent"]').text()).not.toContain('AI');
     expect(wrapper.find('.satellite-badge').text()).toBe('3');
     expect(wrapper.find('.satellite-button.is-error').exists()).toBe(true);
     expect(wrapper.find('.satellite-more').text()).toBe('+2');
@@ -33,7 +36,7 @@ describe('IslandSatelliteStrip', () => {
       },
     });
 
-    await wrapper.findAll('.satellite-button')[2].trigger('click');
+    await wrapper.findAll('.satellite-button')[3].trigger('click');
 
     const payload = wrapper.emitted('select')?.[0];
     expect(payload?.[0]).toBe('music');

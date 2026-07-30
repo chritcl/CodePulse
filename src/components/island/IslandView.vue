@@ -9,7 +9,7 @@
     :is-pinned="islandWindow.isPinnedToTaskbar.value"
     :show-glow="isGlowBorderEnabled"
     :glow-opacity="islandWindow.glowOpacity.value"
-    :show-music-spectrum="displayMusic"
+    :indicator-mode="statusIndicatorMode"
     :is-playing="isPlaying"
     :is-music-expanded="isMusicExpanded"
     :network-status="networkStatus"
@@ -75,6 +75,8 @@
       }"
       :codex="codexStatus.snapshot.value"
       :show-codex-operation-summary="showCodexOperationSummary"
+      :show-codex-task-summary="showCodexTaskSummary"
+      :codex-rotation-paused="Boolean(islandLayout.expandedKind)"
       :inner-enter-transition="animation.onInnerEnter"
       :inner-leave-transition="animation.onInnerLeave"
       @msg-click="handleMsgClick"
@@ -127,6 +129,8 @@
         }"
         :codex="codexStatus.snapshot.value"
         :show-codex-operation-summary="showCodexOperationSummary"
+        :show-codex-task-summary="showCodexTaskSummary"
+        :codex-rotation-paused="true"
         :inner-enter-transition="animation.onInnerEnter"
         :inner-leave-transition="animation.onInnerLeave"
         @msg-click="handleMsgClick"
@@ -233,6 +237,7 @@ const codexStatus = useCodexStatus();
 const codexDisplayPreferences = useCodexDisplayPreferences();
 const codexIdleResident = codexDisplayPreferences.idleResident;
 const showCodexOperationSummary = codexDisplayPreferences.showOperationSummary;
+const showCodexTaskSummary = codexDisplayPreferences.showTaskSummary;
 const eventListeners = createEventListenerRegistry();
 const musicPresentationIdentity = createMusicPresentationIdentityTracker();
 
@@ -448,6 +453,11 @@ const activeDisplay = computed<IslandDisplayKind>(() => islandLayout.value.main)
 
 /** 是否展示音乐内容 */
 const displayMusic = computed(() => activeDisplay.value === 'music');
+const statusIndicatorMode = computed<'music' | 'network' | 'none'>(() => {
+  if (activeDisplay.value === 'music') return 'music';
+  if (activeDisplay.value === 'agent') return 'none';
+  return 'network';
+});
 
 /** 主岛当前表面样式 */
 const activeCoreStyle = computed<CSSProperties>(() => {

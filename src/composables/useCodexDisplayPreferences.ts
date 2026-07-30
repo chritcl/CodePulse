@@ -14,6 +14,7 @@ export interface UseCodexDisplayPreferencesOptions {
 export const useCodexDisplayPreferences = (options: UseCodexDisplayPreferencesOptions = {}) => {
   const idleResident = ref(readBoolean('nsd_codex_idle_resident'));
   const showOperationSummary = ref(readBoolean('nsd_codex_show_operation_summary', true));
+  const showTaskSummary = ref(readBoolean('nsd_codex_show_task_summary'));
   const eventListeners = createEventListenerRegistry(options.listenEvent);
   let disposed = false;
   let started = false;
@@ -27,6 +28,7 @@ export const useCodexDisplayPreferences = (options: UseCodexDisplayPreferencesOp
         if (disposed) return;
         idleResident.value = event.payload.idleResident;
         showOperationSummary.value = event.payload.showOperationSummary;
+        showTaskSummary.value = event.payload.showTaskSummary;
       })
       .finally(() => {
         if (!disposed) startTask = null;
@@ -43,5 +45,5 @@ export const useCodexDisplayPreferences = (options: UseCodexDisplayPreferencesOp
 
   if (getCurrentScope()) onScopeDispose(dispose);
 
-  return { idleResident, showOperationSummary, start, dispose };
+  return { idleResident, showOperationSummary, showTaskSummary, start, dispose };
 };

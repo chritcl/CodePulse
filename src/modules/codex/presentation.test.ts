@@ -46,6 +46,23 @@ describe('resolveCodexIslandPresentation', () => {
     });
   });
 
+  it('将等待回答映射为需要立即处理的警告状态', () => {
+    const presentation = resolveCodexIslandPresentation({
+      ...waitingApprovalSnapshot,
+      representativeTask: {
+        ...waitingApprovalSnapshot.representativeTask!,
+        phase: 'waiting_input',
+      },
+      hasWaitingApproval: false,
+    });
+
+    expect(presentation.module).toMatchObject({
+      interrupt: 'strong',
+      status: 'warning',
+      label: '等待回答',
+    });
+  });
+
   it('将完成任务映射为短暂的软打断成功状态', () => {
     const presentation = resolveCodexIslandPresentation({
       ...waitingApprovalSnapshot,
@@ -193,6 +210,11 @@ describe('resolveCodexIslandPresentation', () => {
     ['reading', '读取项目'],
     ['editing', '修改代码'],
     ['running_command', '运行命令'],
+    ['browsing', '浏览网页'],
+    ['generating', '生成内容'],
+    ['delegating', '分派子任务'],
+    ['waiting', '等待任务'],
+    ['compacting', '整理上下文'],
   ] as const)('将 %s 映射为运行中的 Agent 岛', (phase, label) => {
     const presentation = resolveCodexIslandPresentation({
       ...waitingApprovalSnapshot,

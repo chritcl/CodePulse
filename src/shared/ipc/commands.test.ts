@@ -83,6 +83,16 @@ describe('Codex 状态 IPC 命令封装', () => {
     });
   });
 
+  it('通过统一命令封装同步任务摘要捕获偏好', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+
+    await codexCommands.setTaskSummaryCapture(true);
+
+    expect(invoke).toHaveBeenCalledWith('set_codex_task_summary_capture', {
+      enabled: true,
+    });
+  });
+
   it('通过统一命令封装读取 Codex Hook 集成检查结果', async () => {
     vi.mocked(invoke).mockResolvedValueOnce({
       selectedConfig: 'hooks_json',

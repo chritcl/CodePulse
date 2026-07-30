@@ -79,6 +79,8 @@
           :snapshot="codex"
           :mode="mode"
           :show-operation-summary="showCodexOperationSummary"
+          :show-task-summary="showCodexTaskSummary"
+          :rotation-paused="codexRotationPaused"
           @clear-failed="$emit('clear-failed', $event)"
         />
       </template>
@@ -186,12 +188,16 @@ interface Props {
   systemToast: SystemToastDisplayState;
   codex: CodexStatusSnapshot;
   showCodexOperationSummary?: boolean;
+  showCodexTaskSummary?: boolean;
+  codexRotationPaused?: boolean;
   innerEnterTransition: (el: Element, done: () => void) => void;
   innerLeaveTransition: (el: Element, done: () => void) => void;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   showCodexOperationSummary: true,
+  showCodexTaskSummary: false,
+  codexRotationPaused: false,
 });
 
 defineEmits<{

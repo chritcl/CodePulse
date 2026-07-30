@@ -1,57 +1,61 @@
 <template>
-  <div v-if="mode === 'compact'" class="codex-compact" :class="statusClass">
-    <span class="codex-status-rail" aria-hidden="true" />
-    <div class="codex-compact-copy">
-      <span class="codex-compact-phase">{{ presentation.phaseLabel }}</span>
-      <span class="codex-compact-project">{{ representativeProject }}</span>
-    </div>
-    <span v-if="snapshot.tasks.length > 1" class="codex-compact-count">
-      {{ snapshot.tasks.length }} 个任务
+  <div
+    v-if="mode === 'compact'"
+    class="codex-compact"
+    :class="[statusClass, { 'is-reduced-motion': prefersReducedMotion }]"
+    @mouseenter="isHovered = true"
+    @mouseleave="isHovered = false"
+  >
+    <span class="codex-glyph-frame" aria-hidden="true">
+      <CodexGlyph :size="24" />
+    </span>
+
+    <Transition :name="prefersReducedMotion ? undefined : 'codex-task-fade'" mode="out-in">
+      <div :key="currentTask?.sessionId || 'idle'" class="codex-compact-copy">
+        <span class="codex-compact-project" :title="currentProject">{{ currentProject }}</span>
+        <span class="codex-compact-phase">{{ currentPhase }}</span>
+      </div>
+    </Transition>
+
+    <span class="codex-compact-meta">
+      {{ compactMeta }}
     </span>
   </div>
 
-  <section v-else class="codex-detail" aria-label="Codex 任务详情">
-    <header class="codex-detail-header" :class="statusClass">
-      <span class="codex-status-rail" aria-hidden="true" />
+  <section v-else class="codex-detail" :class="detailStatusClass" aria-label="Codex 任务详情">
+    <header class="codex-detail-header" :class="detailStatusClass">
+      <span class="codex-glyph-frame is-detail" aria-hidden="true">
+        <CodexGlyph :size="24" />
+      </span>
       <div class="codex-detail-heading">
-        <span class="codex-detail-title">Codex 任务</span>
+        <span class="codex-detail-title">Codex 监听</span>
         <span class="codex-listener-status">{{ listenerLabel }}</span>
       </div>
-      <span class="codex-detail-count">{{ snapshot.tasks.length }}</span>
+      <span class="codex-detail-count">{{ tasks.length }} 个任务</span>
     </header>
 
-    <div v-if="tasks.length" class="codex-task-list" aria-label="活动会话">
+    <div v-if="tasks.length" class="codex-project-strip" aria-label="活动项目">
       <button
         v-for="task in tasks"
         :key="task.sessionId"
         type="button"
-        class="codex-task-card"
+        class="codex-project-tab"
         :class="{ 'is-selected': task.sessionId === selectedTask?.sessionId }"
         :data-session-id="task.sessionId"
+        :title="task.projectName || '未命名项目'"
         @click.stop="selectTask(task.sessionId)"
       >
-        <span class="codex-task-card-phase">{{ getCodexPhaseLabel(task.phase) }}</span>
-        <span class="codex-task-card-project">{{ task.projectName || '未命名项目' }}</span>
+        <span class="codex-project-tab-name">{{ task.projectName || '未命名项目' }}</span>
+        <span class="codex-project-tab-phase">{{ getCodexPhaseLabel(task.phase) }}</span>
       </button>
     </div>
 
     <div v-if="selectedTask" class="codex-task-detail">
       <div class="codex-task-detail-topline">
-        <span class="codex-task-project">{{ selectedTask.projectName || '未命名项目' }}</span>
+        <span class="codex-task-project" :title="selectedTask.projectName || '未命名项目'">
+          {{ selectedTask.projectName || '未命名项目' }}
+        </span>
         <span class="codex-task-phase">{{ getCodexPhaseLabel(selectedTask.phase) }}</span>
-        <span class="codex-task-source">{{ getCodexSourceLabel(selectedTask.source) }}</span>
-      </div>
-      <p class="codex-task-summary">
-        {{ selectedTask.taskSummary || '未提供任务摘要' }}
-      </p>
-      <p v-if="showOperationSummary && selectedTask.operationSummary" class="codex-task-operation">
-        {{ selectedTask.operationSummary }}
-      </p>
-      <p v-if="selectedTask.errorSummary" class="codex-task-error">
-        {{ selectedTask.errorSummary }}
-      </p>
-      <div class="codex-task-footer">
-        <span>{{ activityLabel(selectedTask.lastActivityAtMs) }}</span>
         <button
           v-if="selectedTask.phase === 'failed'"
           type="button"
@@ -59,9 +63,25 @@
           aria-label="清除失败任务"
           @click.stop="$emit('clear-failed', selectedTask.sessionId)"
         >
-          清除失败
+          清除
         </button>
       </div>
+
+      <div class="codex-task-meta">
+        <span>{{ getCodexSourceLabel(selectedTask.source) }}</span>
+        <span aria-hidden="true">·</span>
+        <span>{{ activityLabel(selectedTask.lastActivityAtMs) }}</span>
+      </div>
+
+      <p v-if="showTaskSummary && selectedTask.taskSummary" class="codex-task-summary">
+        {{ selectedTask.taskSummary }}
+      </p>
+      <p v-if="showOperationSummary && selectedTask.operationSummary" class="codex-task-operation">
+        {{ selectedTask.operationSummary }}
+      </p>
+      <p v-if="selectedTask.errorSummary" class="codex-task-error">
+        {{ selectedTask.errorSummary }}
+      </p>
     </div>
 
     <div v-else class="codex-empty-state">
@@ -71,46 +91,179 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import type { CodexStatusSnapshot } from '@/shared/ipc/contracts';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import type { CodexStatusSnapshot, CodexTaskSnapshot } from '@/shared/ipc/contracts';
 import {
   getCodexListenerLabel,
   getCodexPhaseLabel,
+  getCodexSourceCompactLabel,
   getCodexSourceLabel,
-  resolveCodexIslandPresentation,
   sortCodexTasksByRecentActivity,
 } from '@/modules/codex/presentation';
+import CodexGlyph from './CodexGlyph.vue';
 
 interface Props {
   snapshot: CodexStatusSnapshot;
   mode: 'compact' | 'detail';
   showOperationSummary?: boolean;
+  showTaskSummary?: boolean;
+  rotationPaused?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   showOperationSummary: true,
+  showTaskSummary: false,
+  rotationPaused: false,
 });
 
 defineEmits<{
   'clear-failed': [sessionId: string];
 }>();
 
-const selectedSessionId = ref<string | null>(null);
-const presentation = computed(() => resolveCodexIslandPresentation(props.snapshot));
+const ROTATION_INTERVAL_MS = 4_000;
+const ATTENTION_PHASES = new Set<CodexTaskSnapshot['phase']>([
+  'waiting_input',
+  'waiting_approval',
+  'failed',
+]);
+
 const tasks = computed(() => sortCodexTasksByRecentActivity(props.snapshot.tasks));
+const taskIds = computed(() => tasks.value.map((task) => task.sessionId).join('|'));
+const attentionTask = computed(() => {
+  const candidates = tasks.value.filter((task) => ATTENTION_PHASES.has(task.phase));
+  return (
+    candidates.sort((left, right) => {
+      const leftRank = left.phase === 'failed' ? 1 : 0;
+      const rightRank = right.phase === 'failed' ? 1 : 0;
+      return leftRank - rightRank || right.lastActivityAtMs - left.lastActivityAtMs;
+    })[0] ?? null
+  );
+});
+const compactSessionId = ref<string | null>(null);
+const selectedSessionId = ref<string | null>(null);
+const isHovered = ref(false);
+const prefersReducedMotion = ref(false);
+let rotationTimer: ReturnType<typeof setInterval> | null = null;
+let motionQuery: MediaQueryList | null = null;
+
+const currentTask = computed(
+  () =>
+    attentionTask.value ??
+    tasks.value.find((task) => task.sessionId === compactSessionId.value) ??
+    tasks.value[0] ??
+    null
+);
 const selectedTask = computed(() => {
   const selected = tasks.value.find((task) => task.sessionId === selectedSessionId.value);
   return selected ?? props.snapshot.representativeTask ?? tasks.value[0] ?? null;
 });
-const representativeProject = computed(
-  () => props.snapshot.representativeTask?.projectName || 'Codex'
+const currentIndex = computed(() => {
+  if (!currentTask.value) return -1;
+  return tasks.value.findIndex((task) => task.sessionId === currentTask.value?.sessionId);
+});
+const currentProject = computed(() => currentTask.value?.projectName || 'Codex');
+const currentPhase = computed(() =>
+  currentTask.value
+    ? getCodexPhaseLabel(currentTask.value.phase)
+    : getCodexListenerLabel(props.snapshot.listenerStatus)
 );
+const compactMeta = computed(() => {
+  if (!currentTask.value) return 'IDLE';
+  if (tasks.value.length === 1) return getCodexSourceCompactLabel(currentTask.value.source);
+  return `${currentIndex.value + 1}/${tasks.value.length}`;
+});
 const listenerLabel = computed(() => getCodexListenerLabel(props.snapshot.listenerStatus));
-const statusClass = computed(() => `is-${presentation.value.module.status ?? 'normal'}`);
+const statusClass = computed(() =>
+  getStatusClass(currentTask.value, props.snapshot.listenerStatus)
+);
+const detailStatusClass = computed(() =>
+  getStatusClass(selectedTask.value, props.snapshot.listenerStatus)
+);
+const rotationBlocked = computed(
+  () =>
+    props.mode !== 'compact' ||
+    tasks.value.length < 2 ||
+    props.rotationPaused ||
+    isHovered.value ||
+    Boolean(attentionTask.value)
+);
+
+watch(
+  taskIds,
+  () => {
+    if (attentionTask.value) {
+      compactSessionId.value = attentionTask.value.sessionId;
+    } else if (!tasks.value.some((task) => task.sessionId === compactSessionId.value)) {
+      compactSessionId.value = tasks.value[0]?.sessionId ?? null;
+    }
+    if (!tasks.value.some((task) => task.sessionId === selectedSessionId.value)) {
+      selectedSessionId.value =
+        props.snapshot.representativeTask?.sessionId ?? tasks.value[0]?.sessionId ?? null;
+    }
+    restartRotation();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => attentionTask.value?.sessionId ?? null,
+  (sessionId, previousSessionId) => {
+    if (sessionId) {
+      compactSessionId.value = sessionId;
+    } else if (previousSessionId) {
+      compactSessionId.value = tasks.value[0]?.sessionId ?? null;
+    }
+    restartRotation();
+  }
+);
+
+watch(rotationBlocked, restartRotation);
+
+function restartRotation() {
+  if (rotationTimer !== null) {
+    clearInterval(rotationTimer);
+    rotationTimer = null;
+  }
+  if (rotationBlocked.value) return;
+
+  rotationTimer = setInterval(() => {
+    const index = tasks.value.findIndex((task) => task.sessionId === compactSessionId.value);
+    const nextIndex = index < 0 ? 0 : (index + 1) % tasks.value.length;
+    compactSessionId.value = tasks.value[nextIndex]?.sessionId ?? null;
+  }, ROTATION_INTERVAL_MS);
+}
 
 const selectTask = (sessionId: string) => {
   selectedSessionId.value = sessionId;
 };
+
+const updateReducedMotion = (event: { matches: boolean }) => {
+  prefersReducedMotion.value = event.matches;
+};
+
+onMounted(() => {
+  if (typeof globalThis.matchMedia !== 'function') return;
+  motionQuery = globalThis.matchMedia('(prefers-reduced-motion: reduce)');
+  updateReducedMotion(motionQuery);
+  motionQuery.addEventListener?.('change', updateReducedMotion);
+});
+
+onBeforeUnmount(() => {
+  if (rotationTimer !== null) clearInterval(rotationTimer);
+  motionQuery?.removeEventListener?.('change', updateReducedMotion);
+});
+
+function getStatusClass(
+  task: CodexTaskSnapshot | null,
+  listenerStatus: CodexStatusSnapshot['listenerStatus']
+) {
+  if (!task) return listenerStatus === 'failed' ? 'is-error' : 'is-paused';
+  if (task.phase === 'waiting_input' || task.phase === 'waiting_approval') return 'is-warning';
+  if (task.phase === 'completed') return 'is-success';
+  if (task.phase === 'failed') return 'is-error';
+  if (task.phase === 'interrupted') return 'is-paused';
+  return 'is-running';
+}
 
 const activityLabel = (timestamp: number) => {
   if (!timestamp) return '尚无活动';
@@ -126,55 +279,85 @@ const activityLabel = (timestamp: number) => {
 
 <style scoped>
 .codex-compact {
+  --codex-accent: rgba(255, 255, 255, 0.62);
+  width: 100%;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   color: currentColor;
 }
 
-.codex-status-rail {
-  width: 4px;
-  height: 22px;
-  border-radius: 999px;
-  flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.42);
-  box-shadow: 0 0 10px rgba(255, 255, 255, 0.12);
+.codex-compact.is-running,
+.codex-detail.is-running,
+.codex-detail-header.is-running {
+  --codex-accent: #9592ff;
 }
 
-.is-running .codex-status-rail {
-  background: #7d7aff;
-  box-shadow: 0 0 12px rgba(125, 122, 255, 0.58);
+.codex-compact.is-warning,
+.codex-detail.is-warning,
+.codex-detail-header.is-warning {
+  --codex-accent: #ffd43b;
 }
 
-.is-warning .codex-status-rail {
-  background: #ffcc00;
-  box-shadow: 0 0 12px rgba(255, 204, 0, 0.52);
+.codex-compact.is-success,
+.codex-detail.is-success,
+.codex-detail-header.is-success {
+  --codex-accent: #58d978;
 }
 
-.is-success .codex-status-rail {
-  background: #34c759;
-  box-shadow: 0 0 12px rgba(52, 199, 89, 0.5);
+.codex-compact.is-error,
+.codex-detail.is-error,
+.codex-detail-header.is-error {
+  --codex-accent: #ff716a;
 }
 
-.is-error .codex-status-rail {
-  background: #ff5b55;
-  box-shadow: 0 0 12px rgba(255, 91, 85, 0.62);
+.codex-compact.is-paused,
+.codex-detail.is-paused,
+.codex-detail-header.is-paused {
+  --codex-accent: #9b9ba1;
 }
 
-.is-paused .codex-status-rail {
-  background: #8e8e93;
+.codex-glyph-frame {
+  width: 28px;
+  height: 28px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--codex-accent);
+  flex: 0 0 28px;
 }
 
-.codex-compact-copy,
-.codex-detail-heading {
+.codex-glyph-frame::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.11;
+  filter: blur(5px);
+}
+
+.codex-glyph-frame :deep(svg) {
+  position: relative;
+}
+
+.codex-glyph-frame.is-detail {
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+}
+
+.codex-compact-copy {
   min-width: 0;
   display: flex;
+  flex: 1;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
-.codex-compact-phase,
+.codex-compact-project,
 .codex-detail-title,
 .codex-task-project {
   overflow: hidden;
@@ -184,36 +367,49 @@ const activityLabel = (timestamp: number) => {
   white-space: nowrap;
 }
 
-.codex-compact-phase {
+.codex-compact-project {
   font-size: 12px;
   line-height: 1;
 }
 
-.codex-compact-project,
-.codex-compact-count,
-.codex-listener-status,
-.codex-detail-count,
-.codex-task-source,
-.codex-task-footer {
+.codex-compact-phase {
+  overflow: hidden;
   color: currentColor;
   font-size: 9px;
   line-height: 1;
   opacity: 0.58;
-}
-
-.codex-compact-project {
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.codex-compact-count {
-  margin-left: auto;
-  padding: 4px 6px;
+.codex-compact-meta {
+  min-width: 34px;
+  height: 20px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.09);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--codex-accent);
+  background: color-mix(in srgb, var(--codex-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--codex-accent) 24%, transparent);
+  flex-shrink: 0;
+  font-size: 8px;
+  font-weight: 750;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  letter-spacing: 0.04em;
+}
+
+.codex-task-fade-enter-active,
+.codex-task-fade-leave-active {
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+.codex-task-fade-enter-from,
+.codex-task-fade-leave-to {
+  opacity: 0;
+  transform: translateY(2px);
 }
 
 .codex-detail {
@@ -221,128 +417,144 @@ const activityLabel = (timestamp: number) => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 8px;
   color: currentColor;
+}
+
+.codex-detail,
+.codex-detail * {
+  box-sizing: border-box;
 }
 
 .codex-detail-header,
 .codex-task-detail-topline,
-.codex-task-footer {
+.codex-task-meta {
   display: flex;
   align-items: center;
 }
 
 .codex-detail-header {
-  gap: 8px;
+  --codex-accent: #9592ff;
+  gap: 9px;
 }
 
-.codex-detail-header .codex-status-rail {
-  height: 26px;
+.codex-detail-heading {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
 .codex-detail-title {
   font-size: 13px;
+  line-height: 1;
 }
 
-.codex-listener-status {
-  font-size: 10px;
+.codex-listener-status,
+.codex-task-meta,
+.codex-project-tab-phase {
+  color: currentColor;
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.56;
 }
 
 .codex-detail-count {
-  min-width: 22px;
   height: 22px;
   margin-left: auto;
-  border-radius: 50%;
+  border-radius: 999px;
+  padding: 0 8px;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  background: rgba(255, 255, 255, 0.1);
-  font-size: 10px;
-  opacity: 0.9;
+  color: currentColor;
+  background: rgba(255, 255, 255, 0.09);
+  font-size: 9px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.codex-task-list {
-  max-height: 62px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding-right: 2px;
-}
-
-.codex-task-card {
+.codex-project-strip {
   width: 100%;
   min-width: 0;
-  border: 0;
-  border-radius: 8px;
-  padding: 6px 8px;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.codex-project-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.codex-project-tab {
+  min-width: 104px;
+  max-width: 148px;
+  height: 34px;
+  border: 0;
+  border-radius: 9px;
+  padding: 5px 8px;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 3px;
   color: currentColor;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.055);
   cursor: pointer;
   text-align: left;
   transition:
-    background-color 0.16s ease,
-    transform 0.16s ease;
+    background-color 160ms ease,
+    box-shadow 160ms ease;
 }
 
-.codex-task-card:hover,
-.codex-task-card.is-selected {
-  background: rgba(255, 255, 255, 0.14);
+.codex-project-tab:hover,
+.codex-project-tab.is-selected {
+  background: rgba(149, 146, 255, 0.13);
+  box-shadow: inset 0 0 0 1px rgba(149, 146, 255, 0.3);
 }
 
-.codex-task-card:hover {
-  transform: translateX(1px);
-}
-
-.codex-task-card-phase {
-  flex-shrink: 0;
-  color: currentColor;
+.codex-project-tab-name {
+  width: 100%;
+  overflow: hidden;
   font-size: 10px;
   font-weight: 700;
-}
-
-.codex-task-card-project {
-  min-width: 0;
-  overflow: hidden;
-  color: currentColor;
-  font-size: 10px;
-  opacity: 0.62;
+  line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .codex-task-detail {
   min-width: 0;
-  border-radius: 10px;
-  padding: 9px 10px;
+  height: 100px;
+  border-radius: 11px;
+  padding: 10px 11px;
   background: rgba(0, 0, 0, 0.16);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.055);
 }
 
 .codex-task-detail-topline {
+  min-width: 0;
   gap: 8px;
 }
 
 .codex-task-project {
+  min-width: 0;
   font-size: 11px;
 }
 
-.codex-task-source {
+.codex-task-phase {
   margin-left: auto;
+  color: var(--codex-accent, #9592ff);
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
   white-space: nowrap;
 }
 
-.codex-task-phase {
-  flex-shrink: 0;
-  color: currentColor;
-  font-size: 9px;
-  opacity: 0.58;
-  white-space: nowrap;
+.codex-task-meta {
+  gap: 5px;
+  margin-top: 5px;
 }
 
 .codex-task-summary,
@@ -357,30 +569,30 @@ const activityLabel = (timestamp: number) => {
   white-space: nowrap;
 }
 
+.codex-task-summary + .codex-task-operation,
+.codex-task-summary + .codex-task-error,
+.codex-task-operation + .codex-task-error {
+  margin-top: 3px;
+}
+
 .codex-task-summary {
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .codex-task-operation {
-  opacity: 0.65;
+  opacity: 0.62;
 }
 
 .codex-task-error {
   color: #ff918b;
 }
 
-.codex-task-footer {
-  gap: 8px;
-  margin-top: 8px;
-  min-height: 20px;
-}
-
 .codex-clear-action {
-  height: 20px;
-  margin-left: auto;
+  height: 21px;
+  margin-left: 1px;
   border: 0;
   border-radius: 999px;
-  padding: 0 8px;
+  padding: 0 9px;
   color: #ffd6d3;
   background: rgba(255, 91, 85, 0.18);
   cursor: pointer;
@@ -393,12 +605,20 @@ const activityLabel = (timestamp: number) => {
 }
 
 .codex-empty-state {
-  border-radius: 9px;
-  padding: 18px 10px;
+  border-radius: 10px;
+  padding: 31px 10px;
   color: currentColor;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.045);
   font-size: 11px;
-  opacity: 0.64;
+  opacity: 0.62;
   text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .codex-task-fade-enter-active,
+  .codex-task-fade-leave-active,
+  .codex-project-tab {
+    transition: none;
+  }
 }
 </style>

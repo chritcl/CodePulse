@@ -9,6 +9,7 @@ use tokio::task::JoinHandle;
 
 use super::aggregator::{CodexAggregator, CodexListenerStatus, CodexStatusSnapshot};
 use super::protocol::CodexBridgeEvent;
+use super::runtime_discovery::{read_discovery, write_discovery_atomically, DiscoveryError};
 use super::server::{start_receiver, CodexEventReceiver, ReceiverError};
 
 pub const DEFAULT_EVENT_CACHE_CAPACITY: usize = 512;
@@ -20,12 +21,14 @@ pub type SnapshotPublisher = Arc<dyn Fn(CodexStatusSnapshot) + Send + Sync>;
 #[derive(Debug)]
 pub enum RuntimeError {
     Receiver(ReceiverError),
+    Discovery(DiscoveryError),
 }
 
 impl fmt::Display for RuntimeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Receiver(error) => write!(formatter, "Codex 运行时启动失败: {error}"),
+            Self::Discovery(error) => write!(formatter, "Codex 捕获偏好同步失败: {error}"),
         }
     }
 }
@@ -35,6 +38,12 @@ impl std::error::Error for RuntimeError {}
 impl From<ReceiverError> for RuntimeError {
     fn from(error: ReceiverError) -> Self {
         Self::Receiver(error)
+    }
+}
+
+impl From<DiscoveryError> for RuntimeError {
+    fn from(error: DiscoveryError) -> Self {
+        Self::Discovery(error)
     }
 }
 
@@ -52,6 +61,7 @@ pub struct CodexRuntime {
 struct RuntimeState {
     aggregator: CodexAggregator,
     listener_status: CodexListenerStatus,
+    capture_task_summary: bool,
     generation: u64,
     publisher: SnapshotPublisher,
     running: Option<RunningRuntime>,
@@ -72,6 +82,7 @@ impl CodexRuntime {
             state: Arc::new(Mutex::new(RuntimeState {
                 aggregator: CodexAggregator::new(event_cache_capacity),
                 listener_status: CodexListenerStatus::Stopped,
+                capture_task_summary: false,
                 generation: 0,
                 publisher,
                 running: None,
@@ -84,13 +95,16 @@ impl CodexRuntime {
             self.stop().await;
         }
 
-        let (receiver, events) = match start_receiver(app_data_dir, RECEIVER_QUEUE_CAPACITY).await {
-            Ok(receiver) => receiver,
-            Err(error) => {
-                self.mark_start_failed();
-                return Err(error.into());
-            }
-        };
+        let capture_task_summary = lock_state(&self.state).capture_task_summary;
+        let (receiver, events) =
+            match start_receiver(app_data_dir, RECEIVER_QUEUE_CAPACITY, capture_task_summary).await
+            {
+                Ok(receiver) => receiver,
+                Err(error) => {
+                    self.mark_start_failed();
+                    return Err(error.into());
+                }
+            };
         let start = CodexRuntimeStart {
             address: receiver.address(),
             discovery_path: receiver.discovery_path().to_path_buf(),
@@ -157,6 +171,24 @@ impl CodexRuntime {
         }
         state.publish_snapshot();
         true
+    }
+
+    pub fn set_task_summary_capture(&self, enabled: bool) -> Result<(), RuntimeError> {
+        let mut state = lock_state(&self.state);
+        if let Some(running) = state.running.as_ref() {
+            let path = running.receiver.discovery_path();
+            let mut discovery = read_discovery(path)?;
+            if discovery.capture_task_summary != enabled {
+                discovery.capture_task_summary = enabled;
+                write_discovery_atomically(path, &discovery)?;
+            }
+        }
+
+        state.capture_task_summary = enabled;
+        if !enabled && state.aggregator.clear_task_summaries() {
+            state.publish_snapshot();
+        }
+        Ok(())
     }
 
     fn is_running(&self) -> bool {

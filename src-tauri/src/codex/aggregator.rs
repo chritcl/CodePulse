@@ -209,6 +209,17 @@ impl CodexAggregator {
         true
     }
 
+    pub fn clear_task_summaries(&mut self) -> bool {
+        let mut changed = false;
+        for task in self.tasks.values_mut() {
+            changed |= task.task_summary.take().is_some();
+        }
+        if changed {
+            self.revision += 1;
+        }
+        changed
+    }
+
     pub(crate) fn reset(&mut self) {
         self.tasks.clear();
         self.processed_event_ids.clear();
@@ -236,12 +247,14 @@ fn phase_for_event(event_type: CodexEventType, phase: CodexTaskPhase) -> CodexTa
     match event_type {
         CodexEventType::SessionStarted | CodexEventType::TurnStarted => CodexTaskPhase::Analyzing,
         CodexEventType::ToolStarted | CodexEventType::ToolFinished => {
-            if is_running_phase(phase) {
+            if is_active_tool_phase(phase) {
                 phase
             } else {
                 CodexTaskPhase::Analyzing
             }
         }
+        CodexEventType::ContextCompactionStarted => CodexTaskPhase::Compacting,
+        CodexEventType::ContextCompactionFinished => CodexTaskPhase::Analyzing,
         CodexEventType::PermissionRequested => CodexTaskPhase::WaitingApproval,
         CodexEventType::TurnStopped => {
             if is_terminal_phase(phase) {
@@ -262,7 +275,16 @@ fn is_running_phase(phase: CodexTaskPhase) -> bool {
             | CodexTaskPhase::Editing
             | CodexTaskPhase::RunningCommand
             | CodexTaskPhase::RunningTests
+            | CodexTaskPhase::Browsing
+            | CodexTaskPhase::Generating
+            | CodexTaskPhase::Delegating
+            | CodexTaskPhase::Waiting
+            | CodexTaskPhase::Compacting
     )
+}
+
+fn is_active_tool_phase(phase: CodexTaskPhase) -> bool {
+    is_running_phase(phase) || phase == CodexTaskPhase::WaitingInput
 }
 
 fn is_terminal_phase(phase: CodexTaskPhase) -> bool {
@@ -274,13 +296,18 @@ fn is_terminal_phase(phase: CodexTaskPhase) -> bool {
 
 fn task_priority(phase: CodexTaskPhase) -> u8 {
     match phase {
-        CodexTaskPhase::WaitingApproval => 0,
+        CodexTaskPhase::WaitingInput | CodexTaskPhase::WaitingApproval => 0,
         CodexTaskPhase::Failed => 1,
         CodexTaskPhase::Completed | CodexTaskPhase::Interrupted => 2,
         CodexTaskPhase::Analyzing
         | CodexTaskPhase::Reading
         | CodexTaskPhase::Editing
         | CodexTaskPhase::RunningCommand
-        | CodexTaskPhase::RunningTests => 3,
+        | CodexTaskPhase::RunningTests
+        | CodexTaskPhase::Browsing
+        | CodexTaskPhase::Generating
+        | CodexTaskPhase::Delegating
+        | CodexTaskPhase::Waiting
+        | CodexTaskPhase::Compacting => 3,
     }
 }

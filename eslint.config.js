@@ -95,6 +95,7 @@ export default [
     ignores: [
       'dist/**',
       'node_modules/**',
+      '.worktrees/**',
       'src-tauri/**',
       '*.config.js',
       '*.config.ts',

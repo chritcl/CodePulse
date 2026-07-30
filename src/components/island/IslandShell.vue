@@ -37,7 +37,7 @@
               </div>
 
               <IslandStatusIndicator
-                :show-music-spectrum="showMusicSpectrum"
+                :mode="indicatorMode"
                 :is-playing="isPlaying"
                 :is-music-expanded="isMusicExpanded"
                 :network-status="networkStatus"
@@ -70,7 +70,7 @@ interface Props {
   isPinned: boolean;
   showGlow: boolean;
   glowOpacity: number;
-  showMusicSpectrum: boolean;
+  indicatorMode: 'music' | 'network' | 'none';
   isPlaying: boolean;
   isMusicExpanded: boolean;
   networkStatus: 'good' | 'warning' | 'error';

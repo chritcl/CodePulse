@@ -35,7 +35,8 @@ impl Drop for TestDirectory {
 #[tokio::test]
 async fn bridge_进程把标准输入事件转发到本机接收器() {
     let directory = TestDirectory::new();
-    let (server, mut receiver) = start_receiver(&directory.0, 1).await.expect("应启动本机接收器");
+    let (server, mut receiver) =
+        start_receiver(&directory.0, 1, false).await.expect("应启动本机接收器");
     let mut child = Command::new(env!("CARGO_BIN_EXE_codepulse-codex-bridge"))
         .args(["--source", "app"])
         .env("CODEPULSE_CODEX_DISCOVERY_FILE", server.discovery_path())

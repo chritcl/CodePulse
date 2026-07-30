@@ -6,7 +6,7 @@ describe('IslandStatusIndicator', () => {
   it('播放音乐时按真实频谱渲染 5 个柱子', () => {
     const wrapper = mount(IslandStatusIndicator, {
       props: {
-        showMusicSpectrum: true,
+        mode: 'music',
         isPlaying: true,
         isMusicExpanded: false,
         networkStatus: 'good',
@@ -23,7 +23,7 @@ describe('IslandStatusIndicator', () => {
   it('暂停音乐时频谱回落到最低高度', () => {
     const wrapper = mount(IslandStatusIndicator, {
       props: {
-        showMusicSpectrum: true,
+        mode: 'music',
         isPlaying: false,
         isMusicExpanded: false,
         networkStatus: 'good',
@@ -41,7 +41,7 @@ describe('IslandStatusIndicator', () => {
   it('展开音乐岛时仍保持频谱结构', () => {
     const wrapper = mount(IslandStatusIndicator, {
       props: {
-        showMusicSpectrum: true,
+        mode: 'music',
         isPlaying: true,
         isMusicExpanded: true,
         networkStatus: 'good',
@@ -56,7 +56,7 @@ describe('IslandStatusIndicator', () => {
   it('不展示音乐频谱时显示网络状态灯', () => {
     const wrapper = mount(IslandStatusIndicator, {
       props: {
-        showMusicSpectrum: false,
+        mode: 'network',
         isPlaying: true,
         isMusicExpanded: false,
         networkStatus: 'warning',
@@ -66,5 +66,20 @@ describe('IslandStatusIndicator', () => {
 
     expect(wrapper.find('.status-dot.warning').exists()).toBe(true);
     expect(wrapper.findAll('.bar')).toHaveLength(0);
+  });
+
+  it('Codex 主岛不渲染无关的网络状态点', () => {
+    const wrapper = mount(IslandStatusIndicator, {
+      props: {
+        mode: 'none',
+        isPlaying: false,
+        isMusicExpanded: false,
+        networkStatus: 'good',
+        spectrumData: [],
+      },
+    });
+
+    expect(wrapper.find('.status-indicator').exists()).toBe(false);
+    expect(wrapper.find('.status-dot').exists()).toBe(false);
   });
 });

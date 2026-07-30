@@ -99,6 +99,7 @@ impl Drop for CodexEventReceiver {
 pub async fn start_receiver(
     app_data_dir: &Path,
     queue_capacity: usize,
+    capture_task_summary: bool,
 ) -> Result<(CodexEventReceiver, mpsc::Receiver<CodexBridgeEvent>), ReceiverError> {
     if queue_capacity == 0 {
         return Err(ReceiverError::InvalidQueueCapacity);
@@ -113,6 +114,7 @@ pub async fn start_receiver(
         token: Uuid::new_v4().simple().to_string(),
         process_id: std::process::id(),
         created_at_ms: current_time_ms(),
+        capture_task_summary,
     };
     write_discovery_atomically(&discovery_path, &discovery)?;
 

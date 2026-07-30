@@ -5,7 +5,7 @@ use toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, Val
 
 pub const CODEPULSE_HOOK_MARKER: &str = "CodePulse Codex 状态岛";
 pub const CODEPULSE_HOOK_TIMEOUT_SECONDS: i64 = 3;
-pub const CODEPULSE_HOOK_EVENTS: [&str; 7] = [
+pub const CODEPULSE_HOOK_EVENTS: [&str; 9] = [
     "SessionStart",
     "UserPromptSubmit",
     "PreToolUse",
@@ -13,6 +13,8 @@ pub const CODEPULSE_HOOK_EVENTS: [&str; 7] = [
     "PermissionRequest",
     "Stop",
     "SessionEnd",
+    "PreCompact",
+    "PostCompact",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,10 +68,14 @@ fn apply_toml_mutation(
         .map_err(|error| ConfigError::new(format!("config.toml 解析失败: {error}")))?;
     let hooks = toml_hooks_table(&mut document)?;
 
-    remove_marked_toml_handlers(hooks)?;
-
-    if mutation == HookMutation::InstallOrRepair {
+    if mutation == HookMutation::Uninstall {
+        remove_marked_toml_handlers(hooks)?;
+    } else {
         for event in CODEPULSE_HOOK_EVENTS {
+            if has_valid_toml_handler(hooks, event, bridge_command)? {
+                continue;
+            }
+            remove_marked_toml_handlers_for_event(hooks, event)?;
             let groups = toml_hook_groups(hooks, event)?;
             let mut group = Table::new();
             let mut handlers = Array::new();
@@ -104,10 +110,14 @@ fn apply_json_mutation(
         .ok_or_else(|| ConfigError::new("hooks.json 根节点必须是对象"))?;
     let hooks = hooks_object(root)?;
 
-    remove_marked_json_handlers(hooks)?;
-
-    if mutation == HookMutation::InstallOrRepair {
+    if mutation == HookMutation::Uninstall {
+        remove_marked_json_handlers(hooks)?;
+    } else {
         for event in CODEPULSE_HOOK_EVENTS {
+            if has_valid_json_handler(hooks, event, bridge_command)? {
+                continue;
+            }
+            remove_marked_json_handlers_for_event(hooks, event)?;
             let groups = hooks
                 .entry(event.to_string())
                 .or_insert_with(|| Value::Array(Vec::new()))
@@ -139,32 +149,77 @@ fn hooks_object(root: &mut Map<String, Value>) -> Result<&mut Map<String, Value>
 }
 
 fn remove_marked_json_handlers(hooks: &mut Map<String, Value>) -> Result<(), ConfigError> {
-    for (event, groups) in hooks {
-        let groups = groups
+    let events = hooks.keys().cloned().collect::<Vec<_>>();
+    for event in events {
+        remove_marked_json_handlers_for_event(hooks, &event)?;
+    }
+    Ok(())
+}
+
+fn remove_marked_json_handlers_for_event(
+    hooks: &mut Map<String, Value>,
+    event: &str,
+) -> Result<(), ConfigError> {
+    let Some(groups) = hooks.get_mut(event) else {
+        return Ok(());
+    };
+    let groups = groups
+        .as_array_mut()
+        .ok_or_else(|| ConfigError::new(format!("{event} Hook 必须是数组")))?;
+    let mut group_index = 0;
+
+    while group_index < groups.len() {
+        let group = groups[group_index]
+            .as_object_mut()
+            .ok_or_else(|| ConfigError::new(format!("{event} Hook 分组必须是对象")))?;
+        let handlers = group
+            .get_mut("hooks")
+            .ok_or_else(|| ConfigError::new(format!("{event} Hook 分组缺少 hooks 字段")))?
             .as_array_mut()
-            .ok_or_else(|| ConfigError::new(format!("{event} Hook 必须是数组")))?;
-        let mut group_index = 0;
+            .ok_or_else(|| ConfigError::new(format!("{event} Hook 分组的 hooks 必须是数组")))?;
+        handlers.retain(|handler| !is_codepulse_json_handler(handler));
 
-        while group_index < groups.len() {
-            let group = groups[group_index]
-                .as_object_mut()
-                .ok_or_else(|| ConfigError::new(format!("{event} Hook 分组必须是对象")))?;
-            let handlers = group
-                .get_mut("hooks")
-                .ok_or_else(|| ConfigError::new(format!("{event} Hook 分组缺少 hooks 字段")))?
-                .as_array_mut()
-                .ok_or_else(|| ConfigError::new(format!("{event} Hook 分组的 hooks 必须是数组")))?;
-            handlers.retain(|handler| !is_codepulse_json_handler(handler));
+        if handlers.is_empty() {
+            groups.remove(group_index);
+        } else {
+            group_index += 1;
+        }
+    }
+    Ok(())
+}
 
-            if handlers.is_empty() {
-                groups.remove(group_index);
-            } else {
-                group_index += 1;
+fn has_valid_json_handler(
+    hooks: &Map<String, Value>,
+    event: &str,
+    bridge_command: &str,
+) -> Result<bool, ConfigError> {
+    let Some(groups) = hooks.get(event) else {
+        return Ok(false);
+    };
+    let groups = groups
+        .as_array()
+        .ok_or_else(|| ConfigError::new(format!("{event} Hook 必须是数组")))?;
+    let mut marked = 0;
+    let mut valid = 0;
+    for group in groups {
+        let handlers = group
+            .get("hooks")
+            .and_then(Value::as_array)
+            .ok_or_else(|| ConfigError::new(format!("{event} Hook 分组的 hooks 必须是数组")))?;
+        for handler in handlers {
+            if is_codepulse_json_handler(handler) {
+                marked += 1;
+                if handler.get("type").and_then(Value::as_str) == Some("command")
+                    && handler.get("command").and_then(Value::as_str) == Some(bridge_command)
+                    && handler.get("timeout").and_then(Value::as_i64)
+                        == Some(CODEPULSE_HOOK_TIMEOUT_SECONDS)
+                {
+                    valid += 1;
+                }
             }
         }
     }
-
-    Ok(())
+    Ok(marked == 1 && valid == 1)
 }
 
 fn is_codepulse_json_handler(handler: &Value) -> bool {
@@ -199,46 +254,99 @@ fn toml_hook_groups<'a>(
 }
 
 fn remove_marked_toml_handlers(hooks: &mut Table) -> Result<(), ConfigError> {
-    for event in CODEPULSE_HOOK_EVENTS {
-        let Some(groups) = hooks.get_mut(event) else {
+    let events = hooks.iter().map(|(event, _)| event.to_string()).collect::<Vec<_>>();
+    for event in events {
+        if hooks.get(&event).is_none_or(|groups| groups.as_array_of_tables().is_none()) {
             continue;
-        };
-        let groups = groups
-            .as_array_of_tables_mut()
-            .ok_or_else(|| ConfigError::new(format!("{event} Hook 必须是表数组")))?;
-        let mut group_index = 0;
+        }
+        remove_marked_toml_handlers_for_event(hooks, &event)?;
+    }
+    Ok(())
+}
 
-        while group_index < groups.len() {
-            let group = groups
-                .get_mut(group_index)
-                .ok_or_else(|| ConfigError::new(format!("{event} Hook 分组不存在")))?;
-            let handlers = group
-                .get_mut("hooks")
-                .and_then(Item::as_value_mut)
-                .and_then(TomlValue::as_array_mut)
-                .ok_or_else(|| ConfigError::new(format!("{event} Hook 分组的 hooks 必须是数组")))?;
-            let mut handler_index = 0;
+fn remove_marked_toml_handlers_for_event(
+    hooks: &mut Table,
+    event: &str,
+) -> Result<(), ConfigError> {
+    let Some(groups) = hooks.get_mut(event) else {
+        return Ok(());
+    };
+    let groups = groups
+        .as_array_of_tables_mut()
+        .ok_or_else(|| ConfigError::new(format!("{event} Hook 必须是表数组")))?;
+    let mut group_index = 0;
 
-            while handler_index < handlers.len() {
-                let handler = handlers
-                    .get(handler_index)
-                    .ok_or_else(|| ConfigError::new(format!("{event} Hook 处理器不存在")))?;
-                if is_codepulse_toml_handler(handler) {
-                    handlers.remove(handler_index);
-                } else {
-                    handler_index += 1;
-                }
-            }
+    while group_index < groups.len() {
+        let group = groups
+            .get_mut(group_index)
+            .ok_or_else(|| ConfigError::new(format!("{event} Hook 分组不存在")))?;
+        let handlers = group
+            .get_mut("hooks")
+            .and_then(Item::as_value_mut)
+            .and_then(TomlValue::as_array_mut)
+            .ok_or_else(|| ConfigError::new(format!("{event} Hook 分组的 hooks 必须是数组")))?;
+        let mut handler_index = 0;
 
-            if handlers.is_empty() {
-                groups.remove(group_index);
+        while handler_index < handlers.len() {
+            let handler = handlers
+                .get(handler_index)
+                .ok_or_else(|| ConfigError::new(format!("{event} Hook 处理器不存在")))?;
+            if is_codepulse_toml_handler(handler) {
+                handlers.remove(handler_index);
             } else {
-                group_index += 1;
+                handler_index += 1;
+            }
+        }
+
+        if handlers.is_empty() {
+            groups.remove(group_index);
+        } else {
+            group_index += 1;
+        }
+    }
+    Ok(())
+}
+
+fn has_valid_toml_handler(
+    hooks: &Table,
+    event: &str,
+    bridge_command: &str,
+) -> Result<bool, ConfigError> {
+    let Some(groups) = hooks.get(event) else {
+        return Ok(false);
+    };
+    let groups = groups
+        .as_array_of_tables()
+        .ok_or_else(|| ConfigError::new(format!("{event} Hook 必须是表数组")))?;
+    let mut marked = 0;
+    let mut valid = 0;
+    for group in groups {
+        let handlers = group
+            .get("hooks")
+            .and_then(Item::as_value)
+            .and_then(TomlValue::as_array)
+            .ok_or_else(|| ConfigError::new(format!("{event} Hook 分组的 hooks 必须是数组")))?;
+        for handler in handlers {
+            if is_codepulse_toml_handler(handler) {
+                marked += 1;
+                let handler = handler.as_inline_table();
+                if handler.and_then(|handler| handler.get("type")).and_then(TomlValue::as_str)
+                    == Some("command")
+                    && handler
+                        .and_then(|handler| handler.get("command"))
+                        .and_then(TomlValue::as_str)
+                        == Some(bridge_command)
+                    && handler
+                        .and_then(|handler| handler.get("timeout"))
+                        .and_then(TomlValue::as_integer)
+                        == Some(CODEPULSE_HOOK_TIMEOUT_SECONDS)
+                {
+                    valid += 1;
+                }
             }
         }
     }
-
-    Ok(())
+    Ok(marked == 1 && valid == 1)
 }
 
 fn is_codepulse_toml_handler(handler: &TomlValue) -> bool {

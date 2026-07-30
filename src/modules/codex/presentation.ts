@@ -20,6 +20,11 @@ const RUNNING_PHASE_LABELS: Partial<Record<CodexTaskPhase, string>> = {
   editing: '修改代码',
   running_command: '运行命令',
   running_tests: '运行测试',
+  browsing: '浏览网页',
+  generating: '生成内容',
+  delegating: '分派子任务',
+  waiting: '等待任务',
+  compacting: '整理上下文',
 };
 
 const PHASE_LABELS: Record<CodexTaskPhase, string> = {
@@ -28,6 +33,12 @@ const PHASE_LABELS: Record<CodexTaskPhase, string> = {
   editing: '修改代码',
   running_command: '运行命令',
   running_tests: '运行测试',
+  waiting_input: '等待回答',
+  browsing: '浏览网页',
+  generating: '生成内容',
+  delegating: '分派子任务',
+  waiting: '等待任务',
+  compacting: '整理上下文',
   waiting_approval: '等待授权',
   completed: '任务完成',
   failed: '执行失败',
@@ -40,6 +51,12 @@ export const getCodexSourceLabel = (source: CodexTaskSnapshot['source']) => {
   if (source === 'cli') return 'Codex CLI';
   if (source === 'app') return 'Codex App';
   return 'Codex';
+};
+
+export const getCodexSourceCompactLabel = (source: CodexTaskSnapshot['source']) => {
+  if (source === 'cli') return 'CLI';
+  if (source === 'app') return 'APP';
+  return 'CODEX';
 };
 
 export const getCodexListenerLabel = (status: CodexStatusSnapshot['listenerStatus']) => {
@@ -70,7 +87,7 @@ export const resolveCodexIslandPresentation = (
 
   const phaseLabel = getCodexPhaseLabel(task.phase);
 
-  if (task.phase === 'waiting_approval') {
+  if (task.phase === 'waiting_input' || task.phase === 'waiting_approval') {
     return {
       module: {
         kind: 'agent',

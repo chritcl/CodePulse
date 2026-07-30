@@ -69,7 +69,7 @@ async fn post_json(address: SocketAddr, token: &str, body: &[u8]) -> String {
 #[tokio::test]
 async fn accepts_an_authorized_event_and_publishes_the_receiver_discovery() {
     let directory = TestDirectory::new();
-    let (server, mut receiver) = start_receiver(&directory.0, 2).await.unwrap();
+    let (server, mut receiver) = start_receiver(&directory.0, 2, false).await.unwrap();
     let event = valid_event("event-1");
     let body = serde_json::to_vec(&event).unwrap();
 
@@ -88,7 +88,7 @@ async fn accepts_an_authorized_event_and_publishes_the_receiver_discovery() {
 #[tokio::test]
 async fn rejects_an_event_with_a_wrong_token_before_it_reaches_the_queue() {
     let directory = TestDirectory::new();
-    let (server, mut receiver) = start_receiver(&directory.0, 1).await.unwrap();
+    let (server, mut receiver) = start_receiver(&directory.0, 1, false).await.unwrap();
     let body = serde_json::to_vec(&valid_event("event-1")).unwrap();
 
     let response = post_json(server.address(), "wrong-token", &body).await;
@@ -102,7 +102,7 @@ async fn rejects_an_event_with_a_wrong_token_before_it_reaches_the_queue() {
 #[tokio::test]
 async fn rejects_an_event_body_that_exceeds_the_limit() {
     let directory = TestDirectory::new();
-    let (server, _receiver) = start_receiver(&directory.0, 1).await.unwrap();
+    let (server, _receiver) = start_receiver(&directory.0, 1, false).await.unwrap();
     let body = vec![b'x'; MAX_REQUEST_BODY_BYTES + 1];
     let token = read_discovery(server.discovery_path()).unwrap().token;
 
@@ -116,7 +116,7 @@ async fn rejects_an_event_body_that_exceeds_the_limit() {
 #[tokio::test]
 async fn rejects_an_invalid_protocol_event() {
     let directory = TestDirectory::new();
-    let (server, _receiver) = start_receiver(&directory.0, 1).await.unwrap();
+    let (server, _receiver) = start_receiver(&directory.0, 1, false).await.unwrap();
     let mut event = valid_event("event-1");
     event.version = PROTOCOL_VERSION + 1;
     let body = serde_json::to_vec(&event).unwrap();
@@ -132,7 +132,7 @@ async fn rejects_an_invalid_protocol_event() {
 #[tokio::test]
 async fn returns_service_unavailable_when_the_event_queue_is_full() {
     let directory = TestDirectory::new();
-    let (server, _receiver) = start_receiver(&directory.0, 1).await.unwrap();
+    let (server, _receiver) = start_receiver(&directory.0, 1, false).await.unwrap();
     let token = read_discovery(server.discovery_path()).unwrap().token;
     let first_body = serde_json::to_vec(&valid_event("event-1")).unwrap();
     let second_body = serde_json::to_vec(&valid_event("event-2")).unwrap();
@@ -149,7 +149,7 @@ async fn returns_service_unavailable_when_the_event_queue_is_full() {
 #[tokio::test]
 async fn stops_accepting_connections_after_it_is_stopped() {
     let directory = TestDirectory::new();
-    let (server, _receiver) = start_receiver(&directory.0, 1).await.unwrap();
+    let (server, _receiver) = start_receiver(&directory.0, 1, false).await.unwrap();
     let address = server.address();
 
     server.stop().await;
