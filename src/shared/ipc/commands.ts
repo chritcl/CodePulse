@@ -17,6 +17,11 @@ import type {
   WindowBoundsPayload,
   AppSettings,
   AppSnapshot,
+  CodexStatusSnapshot,
+  CodexIntegrationAction,
+  CodexIntegrationActionResult,
+  CodexIntegrationPreview,
+  CodexIntegrationStatus,
 } from './contracts';
 
 // ============================================================
@@ -154,6 +159,32 @@ export const settingsCommands = {
 };
 
 // ============================================================
+// Codex 状态命令
+// ============================================================
+
+/** Codex 状态命令 */
+export const codexCommands = {
+  /** 获取 Rust 维护的最新 Codex 状态快照 */
+  getStatusSnapshot: (): Promise<CodexStatusSnapshot> => invoke('get_codex_status_snapshot'),
+
+  /** 清除指定会话的失败任务 */
+  clearFailedTask: (sessionId: string): Promise<boolean> =>
+    invoke('clear_failed_codex_task', { sessionId }),
+
+  /** 只读检查 Codex Hook 集成状态 */
+  getIntegrationStatus: (): Promise<CodexIntegrationStatus> =>
+    invoke('get_codex_integration_status'),
+
+  /** 生成不写盘的 Codex 集成动作预览 */
+  previewIntegration: (action: CodexIntegrationAction): Promise<CodexIntegrationPreview> =>
+    invoke('preview_codex_integration', { action }),
+
+  /** 确认执行已生成的 Codex 集成预览 */
+  confirmIntegration: (previewId: string): Promise<CodexIntegrationActionResult> =>
+    invoke('confirm_codex_integration', { previewId }),
+};
+
+// ============================================================
 // 导出所有命令
 // ============================================================
 
@@ -165,4 +196,5 @@ export const commands = {
   notification: notificationCommands,
   system: systemCommands,
   settings: settingsCommands,
+  codex: codexCommands,
 } as const;

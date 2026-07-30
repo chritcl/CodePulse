@@ -75,11 +75,12 @@
       />
 
       <template v-else-if="display === 'agent'">
-        <div v-if="isDetail" class="detail-panel placeholder-detail">
-          <div class="placeholder-title">Agent 状态</div>
-          <div class="placeholder-subtitle">Agent 详情能力待接入</div>
-        </div>
-        <div v-else class="compact-placeholder">Agent 正在待接入</div>
+        <CodexContent
+          :snapshot="codex"
+          :mode="mode"
+          :show-operation-summary="showCodexOperationSummary"
+          @clear-failed="$emit('clear-failed', $event)"
+        />
       </template>
 
       <template v-else-if="display === 'wechat'">
@@ -131,6 +132,8 @@ import HardwareContent from './HardwareContent.vue';
 import NotificationContent from './NotificationContent.vue';
 import SystemToastContent from './SystemToastContent.vue';
 import type { SystemToastType } from '@/shared/ipc/contracts';
+import type { CodexStatusSnapshot } from '@/shared/ipc/contracts';
+import CodexContent from './CodexContent.vue';
 
 interface NetworkDisplayState {
   uploadSpeed: string;
@@ -181,11 +184,15 @@ interface Props {
   music: MusicDisplayState;
   notification: NotificationDisplayState;
   systemToast: SystemToastDisplayState;
+  codex: CodexStatusSnapshot;
+  showCodexOperationSummary?: boolean;
   innerEnterTransition: (el: Element, done: () => void) => void;
   innerLeaveTransition: (el: Element, done: () => void) => void;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  showCodexOperationSummary: true,
+});
 
 defineEmits<{
   'msg-click': [];
@@ -193,6 +200,7 @@ defineEmits<{
   'prev-track': [];
   'next-track': [];
   'seek-to': [positionMs: number];
+  'clear-failed': [sessionId: string];
 }>();
 
 const isDetail = computed(() => props.mode === 'detail');

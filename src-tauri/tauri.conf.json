@@ -4,9 +4,13 @@
   "version": "2.3.8",
   "identifier": "com.ryen.nsd",
   "build": {
+    "runner": {
+      "cmd": "cargo",
+      "args": ["--bin", "netspeed-dynamic"]
+    },
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm run build && pnpm run build:codex-bridge",
     "frontendDist": "../dist"
   },
   "app": {
@@ -45,6 +49,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "target/release/codepulse-codex-bridge.exe": "codepulse-codex-bridge.exe"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

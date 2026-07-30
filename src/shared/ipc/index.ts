@@ -61,6 +61,22 @@ export type {
   ModuleToggles,
   AppSettings,
   AppSnapshot,
+
+  // Codex 状态
+  CodexEventSource,
+  CodexTaskPhase,
+  CodexListenerStatus,
+  CodexTaskSnapshot,
+  CodexStatusSnapshot,
+  CodexConfigRepresentation,
+  CodexGlobalHooksStatus,
+  CodePulseHookStatus,
+  CodexBridgeStatus,
+  CodexIntegrationAction,
+  CodexIntegrationStatus,
+  CodexIntegrationPreview,
+  CodexIntegrationActionResult,
+  CodexDisplayPreferencesPayload,
 } from './contracts';
 
 // 导出事件常量
@@ -92,6 +108,9 @@ export {
   SNAPSHOT_UPDATED,
   ISLAND_VISIBILITY_CHANGED,
   ISLAND_DISPLAY_CHANGED,
+  CODEX_SNAPSHOT_UPDATED,
+  CODEX_INTEGRATION_UPDATED,
+  CODEX_DISPLAY_PREFERENCES_UPDATED,
 
   // 聚合对象
   ALL_EVENTS,
@@ -109,6 +128,7 @@ export {
   notificationCommands,
   systemCommands,
   settingsCommands,
+  codexCommands,
 
   // 聚合对象
   commands,

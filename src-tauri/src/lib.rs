@@ -9,16 +9,23 @@
  * 5. 窗口事件处理
  */
 mod app;
+pub mod codex;
 mod commands;
 mod error;
 pub mod lyrics;
 
+use std::sync::Arc;
+
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::MacosLauncher;
 
 use app::AppState;
+use codex::{
+    integration::resolve_bridge_source, CodexIntegration, CodexRuntime, IntegrationPaths,
+    CODEX_SNAPSHOT_UPDATED_EVENT, DEFAULT_EVENT_CACHE_CAPACITY,
+};
 use commands::*;
 use lyrics::LyricsService;
 
@@ -59,6 +66,13 @@ pub fn run() {
             get_app_snapshot,
             update_settings,
             set_island_visible,
+            // Codex 状态命令
+            get_codex_status_snapshot,
+            clear_failed_codex_task,
+            // Codex 集成设置命令
+            get_codex_integration_status,
+            preview_codex_integration,
+            confirm_codex_integration,
         ])
         .setup(initialize_app)
         .run(tauri::generate_context!())
@@ -67,8 +81,17 @@ pub fn run() {
 
 /// 初始化歌词服务、后台监控、窗口和系统托盘。
 fn initialize_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let lyrics_dir = app.path().app_data_dir()?.join("lyrics");
+    let app_data_dir = app.path().app_data_dir()?;
+    let lyrics_dir = app_data_dir.join("lyrics");
     app.manage(LyricsService::new(lyrics_dir)?);
+    let resource_dir = app.path().resource_dir().ok();
+    let bridge_source = resolve_bridge_source(resource_dir.as_deref());
+    let integration = CodexIntegration::new(IntegrationPaths::from_current_user(
+        app_data_dir.clone(),
+        bridge_source,
+    )?);
+    initialize_codex_runtime(app, &app_data_dir, &integration);
+    app.manage(integration);
 
     start_audio_spectrum_monitor();
     start_system_event_monitor(app.handle().clone());
@@ -77,6 +100,24 @@ fn initialize_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>
     register_main_window_close_handler(app);
     register_widget_window_close_handler(app);
     Ok(())
+}
+
+fn initialize_codex_runtime(
+    app: &tauri::App,
+    app_data_dir: &std::path::Path,
+    integration: &CodexIntegration,
+) {
+    let app_handle = app.handle().clone();
+    let runtime = CodexRuntime::with_publisher(
+        DEFAULT_EVENT_CACHE_CAPACITY,
+        Arc::new(move |snapshot| {
+            let _ = app_handle.emit(CODEX_SNAPSHOT_UPDATED_EVENT, snapshot);
+        }),
+    );
+    if integration.should_start_listener() {
+        let _ = tauri::async_runtime::block_on(runtime.start(app_data_dir));
+    }
+    app.manage(runtime);
 }
 
 /// 非自启动时展示并聚焦主窗口。

@@ -11,14 +11,7 @@ export type IslandDisplayKind =
 export type IslandInterruptLevel = 'none' | 'soft' | 'strong';
 
 export type IslandModuleVisualStatus =
-  | 'normal'
-  | 'info'
-  | 'running'
-  | 'success'
-  | 'warning'
-  | 'error'
-  | 'unread'
-  | 'paused';
+  'normal' | 'info' | 'running' | 'success' | 'warning' | 'error' | 'unread' | 'paused';
 
 export type IslandLayoutReason =
   | 'strong-interrupt'
@@ -107,7 +100,7 @@ const DETAIL_SIZES: Partial<Record<IslandDisplayKind, { width: number; detailHei
   notification: { width: 380, detailHeight: 112 },
   hardware: { width: 316, detailHeight: 92 },
   network: { width: 316, detailHeight: 92 },
-  agent: { width: 340, detailHeight: 92 },
+  agent: { width: 390, detailHeight: 204 },
   wechat: { width: 340, detailHeight: 92 },
   update: { width: 340, detailHeight: 92 },
 };
@@ -306,7 +299,9 @@ export function resolveIslandLayout(input: IslandLayoutInput): IslandLayoutState
 
   const main = mainModule?.kind ?? FALLBACK_KIND;
   const safeExpandedKind =
-    input.expandedKind === main && input.expandedKind !== 'system-toast' ? input.expandedKind : null;
+    input.expandedKind === main && input.expandedKind !== 'system-toast'
+      ? input.expandedKind
+      : null;
   const { satellites, overflowCount } = resolveSatellites(
     activeModules,
     main,

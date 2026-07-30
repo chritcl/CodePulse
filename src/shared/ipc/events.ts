@@ -84,6 +84,15 @@ export const ISLAND_VISIBILITY_CHANGED = 'app.island.visibility';
 /** 灵动岛展示模式已变更 */
 export const ISLAND_DISPLAY_CHANGED = 'island.display.changed';
 
+/** Codex 状态快照已更新 */
+export const CODEX_SNAPSHOT_UPDATED = 'codex-snapshot-updated';
+
+/** Codex Hook 集成状态已更新 */
+export const CODEX_INTEGRATION_UPDATED = 'codex-integration-updated';
+
+/** Codex 显示偏好已更新 */
+export const CODEX_DISPLAY_PREFERENCES_UPDATED = 'codex-display-preferences-updated';
+
 // ============================================================
 // 事件名称映射类型 (用于类型检查)
 // ============================================================
@@ -118,6 +127,9 @@ export const ALL_EVENTS = {
   SNAPSHOT_UPDATED,
   ISLAND_VISIBILITY_CHANGED,
   ISLAND_DISPLAY_CHANGED,
+  CODEX_SNAPSHOT_UPDATED,
+  CODEX_INTEGRATION_UPDATED,
+  CODEX_DISPLAY_PREFERENCES_UPDATED,
 } as const;
 
 /** 事件名称类型 */

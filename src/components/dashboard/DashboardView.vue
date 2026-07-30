@@ -30,8 +30,11 @@
       </template>
 
       <template v-else>
-        <!-- 灵动岛设置面板 -->
-        <IslandSettingsPanel />
+        <div class="settings-stack">
+          <!-- 灵动岛设置面板 -->
+          <IslandSettingsPanel />
+          <CodexIntegrationSettings />
+        </div>
       </template>
     </div>
 
@@ -73,6 +76,7 @@ import RealtimeNetworkCard from './RealtimeNetworkCard.vue';
 import TrafficStatisticsCard from './TrafficStatisticsCard.vue';
 import GeneralSettingsCard from './GeneralSettingsCard.vue';
 import IslandSettingsPanel from './IslandSettingsPanel.vue';
+import CodexIntegrationSettings from './CodexIntegrationSettings.vue';
 import UpdateChecker from './UpdateChecker.vue';
 import AppDialog from './AppDialog.vue';
 
@@ -183,6 +187,12 @@ onUnmounted(() => {
 
 .main-content.dynamicset-layout {
   padding: 12px;
+}
+
+.settings-stack {
+  width: 100%;
+  display: grid;
+  gap: 12px;
 }
 
 .panel-footer {

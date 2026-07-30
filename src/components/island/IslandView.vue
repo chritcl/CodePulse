@@ -73,6 +73,8 @@
         text: sysToastText,
         type: sysToastType,
       }"
+      :codex="codexStatus.snapshot.value"
+      :show-codex-operation-summary="showCodexOperationSummary"
       :inner-enter-transition="animation.onInnerEnter"
       :inner-leave-transition="animation.onInnerLeave"
       @msg-click="handleMsgClick"
@@ -80,6 +82,7 @@
       @prev-track="prevTrack"
       @next-track="nextTrack"
       @seek-to="seekMusic"
+      @clear-failed="clearFailedCodexTask"
     />
 
     <template v-if="islandLayout.expandedKind === activeDisplay" #detail>
@@ -122,6 +125,8 @@
           text: sysToastText,
           type: sysToastType,
         }"
+        :codex="codexStatus.snapshot.value"
+        :show-codex-operation-summary="showCodexOperationSummary"
         :inner-enter-transition="animation.onInnerEnter"
         :inner-leave-transition="animation.onInnerLeave"
         @msg-click="handleMsgClick"
@@ -129,6 +134,7 @@
         @prev-track="prevTrack"
         @next-track="nextTrack"
         @seek-to="seekMusic"
+        @clear-failed="clearFailedCodexTask"
       />
     </template>
   </IslandShell>
@@ -149,6 +155,8 @@ import {
   usePlaybackTimeline,
   useTrackCover,
   useTrackLyrics,
+  useCodexDisplayPreferences,
+  useCodexStatus,
 } from '@/composables';
 import {
   resolveIslandLayout,
@@ -169,6 +177,8 @@ import {
   resolveMusicStartupState,
   syncMusicActivity,
 } from '@/modules/island/musicActivity';
+import { resolveCodexIslandPresentation } from '@/modules/codex/presentation';
+import { codexCommands } from '@/shared/ipc/commands';
 import { hasStorageValue, readBoolean, writeBoolean } from '@/shared/utils/storage';
 import { createEventListenerRegistry } from '@/shared/utils/eventListenerRegistry';
 import type { SystemToastType, TargetPlayerPayload } from '@/shared/ipc/contracts';
@@ -219,6 +229,10 @@ const playbackTimeline = usePlaybackTimeline();
 const musicSession = useMusicPlaybackSession({ timeline: playbackTimeline });
 const trackLyrics = useTrackLyrics({ positionMs: playbackTimeline.positionMs });
 const trackCover = useTrackCover();
+const codexStatus = useCodexStatus();
+const codexDisplayPreferences = useCodexDisplayPreferences();
+const codexIdleResident = codexDisplayPreferences.idleResident;
+const showCodexOperationSummary = codexDisplayPreferences.showOperationSummary;
 const eventListeners = createEventListenerRegistry();
 const musicPresentationIdentity = createMusicPresentationIdentityTracker();
 
@@ -370,9 +384,16 @@ const hardwareVisualStatus = computed<IslandModuleVisualStatus>(() => {
   return 'normal';
 });
 
+/** Codex 模块展示状态由 Rust 权威快照派生 */
+const codexIslandPresentation = computed(() =>
+  resolveCodexIslandPresentation(codexStatus.snapshot.value, {
+    idleResident: codexIdleResident.value,
+  })
+);
+
 /** 当前活跃模块快照 */
 const islandModules = computed<IslandModuleSnapshot[]>(() => [
-  { kind: 'agent', active: false },
+  codexIslandPresentation.value.module,
   { kind: 'wechat', active: false },
   {
     kind: 'notification',
@@ -739,6 +760,15 @@ const togglePlay = () => controlMusic('play_pause');
 const prevTrack = () => controlMusic('prev');
 const nextTrack = () => controlMusic('next');
 
+/** 请求 Rust 清除已确认失败的会话 */
+const clearFailedCodexTask = async (sessionId: string) => {
+  try {
+    await codexCommands.clearFailedTask(sessionId);
+  } catch (error) {
+    if (!disposed) console.error('清除 Codex 失败任务失败:', error);
+  }
+};
+
 /** 跳转音乐播放位置 */
 const seekMusic = async (positionMs: number) => {
   if (disposed || isMusicSeekPending.value || !musicProgressVisible.value) return;
@@ -984,6 +1014,8 @@ const preventDocumentContextMenu = (event: Event) => event.preventDefault();
 
 onMounted(async () => {
   if (disposed) return;
+  void codexStatus.start();
+  void codexDisplayPreferences.start();
   window.addEventListener('blur', collapseExpanded);
   document.addEventListener('contextmenu', preventDocumentContextMenu, true);
   layoutClockTimer = window.setInterval(refreshLayoutNow, 500);
@@ -1242,6 +1274,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   disposed = true;
+  codexStatus.dispose();
+  codexDisplayPreferences.dispose();
   trackCover.dispose();
   window.removeEventListener('blur', collapseExpanded);
   document.removeEventListener('contextmenu', preventDocumentContextMenu, true);

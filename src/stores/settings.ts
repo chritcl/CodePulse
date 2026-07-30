@@ -61,6 +61,12 @@ export const useSettingsStore = defineStore('settings', () => {
   /** 轮换模式开关 */
   const enableRotation = ref(readBoolean('nsd_rotation_mode'));
 
+  /** Codex 空闲时常驻灵动岛 */
+  const codexIdleResident = ref(readBoolean('nsd_codex_idle_resident'));
+
+  /** 显示 Codex 脱敏操作摘要 */
+  const showCodexOperationSummary = ref(readBoolean('nsd_codex_show_operation_summary', true));
+
   // ============================================================
   // 持久化监听
   // ============================================================
@@ -113,6 +119,16 @@ export const useSettingsStore = defineStore('settings', () => {
   /** 轮换模式变更时持久化 */
   watch(enableRotation, (val) => {
     writeBoolean('nsd_rotation_mode', val);
+  });
+
+  /** Codex 空闲常驻变更时持久化 */
+  watch(codexIdleResident, (val) => {
+    writeBoolean('nsd_codex_idle_resident', val);
+  });
+
+  /** Codex 操作摘要显示偏好变更时持久化 */
+  watch(showCodexOperationSummary, (val) => {
+    writeBoolean('nsd_codex_show_operation_summary', val);
   });
 
   // ============================================================
@@ -169,6 +185,16 @@ export const useSettingsStore = defineStore('settings', () => {
     enableRotation.value = !enableRotation.value;
   };
 
+  /** 设置 Codex 空闲常驻 */
+  const setCodexIdleResident = (value: boolean) => {
+    codexIdleResident.value = value;
+  };
+
+  /** 设置 Codex 脱敏操作摘要显示 */
+  const setShowCodexOperationSummary = (value: boolean) => {
+    showCodexOperationSummary.value = value;
+  };
+
   /** 设置自启动状态 */
   const setAutoStart = (value: boolean) => {
     autoStart.value = value;
@@ -191,6 +217,8 @@ export const useSettingsStore = defineStore('settings', () => {
     enableHardwareMon,
     msgModeEnabled,
     enableRotation,
+    codexIdleResident,
+    showCodexOperationSummary,
 
     // 方法
     setThemeMode,
@@ -203,6 +231,8 @@ export const useSettingsStore = defineStore('settings', () => {
     toggleHardwareMon,
     toggleMsgMode,
     toggleRotation,
+    setCodexIdleResident,
+    setShowCodexOperationSummary,
     setAutoStart,
   };
 });

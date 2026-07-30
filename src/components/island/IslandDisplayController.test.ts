@@ -1,8 +1,37 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
+import type { CodexStatusSnapshot } from '@/shared/ipc/contracts';
 import IslandDisplayController from './IslandDisplayController.vue';
 
 const noopTransition = (_el: Element, done: () => void) => done();
+
+const codexSnapshot: CodexStatusSnapshot = {
+  revision: 3,
+  generatedAtMs: 1_784_001_234_567,
+  tasks: [
+    {
+      sessionId: 'session-1',
+      source: 'cli',
+      phase: 'running_tests',
+      projectName: 'CodePulse',
+      taskSummary: '验证状态岛',
+      operationSummary: 'pnpm run test',
+      lastActivityAtMs: 1_784_001_234_500,
+    },
+  ],
+  representativeTask: {
+    sessionId: 'session-1',
+    source: 'cli',
+    phase: 'running_tests',
+    projectName: 'CodePulse',
+    taskSummary: '验证状态岛',
+    operationSummary: 'pnpm run test',
+    lastActivityAtMs: 1_784_001_234_500,
+  },
+  hasWaitingApproval: false,
+  hasFailedTask: false,
+  listenerStatus: 'running',
+};
 
 const baseProps = {
   display: 'network' as const,
@@ -43,6 +72,7 @@ const baseProps = {
     text: '提示',
     type: 'app' as const,
   },
+  codex: codexSnapshot,
   innerEnterTransition: noopTransition,
   innerLeaveTransition: noopTransition,
 };
@@ -135,5 +165,30 @@ describe('IslandDisplayController', () => {
     await slider.trigger('change');
 
     expect(wrapper.emitted('seek-to')).toEqual([[42_000]]);
+  });
+
+  it('Agent 模块渲染真实的 Codex 紧凑态内容', () => {
+    const wrapper = mount(IslandDisplayController, {
+      props: {
+        ...baseProps,
+        display: 'agent',
+      },
+    });
+
+    expect(wrapper.get('.codex-compact-phase').text()).toBe('运行测试');
+    expect(wrapper.text()).toContain('CodePulse');
+  });
+
+  it('Agent 模块将脱敏操作摘要显示偏好透传给详情内容', () => {
+    const wrapper = mount(IslandDisplayController, {
+      props: {
+        ...baseProps,
+        display: 'agent',
+        mode: 'detail',
+        showCodexOperationSummary: false,
+      },
+    });
+
+    expect(wrapper.find('.codex-task-operation').exists()).toBe(false);
   });
 });

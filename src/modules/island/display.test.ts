@@ -52,11 +52,7 @@ describe('resolveIslandLayout', () => {
     });
 
     expect(layout.main).toBe('music');
-    expect(layout.satellites.map((item) => item.kind)).toEqual([
-      'wechat',
-      'agent',
-      'notification',
-    ]);
+    expect(layout.satellites.map((item) => item.kind)).toEqual(['wechat', 'agent', 'notification']);
     expect(layout.overflowCount).toBe(2);
   });
 
@@ -65,7 +61,12 @@ describe('resolveIslandLayout', () => {
       modules: [
         moduleOf({ kind: 'network', active: true }),
         moduleOf({ kind: 'music', active: true, status: 'running' }),
-        moduleOf({ kind: 'system-toast', active: true, interrupt: 'soft', interruptUntil: now + 2_000 }),
+        moduleOf({
+          kind: 'system-toast',
+          active: true,
+          interrupt: 'soft',
+          interruptUntil: now + 2_000,
+        }),
       ],
       stableMainKind: 'music',
       now,
@@ -265,5 +266,20 @@ describe('resolveIslandLayout', () => {
 
     expect(layout.main).toBe('notification');
     expect(layout.size).toEqual({ width: 380, height: 162 });
+  });
+
+  it('Codex Agent 展开态为会话列表与详情预留足够空间', () => {
+    const layout = resolveIslandLayout({
+      modules: [
+        moduleOf({ kind: 'network', active: true }),
+        moduleOf({ kind: 'agent', active: true, status: 'running' }),
+      ],
+      stableMainKind: 'agent',
+      expandedKind: 'agent',
+      now,
+    });
+
+    expect(layout.main).toBe('agent');
+    expect(layout.size).toEqual({ width: 390, height: 254 });
   });
 });

@@ -1,4 +1,6 @@
 pub mod audio_spectrum_commands;
+pub mod codex_commands;
+pub mod codex_integration_commands;
 /**
  * Tauri 命令模块
  *
@@ -16,6 +18,8 @@ pub mod window_commands;
 
 // 重新导出所有命令，方便在 lib.rs 中注册
 pub use audio_spectrum_commands::*;
+pub use codex_commands::*;
+pub use codex_integration_commands::*;
 pub use lyrics_commands::*;
 pub use media_commands::*;
 pub use media_session_commands::*;
