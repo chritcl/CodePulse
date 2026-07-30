@@ -61,6 +61,9 @@ export const useSettingsStore = defineStore('settings', () => {
   /** 轮换模式开关 */
   const enableRotation = ref(readBoolean('nsd_rotation_mode'));
 
+  /** 弹簧动画开关 */
+  const enableSpringAnimation = ref(readBoolean('nsd_spring_animation', true));
+
   /** Codex 空闲时常驻灵动岛 */
   const codexIdleResident = ref(readBoolean('nsd_codex_idle_resident'));
 
@@ -122,6 +125,11 @@ export const useSettingsStore = defineStore('settings', () => {
   /** 轮换模式变更时持久化 */
   watch(enableRotation, (val) => {
     writeBoolean('nsd_rotation_mode', val);
+  });
+
+  /** 弹簧动画变更时持久化 */
+  watch(enableSpringAnimation, (val) => {
+    writeBoolean('nsd_spring_animation', val);
   });
 
   /** Codex 空闲常驻变更时持久化 */
@@ -230,6 +238,7 @@ export const useSettingsStore = defineStore('settings', () => {
     enableHardwareMon,
     msgModeEnabled,
     enableRotation,
+    enableSpringAnimation,
     codexIdleResident,
     showCodexOperationSummary,
     showCodexTaskSummary,

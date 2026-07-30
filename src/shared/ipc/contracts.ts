@@ -75,6 +75,11 @@ export interface IslandVisibilityPayload {
   show: boolean;
 }
 
+/** 弹簧动画 */
+export interface SpringAnimationPayload {
+  enabled: boolean;
+}
+
 // ============================================================
 // 媒体控制
 // ============================================================
@@ -218,11 +223,12 @@ export type AudioSpectrumData = [number, number, number, number, number];
 
 /** 灵动岛动画参数 */
 export interface IslandAnimationPayload {
-  targetX: number;
-  targetY: number;
+  startWidth: number;
+  startHeight: number;
   targetWidth: number;
   targetHeight: number;
-  duration?: number;
+  isPinned: boolean;
+  durationMs: number;
 }
 
 // ============================================================

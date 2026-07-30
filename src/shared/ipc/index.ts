@@ -22,6 +22,7 @@ export type {
   HardwareMonPayload,
   MusicCtlPayload,
   IslandVisibilityPayload,
+  SpringAnimationPayload,
 
   // 媒体控制
   MediaAction,
@@ -90,6 +91,7 @@ export {
   ROTATION_MODE,
   HARDWARE_MON,
   MUSIC_CTL,
+  SPRING_ANIMATION,
 
   // 灵动岛状态
   ISLAND_STATUS_SYNC,

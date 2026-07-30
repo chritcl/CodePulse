@@ -184,9 +184,14 @@ import {
 } from '@/modules/island/musicActivity';
 import { resolveCodexIslandPresentation } from '@/modules/codex/presentation';
 import { codexCommands } from '@/shared/ipc/commands';
+import { SPRING_ANIMATION } from '@/shared/ipc/events';
 import { hasStorageValue, readBoolean, writeBoolean } from '@/shared/utils/storage';
 import { createEventListenerRegistry } from '@/shared/utils/eventListenerRegistry';
-import type { SystemToastType, TargetPlayerPayload } from '@/shared/ipc/contracts';
+import type {
+  SpringAnimationPayload,
+  SystemToastType,
+  TargetPlayerPayload,
+} from '@/shared/ipc/contracts';
 import { useIslandContextMenu } from './IslandContextMenu';
 
 import IslandShell from './IslandShell.vue';
@@ -225,8 +230,9 @@ interface IslandShellExpose {
 // 组合式函数
 // ============================================================
 
-const islandWindow = useIslandWindow();
-const animation = useIslandAnimation();
+const isSpringAnimationEnabled = ref(readBoolean('nsd_spring_animation', true));
+const islandWindow = useIslandWindow({ springEnabled: isSpringAnimationEnabled });
+const animation = useIslandAnimation({ springEnabled: isSpringAnimationEnabled });
 const drag = useIslandDrag({
   onDragStart: handleDragStart,
   onDragEnd: handleDragEnd,
@@ -529,7 +535,11 @@ const refreshLayoutNow = () => {
 };
 
 /** 收起当前模块详情 */
-const collapseExpanded = () => {
+const collapseExpanded = (cancelAnimations = true) => {
+  if (cancelAnimations) {
+    interactionAnimationId += 1;
+    animation.cancelInteractionAnimations();
+  }
   expandedKind.value = null;
   expandedCollapse.cancelScheduledCollapse();
 };
@@ -818,10 +828,10 @@ const handleSatelliteSelect = async (kind: IslandDisplayKind, event: MouseEvent)
     selectedButton?.getBoundingClientRect() ?? shell?.getSatelliteRect(kind) ?? null;
   const previousMainRect = shell?.getMainRect() ?? null;
 
-  await animation.playPressSpring(selectedButton, { scale: 0.88 });
+  await animation.playPress(selectedButton);
   if (animationId !== interactionAnimationId) return;
 
-  collapseExpanded();
+  collapseExpanded(false);
   manualFocusKind.value = kind;
   manualFocusUntil.value = Date.now() + USER_FOCUS_PROTECT_MS;
   stableMainKind.value = kind;
@@ -849,11 +859,13 @@ const handleMainClick = async (event: MouseEvent) => {
   if (expandedKind.value === activeDisplay.value) return;
 
   const animationId = ++interactionAnimationId;
-  await animation.playPressSpring(islandShellRef.value?.getMainElement() ?? null);
+  const mainElement = islandShellRef.value?.getMainElement() ?? null;
+  await animation.playPress(mainElement);
   if (animationId !== interactionAnimationId) return;
 
   expandedKind.value = activeDisplay.value;
   refreshLayoutNow();
+  void animation.playRelease(mainElement);
 };
 
 /** 处理鼠标离开 */
@@ -869,6 +881,8 @@ const handleMouseEnter = () => {
 
 /** 拖拽开始时清除自动收起并暂停窗口尺寸动画 */
 function handleDragStart() {
+  interactionAnimationId += 1;
+  animation.cancelInteractionAnimations();
   expandedCollapse.handleDragStart();
   islandWindow.suspendSizeAnimation();
 }
@@ -1068,6 +1082,12 @@ onMounted(async () => {
 
   await eventListeners.register<{ theme: string }>('control-island-theme', (event) => {
     islandWindow.setTheme(event.payload.theme);
+  });
+  if (disposed) return;
+
+  await eventListeners.register<SpringAnimationPayload>(SPRING_ANIMATION, (event) => {
+    isSpringAnimationEnabled.value = event.payload.enabled;
+    animation.cancelInteractionAnimations();
   });
   if (disposed) return;
 

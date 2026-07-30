@@ -58,11 +58,10 @@ fn resolve_drag_target_bounds(
     }
 }
 
-/// 将弹簧进度折回起终点之间，避免窗口尺寸越过目标值
-fn bounded_spring_progress(elapsed: f64, freq: f64, decay: f64) -> f64 {
-    let progress =
-        1.0 - (freq * elapsed * 2.0 * std::f64::consts::PI).cos() * (-decay * elapsed).exp();
-    (1.0 - (1.0 - progress).abs()).clamp(0.0, 1.0)
+/// 提供端点速度和加速度均为零的五次平滑曲线
+fn smootherstep(progress: f64) -> f64 {
+    let value = progress.clamp(0.0, 1.0);
+    value * value * value * (value * (value * 6.0 - 15.0) + 10.0)
 }
 
 /// 检查灵动岛是否可见
@@ -330,6 +329,7 @@ pub async fn start_island_animation(
     target_width: f64,
     target_height: f64,
     is_pinned: bool,
+    duration_ms: u64,
 ) -> Result<(), String> {
     if ISLAND_DRAGGING.load(Ordering::SeqCst) {
         return Ok(());
@@ -389,9 +389,7 @@ pub async fn start_island_animation(
 
             std::thread::spawn(move || {
                 let start_time = std::time::Instant::now();
-                let duration = std::time::Duration::from_millis(400);
-                let freq = 2.4;
-                let decay = 12.0;
+                let duration = std::time::Duration::from_millis(duration_ms.clamp(80, 600));
 
                 while start_time.elapsed() < duration {
                     std::thread::sleep(std::time::Duration::from_millis(8));
@@ -404,15 +402,15 @@ pub async fn start_island_animation(
                     }
 
                     let elapsed = start_time.elapsed().as_secs_f64();
-                    let progress = elapsed / 0.4;
+                    let progress = elapsed / duration.as_secs_f64();
                     if progress >= 1.0 {
                         break;
                     }
 
-                    // 透明窗口必须保留最终内容尺寸，因此把越界反弹折回安全区间。
-                    let spring = bounded_spring_progress(elapsed, freq, decay);
-                    let current_w = start_width + (target_width - start_width) * spring;
-                    let current_h = start_height + (target_height - start_height) * spring;
+                    // 窗口边界只做无过冲平滑过渡，明显回弹由 WebView 合成层负责。
+                    let eased = smootherstep(progress);
+                    let current_w = start_width + (target_width - start_width) * eased;
+                    let current_h = start_height + (target_height - start_height) * eased;
 
                     let phys_window_w = (current_w * scale_factor).round() as i32;
                     let phys_window_h = (current_h * scale_factor).round() as i32;
@@ -497,27 +495,20 @@ pub async fn start_island_animation(
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_spring_progress, cancel_active_animation, resolve_drag_target_bounds, AnchorState,
+        cancel_active_animation, resolve_drag_target_bounds, smootherstep, AnchorState,
         ANIMATION_ANCHOR, ANIMATION_ID,
     };
     use std::sync::atomic::Ordering;
 
     #[test]
-    fn 弹簧进度始终位于起终点之间() {
-        for step in 0..=400 {
-            let elapsed = f64::from(step) / 1_000.0;
-            let progress = bounded_spring_progress(elapsed, 2.4, 12.0);
+    fn 窗口缓动单调且精确落在起终点() {
+        let samples =
+            (0..=100).map(|step| smootherstep(f64::from(step) / 100.0)).collect::<Vec<_>>();
 
-            assert!((0.0..=1.0).contains(&progress));
-        }
-    }
-
-    #[test]
-    fn 原始弹簧越过终点时会折回安全区间() {
-        let progress = bounded_spring_progress(0.16, 2.4, 12.0);
-
-        assert!(progress < 1.0);
-        assert!(progress > 0.0);
+        assert_eq!(samples.first().copied(), Some(0.0));
+        assert_eq!(samples.last().copied(), Some(1.0));
+        assert!(samples.windows(2).all(|pair| pair[1] >= pair[0]));
+        assert!(samples.iter().all(|value| (0.0..=1.0).contains(value)));
     }
 
     #[test]

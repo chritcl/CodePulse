@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { codexCommands, mediaCommands, windowCommands } from './index';
+import { animationCommands, codexCommands, mediaCommands, windowCommands } from './index';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
@@ -70,6 +70,34 @@ describe('窗口 IPC 命令封装', () => {
       targetWidth: 420,
       targetHeight: 206,
       isPinned: false,
+    });
+  });
+});
+
+describe('动画 IPC 命令封装', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('传递窗口动画起终尺寸、停靠状态和时长', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+
+    await animationCommands.startIslandAnimation({
+      startWidth: 260,
+      startHeight: 42,
+      targetWidth: 420,
+      targetHeight: 182,
+      isPinned: false,
+      durationMs: 280,
+    });
+
+    expect(invoke).toHaveBeenCalledWith('start_island_animation', {
+      startWidth: 260,
+      startHeight: 42,
+      targetWidth: 420,
+      targetHeight: 182,
+      isPinned: false,
+      durationMs: 280,
     });
   });
 });

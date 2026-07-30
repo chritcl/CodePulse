@@ -4,21 +4,34 @@
  * 管理灵动岛窗口的大小、位置和显示状态。
  */
 
-import { computed, getCurrentScope, onScopeDispose, ref, type CSSProperties } from 'vue';
+import {
+  computed,
+  getCurrentScope,
+  onScopeDispose,
+  ref,
+  toValue,
+  type CSSProperties,
+  type MaybeRefOrGetter,
+} from 'vue';
 import {
   getCurrentWindow,
   currentMonitor,
   PhysicalPosition,
   PhysicalSize,
 } from '@tauri-apps/api/window';
-import { invoke } from '@tauri-apps/api/core';
 import { readBoolean, readEnum, readNumber, writeBoolean } from '@/shared/utils/storage';
+import { animationCommands } from '@/shared/ipc';
+import { getWindowResizeDuration } from '@/modules/island/springMotion';
 
 const ISLAND_THEMES = ['black', 'white'] as const;
 const DETAIL_LEAVE_DURATION_MS = 160;
 const WINDOW_SHRINK_SAFETY_GAP_MS = 20;
 
-export function useIslandWindow() {
+interface UseIslandWindowOptions {
+  springEnabled?: MaybeRefOrGetter<boolean>;
+}
+
+export function useIslandWindow(options: UseIslandWindowOptions = {}) {
   // ============================================================
   // 状态
   // ============================================================
@@ -193,12 +206,13 @@ export function useIslandWindow() {
     targetHeight: number
   ) => {
     try {
-      await invoke('start_island_animation', {
+      await animationCommands.startIslandAnimation({
         startWidth,
         startHeight,
-        targetWidth: targetWidth,
-        targetHeight: targetHeight,
+        targetWidth,
+        targetHeight,
         isPinned: isPinnedToTaskbar.value,
+        durationMs: getWindowResizeDuration(toValue(options.springEnabled ?? true)),
       });
     } catch (err) {
       console.error('呼叫 Rust 动画失败:', err);

@@ -36,6 +36,9 @@ export const MUSIC_CTL = 'control-music-ctl';
 /** 目标音乐平台 */
 export const TARGET_PLAYER = 'control-target-player';
 
+/** 弹簧动画开关 */
+export const SPRING_ANIMATION = 'control-spring-animation';
+
 // ============================================================
 // 灵动岛状态事件 (widget → main)
 // ============================================================
@@ -109,6 +112,7 @@ export const ALL_EVENTS = {
   HARDWARE_MON,
   MUSIC_CTL,
   TARGET_PLAYER,
+  SPRING_ANIMATION,
 
   // 灵动岛状态
   ISLAND_STATUS_SYNC,

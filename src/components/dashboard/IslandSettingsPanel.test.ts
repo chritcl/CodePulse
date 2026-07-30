@@ -45,4 +45,16 @@ describe('IslandSettingsPanel', () => {
     expect(panelSource).toContain('<style scoped src="./IslandSettingsPanel.css"></style>');
     expect(styleModules).toHaveProperty('./IslandSettingsPanel.css');
   });
+
+  it('关闭弹簧动画时立即保存并广播到灵动岛', async () => {
+    const pinia = createPinia();
+    const store = useSettingsStore(pinia);
+    const wrapper = mount(IslandSettingsPanel, { global: { plugins: [pinia] } });
+    const setting = wrapper.find('[data-setting="spring-animation"] input');
+
+    await setting.setValue(false);
+
+    expect(store.enableSpringAnimation).toBe(false);
+    expect(emit).toHaveBeenCalledWith('control-spring-animation', { enabled: false });
+  });
 });

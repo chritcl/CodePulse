@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
-import { effectScope } from 'vue';
+import { effectScope, ref } from 'vue';
 import { useIslandWindow } from './useIslandWindow';
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -84,6 +84,24 @@ describe('useIslandWindow', () => {
       targetWidth: 260,
       targetHeight: 42,
       isPinned: false,
+      durationMs: 280,
+    });
+  });
+
+  it('关闭弹簧后使用短窗口过渡时长', async () => {
+    const islandWindow = useIslandWindow({ springEnabled: ref(false) });
+    islandWindow.currentWidth.value = 260;
+    islandWindow.currentHeight.value = 42;
+
+    await islandWindow.animateIslandSize(420, 182);
+
+    expect(invoke).toHaveBeenCalledWith('start_island_animation', {
+      startWidth: 260,
+      startHeight: 42,
+      targetWidth: 420,
+      targetHeight: 182,
+      isPinned: false,
+      durationMs: 160,
     });
   });
 
@@ -107,6 +125,7 @@ describe('useIslandWindow', () => {
       targetWidth: 420,
       targetHeight: 206,
       isPinned: false,
+      durationMs: 280,
     });
   });
 
@@ -147,6 +166,7 @@ describe('useIslandWindow', () => {
       targetWidth: 460,
       targetHeight: 226,
       isPinned: false,
+      durationMs: 280,
     });
   });
 

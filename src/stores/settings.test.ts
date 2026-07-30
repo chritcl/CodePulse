@@ -25,4 +25,15 @@ describe('useSettingsStore 的 Codex 显示偏好', () => {
     expect(localStorage.getItem('nsd_codex_show_operation_summary')).toBe('false');
     expect(localStorage.getItem('nsd_codex_show_task_summary')).toBe('true');
   });
+
+  it('弹簧动画默认开启并持久化关闭状态', async () => {
+    const settings = useSettingsStore();
+
+    expect(settings.enableSpringAnimation).toBe(true);
+
+    settings.enableSpringAnimation = false;
+    await nextTick();
+
+    expect(localStorage.getItem('nsd_spring_animation')).toBe('false');
+  });
 });

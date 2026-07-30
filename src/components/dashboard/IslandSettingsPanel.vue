@@ -146,6 +146,22 @@
         <span class="slider" />
       </label>
     </div>
+
+    <!-- 弹簧动画 -->
+    <div class="set-item" data-setting="spring-animation">
+      <div class="set-item-meta">
+        <span class="set-item-title">弹簧动画</span>
+        <span class="set-item-desc">为点击、展开和切换保留明显回弹</span>
+      </div>
+      <label class="switch">
+        <input
+          v-model="settingsStore.enableSpringAnimation"
+          type="checkbox"
+          @change="handleToggleSpringAnimation"
+        />
+        <span class="slider" />
+      </label>
+    </div>
   </div>
 </template>
 
@@ -153,6 +169,7 @@
 import { useSettingsStore } from '@/stores';
 import { emit } from '@tauri-apps/api/event';
 import type { MusicPlatform, IslandTheme } from '@/types';
+import { SPRING_ANIMATION, type SpringAnimationPayload } from '@/shared/ipc';
 
 import neteaseIcon from '@/assets/musci163.svg';
 import spotifyIcon from '@/assets/Spotify.svg';
@@ -218,6 +235,13 @@ const handleToggleRotation = async () => {
     settingsStore.msgModeEnabled = false;
     await emit('control-msg-mode', { enabled: false });
   }
+};
+
+/** 切换弹簧动画 */
+const handleToggleSpringAnimation = async () => {
+  await emit<SpringAnimationPayload>(SPRING_ANIMATION, {
+    enabled: settingsStore.enableSpringAnimation,
+  });
 };
 </script>
 
