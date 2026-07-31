@@ -48,7 +48,7 @@ fn get_active_target_player() -> String {
         Ok(guard) if !guard.is_empty() => guard.clone(),
         Ok(_) => "netease".to_string(),
         Err(error) => {
-            eprintln!("[NSD] 获取目标平台失败: {}", error);
+            eprintln!("[CodePulse] 获取目标平台失败: {}", error);
             "netease".to_string()
         }
     }

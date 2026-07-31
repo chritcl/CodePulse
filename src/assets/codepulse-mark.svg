@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">CodePulse</title>
+  <desc id="description">深石墨圆角方形中的电光青抽象脉冲徽记，带活力绿状态点。</desc>
+  <rect x="32" y="32" width="960" height="960" rx="220" fill="#151A24" />
+  <rect x="48" y="48" width="928" height="928" rx="204" fill="none" stroke="#243142" stroke-width="8" />
+  <path
+    d="M456 284C319 284 214 380 214 512s105 228 242 228c76 0 142-29 188-79M534 284v456m0-456h106c83 0 118 46 118 104s-35 104-118 104H534M214 512h132l56-1 54-148 66 296 61-147h166"
+    fill="none"
+    stroke="#58E7FF"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="58"
+  />
+  <circle cx="804" cy="760" r="28" fill="#B7F36B" />
+</svg>

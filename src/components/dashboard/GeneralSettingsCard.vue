@@ -17,7 +17,7 @@
     <div class="setting-item">
       <div class="item-meta">
         <span class="item-title">开机自启动</span>
-        <span class="item-desc">跟随系统启动 NSD</span>
+        <span class="item-desc">跟随系统启动 CodePulse</span>
       </div>
       <label class="switch">
         <input
@@ -47,7 +47,7 @@
             <input
               v-model="settingsStore.pinToTaskbar"
               type="checkbox"
-              @change="handlePinTaskbarChange"
+              @change="void actions.setPinToTaskbar(settingsStore.pinToTaskbar)"
             />
             <span class="slider" />
           </label>
@@ -62,7 +62,8 @@
         min="0"
         max="100"
         class="range-input"
-        @input="handleOpacityChange"
+        @input="handleOpacityInput"
+        @change="handleOpacityCommit"
       />
     </div>
   </div>
@@ -70,9 +71,13 @@
 
 <script setup lang="ts">
 import { useSettingsStore } from '@/stores';
-import { emit } from '@tauri-apps/api/event';
+import type { useSettingsActions } from '@/composables/useSettingsActions';
 
 const settingsStore = useSettingsStore();
+
+const props = defineProps<{
+  actions: ReturnType<typeof useSettingsActions>;
+}>();
 
 defineEmits<{
   'toggle-autostart': [];
@@ -81,17 +86,17 @@ defineEmits<{
 /** 处理主题变更 */
 const handleThemeChange = (event: Event) => {
   const target = event.target as HTMLSelectElement;
-  settingsStore.setThemeMode(target.value as 'light' | 'dark' | 'system');
+  void props.actions.setThemeMode(target.value as 'light' | 'dark' | 'system');
 };
 
-/** 处理任务栏停靠变更 */
-const handlePinTaskbarChange = async () => {
-  await emit('control-pin-taskbar', { enabled: settingsStore.pinToTaskbar });
+/** 预览灵动岛不透明度 */
+const handleOpacityInput = (event: Event) => {
+  props.actions.previewOpacity(Number((event.target as HTMLInputElement).value));
 };
 
-/** 处理透明度变更 */
-const handleOpacityChange = async () => {
-  await emit('control-island-opacity', { opacity: settingsStore.opacity });
+/** 提交灵动岛不透明度 */
+const handleOpacityCommit = (event: Event) => {
+  props.actions.commitOpacity(Number((event.target as HTMLInputElement).value));
 };
 </script>
 

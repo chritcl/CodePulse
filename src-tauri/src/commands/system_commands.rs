@@ -29,7 +29,7 @@ pub fn get_network_stats(state: State<'_, AppState>) -> (u64, u64) {
             (total_rx, total_tx)
         }
         Err(e) => {
-            eprintln!("[NSD] 获取网络数据失败: {}", e);
+            eprintln!("[CodePulse] 获取网络数据失败: {}", e);
             (0, 0)
         }
     }
@@ -52,7 +52,7 @@ pub fn get_hardware_stats(state: State<'_, AppState>) -> (f32, u64, u64) {
             )
         }
         Err(e) => {
-            eprintln!("[NSD] 获取硬件数据失败: {}", e);
+            eprintln!("[CodePulse] 获取硬件数据失败: {}", e);
             (0.0, 0, 0)
         }
     }

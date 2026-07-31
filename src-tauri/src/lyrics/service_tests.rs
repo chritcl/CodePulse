@@ -106,7 +106,7 @@ fn service_with_deadline(
 
 fn unique_temp_dir(label: &str) -> PathBuf {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    std::env::temp_dir().join(format!("nsd-lyrics-{label}-{nonce}"))
+    std::env::temp_dir().join(format!("codepulse-lyrics-{label}-{nonce}"))
 }
 
 #[tokio::test]

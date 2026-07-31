@@ -52,4 +52,23 @@ describe('IslandSatelliteStrip', () => {
     expect(payload?.[0]).toBe('music');
     expect(payload?.[1]).toBeInstanceOf(MouseEvent);
   });
+
+  it('根据岛屿主题切换卫星条明暗背景', () => {
+    const darkWrapper = mount(IslandSatelliteStrip, {
+      props: {
+        items,
+        overflowCount: 0,
+      },
+    });
+    expect(darkWrapper.find('.satellite-strip').classes()).toContain('is-dark');
+
+    const lightWrapper = mount(IslandSatelliteStrip, {
+      props: {
+        items,
+        overflowCount: 0,
+        theme: 'white',
+      },
+    });
+    expect(lightWrapper.find('.satellite-strip').classes()).toContain('is-light');
+  });
 });

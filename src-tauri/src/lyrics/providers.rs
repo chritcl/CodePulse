@@ -11,7 +11,7 @@ use super::types::{LyricsCandidate, LyricsTrackRequest, ProviderLyrics};
 use netease::NeteaseProvider;
 use qq_music::QqMusicProvider;
 
-const USER_AGENT: &str = "NetSpeedDynamic/2.3.8 (https://github.com/GEORGEWWWU/NetSpeed-Dynamic)";
+const USER_AGENT: &str = "CodePulse/2.3.8";
 
 /// 可注入的歌词源契约
 #[async_trait]

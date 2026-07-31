@@ -11,7 +11,7 @@ export function useDialog() {
   /** 对话框配置 */
   const dialog = ref<DialogConfig>({
     visible: false,
-    title: 'NetSpeed Dynamic',
+    title: 'CodePulse',
     message: '',
     isConfirm: false,
     callback: null,

@@ -140,7 +140,7 @@ fn create_system_tray(app: &tauri::App) -> tauri::Result<tauri::tray::TrayIcon> 
     let tray_menu = Menu::with_items(app, &[&quit_item])?;
     TrayIconBuilder::new()
         .icon(app.default_window_icon().unwrap().clone())
-        .tooltip("NetSpeed Dynamic Pro")
+        .tooltip("CodePulse")
         .menu(&tray_menu)
         .on_menu_event(move |_app_handle, event| {
             if event.id == "quit" {

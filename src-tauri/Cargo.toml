@@ -1,5 +1,5 @@
 [package]
-name = "netspeed-dynamic"
+name = "codepulse"
 version = "2.3.8"
 description = "A Tauri App"
 authors = ["you"]
@@ -10,7 +10,7 @@ autobins = false
 bridge-bin = []
 
 [[bin]]
-name = "netspeed-dynamic"
+name = "codepulse"
 path = "src/main.rs"
 
 [[bin]]
@@ -19,7 +19,7 @@ path = "src/bin/codepulse-codex-bridge.rs"
 required-features = ["bridge-bin"]
 
 [lib]
-name = "netspeed_dynamic_lib"
+name = "codepulse_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -1,175 +1,114 @@
 <template>
-  <div class="dynamicset-grid">
-    <!-- 音乐控制平台 -->
-    <div
-      class="set-item-top"
-      style="
-        grid-column: span 2;
-        flex-direction: column;
-        align-items: flex-start;
-        justify-content: center;
-        gap: 8px;
-      "
-    >
-      <div
-        class="set-item-meta"
-        style="
-          flex-direction: row;
-          justify-content: space-between;
-          width: 100%;
-          align-items: center;
-        "
-      >
-        <span class="set-item-title-top">音乐控制平台</span>
-        <span class="set-item-desc" style="font-size: 11px">选择灵动岛显示的音乐平台</span>
-      </div>
-      <div class="capsule-switch player-grid">
-        <div
+  <div class="settings-panel island-settings-panel">
+    <section class="settings-group">
+      <header class="settings-group-header">
+        <div>
+          <h2>音乐平台</h2>
+          <p>选择灵动岛跟随的 Windows 媒体会话</p>
+        </div>
+        <span class="settings-count">6 个平台</span>
+      </header>
+      <div class="player-choice-grid">
+        <button
           v-for="player in players"
           :key="player.id"
-          class="capsule-btn"
-          :class="{ 'is-active': settingsStore.targetPlayer === player.id }"
-          @click="handleSetPlayer(player.id)"
+          type="button"
+          class="player-choice"
+          :class="{ 'is-selected': settingsStore.targetPlayer === player.id }"
+          :data-player="player.id"
+          @click="void actions.setTargetPlayer(player.id)"
         >
-          <img :src="player.icon" class="platform-icon" alt="icon" />
-          {{ player.name }}
+          <img :src="player.icon" alt="" />
+          <span>{{ player.name }}</span>
+          <svg
+            v-if="settingsStore.targetPlayer === player.id"
+            viewBox="0 0 20 20"
+            aria-hidden="true"
+          >
+            <path d="m5 10 3 3 7-7" />
+          </svg>
+        </button>
+      </div>
+    </section>
+
+    <section class="settings-group">
+      <header class="settings-group-header">
+        <div>
+          <h2>内容模块</h2>
+          <p>控制哪些信息可以进入灵动岛</p>
+        </div>
+      </header>
+      <div class="settings-list">
+        <div class="setting-row" data-setting="music-control">
+          <span class="setting-copy">
+            <strong>音乐控制</strong>
+            <small>显示歌曲、歌词、进度与媒体控制</small>
+          </span>
+          <MaterialSwitch
+            :model-value="settingsStore.enableMusicCtrl"
+            label="音乐控制"
+            @update:model-value="void actions.setMusicEnabled($event)"
+          />
+        </div>
+        <div class="setting-row" data-setting="notifications">
+          <span class="setting-copy">
+            <strong>消息通知</strong>
+            <small>接收 Windows 通知并显示应用消息</small>
+          </span>
+          <MaterialSwitch
+            :model-value="settingsStore.enableMsgNotify"
+            label="消息通知"
+            @update:model-value="void actions.setNotificationsEnabled($event)"
+          />
+        </div>
+        <div class="setting-row" data-setting="hardware">
+          <span class="setting-copy">
+            <strong>硬件监控</strong>
+            <small>显示 CPU 和内存的实时占用</small>
+          </span>
+          <MaterialSwitch
+            :model-value="settingsStore.enableHardwareMon"
+            label="硬件监控"
+            @update:model-value="void actions.setHardwareEnabled($event)"
+          />
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- 灵动岛颜色 -->
-    <div class="set-item">
-      <div class="set-item-meta">
-        <span class="set-item-title">灵动岛颜色</span>
-        <span class="set-item-desc">切换灵动岛的默认背景色调</span>
-      </div>
-      <div class="capsule-switch">
-        <div
-          class="capsule-btn"
-          :class="{ 'is-active': settingsStore.islandTheme === 'black' }"
-          @click="handleSetIslandTheme('black')"
-        >
-          暗色
+    <section class="settings-group">
+      <header class="settings-group-header">
+        <div>
+          <h2>展示策略</h2>
+          <p>明确消息展开与多内容轮换之间的优先关系</p>
         </div>
-        <div
-          class="capsule-btn"
-          :class="{ 'is-active': settingsStore.islandTheme === 'white' }"
-          @click="handleSetIslandTheme('white')"
+      </header>
+      <div class="strategy-selector" role="radiogroup" aria-label="灵动岛展示策略">
+        <button
+          v-for="strategy in strategies"
+          :key="strategy.id"
+          type="button"
+          role="radio"
+          class="strategy-option"
+          :class="{ 'is-selected': displayStrategy === strategy.id }"
+          :aria-checked="displayStrategy === strategy.id"
+          :data-display-strategy="strategy.id"
+          @click="void actions.setDisplayStrategy(strategy.id)"
         >
-          亮色
-        </div>
+          <span>{{ strategy.title }}</span>
+          <small>{{ strategy.description }}</small>
+        </button>
       </div>
-    </div>
-
-    <!-- 音乐控制器 -->
-    <div class="set-item">
-      <div class="set-item-meta">
-        <span class="set-item-title">
-          音乐控制器
-          <p class="set-item-pro-tag">PRO</p>
-        </span>
-        <span class="set-item-desc">支持网易云音乐控制及歌曲信息显示</span>
-      </div>
-      <label class="switch">
-        <input
-          v-model="settingsStore.enableMusicCtrl"
-          type="checkbox"
-          @change="handleToggleMusicCtrl"
-        />
-        <span class="slider" />
-      </label>
-    </div>
-
-    <!-- 消息通知 -->
-    <div class="set-item">
-      <div class="set-item-meta">
-        <span class="set-item-title">消息通知</span>
-        <span class="set-item-desc">接收 Windows 系统通知并在灵动岛显示</span>
-      </div>
-      <label class="switch">
-        <input
-          v-model="settingsStore.enableMsgNotify"
-          type="checkbox"
-          @change="handleToggleMsgNotify"
-        />
-        <span class="slider" />
-      </label>
-    </div>
-
-    <!-- 硬件监控 -->
-    <div class="set-item">
-      <div class="set-item-meta">
-        <span class="set-item-title">
-          硬件监控
-          <p class="set-item-pro-tag">PRO</p>
-        </span>
-        <span class="set-item-desc">CPU / 内存占用实时监控</span>
-      </div>
-      <label class="switch">
-        <input
-          v-model="settingsStore.enableHardwareMon"
-          type="checkbox"
-          @change="handleToggleHardwareMon"
-        />
-        <span class="slider" />
-      </label>
-    </div>
-
-    <!-- 消息模式 -->
-    <div class="set-item">
-      <div class="set-item-meta">
-        <span class="set-item-title">消息模式</span>
-        <span class="set-item-desc">收到消息时灵动岛自动展开并显示内容</span>
-      </div>
-      <label class="switch">
-        <input
-          v-model="settingsStore.msgModeEnabled"
-          type="checkbox"
-          @change="handleToggleMsgMode"
-        />
-        <span class="slider" />
-      </label>
-    </div>
-
-    <!-- 轮换模式 -->
-    <div class="set-item">
-      <div class="set-item-meta">
-        <span class="set-item-title">轮换模式</span>
-        <span class="set-item-desc">灵动岛自动轮换显示不同内容</span>
-      </div>
-      <label class="switch">
-        <input
-          v-model="settingsStore.enableRotation"
-          type="checkbox"
-          @change="handleToggleRotation"
-        />
-        <span class="slider" />
-      </label>
-    </div>
-
-    <!-- 弹簧动画 -->
-    <div class="set-item" data-setting="spring-animation">
-      <div class="set-item-meta">
-        <span class="set-item-title">弹簧动画</span>
-        <span class="set-item-desc">为点击、展开和切换保留明显回弹</span>
-      </div>
-      <label class="switch">
-        <input
-          v-model="settingsStore.enableSpringAnimation"
-          type="checkbox"
-          @change="handleToggleSpringAnimation"
-        />
-        <span class="slider" />
-      </label>
-    </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
+import type { useSettingsActions } from '@/composables/useSettingsActions';
+import { resolveDisplayStrategy, type DisplayStrategy } from '@/modules/dashboard/displayStrategy';
 import { useSettingsStore } from '@/stores';
-import { emit } from '@tauri-apps/api/event';
-import type { MusicPlatform, IslandTheme } from '@/types';
-import { SPRING_ANIMATION, type SpringAnimationPayload } from '@/shared/ipc';
+import type { MusicPlatform } from '@/types';
+import MaterialSwitch from './MaterialSwitch.vue';
 
 import neteaseIcon from '@/assets/musci163.svg';
 import spotifyIcon from '@/assets/Spotify.svg';
@@ -178,71 +117,30 @@ import qqmusicIcon from '@/assets/qqmusic.svg';
 import kugouIcon from '@/assets/kugou.svg';
 import echoIcon from '@/assets/echomusic.ico';
 
+defineProps<{
+  actions: ReturnType<typeof useSettingsActions>;
+}>();
+
 const settingsStore = useSettingsStore();
 
-/** 音乐平台列表 */
 const players = [
   { id: 'netease' as MusicPlatform, name: '网易云', icon: neteaseIcon },
   { id: 'spotify' as MusicPlatform, name: 'Spotify', icon: spotifyIcon },
-  { id: 'apple' as MusicPlatform, name: 'Apple', icon: appleIcon },
-  { id: 'qqmusic' as MusicPlatform, name: 'QQ音乐', icon: qqmusicIcon },
-  { id: 'kugou' as MusicPlatform, name: '酷狗', icon: kugouIcon },
+  { id: 'apple' as MusicPlatform, name: 'Apple Music', icon: appleIcon },
+  { id: 'qqmusic' as MusicPlatform, name: 'QQ 音乐', icon: qqmusicIcon },
+  { id: 'kugou' as MusicPlatform, name: '酷狗音乐', icon: kugouIcon },
   { id: 'echo' as MusicPlatform, name: 'EchoMusic', icon: echoIcon },
 ];
 
-/** 设置音乐平台 */
-const handleSetPlayer = async (player: MusicPlatform) => {
-  settingsStore.setTargetPlayer(player);
-  await emit('control-target-player', { player });
-};
+const strategies: Array<{ id: DisplayStrategy; title: string; description: string }> = [
+  { id: 'stable', title: '稳定展示', description: '保持当前主岛' },
+  { id: 'message', title: '消息优先', description: '通知到达时展开' },
+  { id: 'rotation', title: '自动轮换', description: '循环展示内容' },
+];
 
-/** 设置灵动岛主题 */
-const handleSetIslandTheme = async (theme: IslandTheme) => {
-  settingsStore.setIslandTheme(theme);
-  await emit('control-island-theme', { theme });
-};
-
-/** 切换音乐控制器 */
-const handleToggleMusicCtrl = async () => {
-  await emit('control-music-ctl', { enabled: settingsStore.enableMusicCtrl });
-};
-
-/** 切换消息通知 */
-const handleToggleMsgNotify = async () => {
-  // 消息通知仅本地保存，不发送事件
-};
-
-/** 切换硬件监控 */
-const handleToggleHardwareMon = async () => {
-  await emit('control-hardware-mon', { enabled: settingsStore.enableHardwareMon });
-};
-
-/** 切换消息模式 */
-const handleToggleMsgMode = async () => {
-  // 如果开启消息模式，强制开启消息通知
-  if (settingsStore.msgModeEnabled) {
-    settingsStore.enableMsgNotify = true;
-  }
-  await emit('control-msg-mode', { enabled: settingsStore.msgModeEnabled });
-};
-
-/** 切换轮换模式 */
-const handleToggleRotation = async () => {
-  await emit('control-rotation-mode', { enabled: settingsStore.enableRotation });
-
-  // 如果开启轮换，关闭消息模式
-  if (settingsStore.enableRotation) {
-    settingsStore.msgModeEnabled = false;
-    await emit('control-msg-mode', { enabled: false });
-  }
-};
-
-/** 切换弹簧动画 */
-const handleToggleSpringAnimation = async () => {
-  await emit<SpringAnimationPayload>(SPRING_ANIMATION, {
-    enabled: settingsStore.enableSpringAnimation,
-  });
-};
+const displayStrategy = computed(() =>
+  resolveDisplayStrategy(settingsStore.msgModeEnabled, settingsStore.enableRotation)
+);
 </script>
 
 <style scoped src="./IslandSettingsPanel.css"></style>

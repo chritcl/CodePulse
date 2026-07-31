@@ -439,7 +439,7 @@ fn unique_temp_dir(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!("nsd-lyrics-{label}-{nonce}"))
+    std::env::temp_dir().join(format!("codepulse-lyrics-{label}-{nonce}"))
 }
 
 pub struct LyricsCacheRepository {

@@ -1,10 +1,10 @@
-# NetSpeed Dynamic Pro (NSD)
+# CodePulse
 
 <div align="center">
 
-<img src="./src/assets/logo.png" alt="音乐控制器" width="200" />
+<img src="./src/assets/codepulse-mark.svg" alt="CodePulse" width="200" />
 
-**NetSpeed Dynamic Pro** —— 专为 Windows 而生的灵动岛
+**CodePulse** —— 专为 Windows 而生的桌面灵动岛
 
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-blue?logo=tauri)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://rust-lang.org)
@@ -78,7 +78,7 @@
 - **置于任务栏**：锁定至屏幕左下角，禁止拖拽，自动置顶
 - **位置锁定**：右键菜单可锁定/解锁灵动岛位置
 - **全屏游戏避让**：自动检测全屏窗口，避免抢占焦点
-- **检查更新**：静默检测新版本并提示下载，支持 10 秒超时保护
+- **检查更新**：当前显示更新源未配置，不会请求未确认的上游地址
 
 ## 技术栈
 
@@ -100,7 +100,7 @@
 ## 项目结构
 
 ```
-NetSpeed-Dynamic/
+CodePulse/
 ├── src/                    # 前端源码
 │   ├── main.ts             # 应用入口
 │   ├── router/index.ts     # 路由配置
@@ -136,8 +136,7 @@ NetSpeed-Dynamic/
 ### 安装与运行
 
 ```bash
-git clone https://github.com/GEORGEWWWU/NetSpeed-Dynamic.git
-cd NetSpeed-Dynamic
+cd CodePulse
 pnpm install
 pnpm run tauri dev
 ```
@@ -163,17 +162,11 @@ pnpm run tauri build
 
 MIT License
 
-Copyright (c) 2026 Ryen (GEORGEWU)
+本项目为 CodePulse 二次开发版本，保留原项目的 MIT 许可与版权声明。
 
 ## 捐赠
 
-如果 NSD 对你有帮助，欢迎请作者喝杯咖啡！
-
-| 方式 | 信息 |
-|------|------|
-| 微信支付 | ![微信](./src/assets/wechat-pay.png) |
-| 支付宝 | ![支付宝](./src/assets/alipay.jpg) |
-| GitHub Sponsors | [前往支持](https://github.com/sponsors/GEORGEWWWU) |
+CodePulse 的发布地址和反馈渠道将在后续版本中补充。
 
 ---
 

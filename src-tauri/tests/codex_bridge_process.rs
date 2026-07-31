@@ -4,8 +4,8 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use netspeed_dynamic_lib::codex::protocol::{CodexEventSource, CodexEventType};
-use netspeed_dynamic_lib::codex::server::start_receiver;
+use codepulse_lib::codex::protocol::{CodexEventSource, CodexEventType};
+use codepulse_lib::codex::server::start_receiver;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;

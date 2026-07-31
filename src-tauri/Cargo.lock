@@ -525,6 +525,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "codepulse"
+version = "2.3.8"
+dependencies = [
+ "async-trait",
+ "axum",
+ "regex",
+ "reqwest 0.12.28",
+ "rustfft",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sysinfo",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tokio",
+ "toml_edit 0.22.27",
+ "urlencoding",
+ "uuid",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "combine"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2240,31 +2265,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
-]
-
-[[package]]
-name = "netspeed-dynamic"
-version = "2.3.8"
-dependencies = [
- "async-trait",
- "axum",
- "regex",
- "reqwest 0.12.28",
- "rustfft",
- "serde",
- "serde_json",
- "sha2",
- "sysinfo",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tokio",
- "toml_edit 0.22.27",
- "urlencoding",
- "uuid",
- "windows 0.58.0",
 ]
 
 [[package]]

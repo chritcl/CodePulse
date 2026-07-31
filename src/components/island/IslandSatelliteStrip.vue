@@ -1,5 +1,10 @@
 <template>
-  <div v-if="items.length || overflowCount > 0" class="satellite-strip" aria-label="活跃模块">
+  <div
+    v-if="items.length || overflowCount > 0"
+    class="satellite-strip"
+    :class="surfaceClass"
+    aria-label="活跃模块"
+  >
     <button
       v-for="item in items"
       :key="item.kind"
@@ -33,6 +38,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import type {
   IslandDisplayKind,
   IslandModuleVisualStatus,
@@ -43,9 +49,13 @@ import CodexGlyph from './CodexGlyph.vue';
 interface Props {
   items: IslandSatelliteItem[];
   overflowCount: number;
+  /** 岛屿主题，决定卫星条背景使用偏黑灰还是偏白灰 */
+  theme?: 'black' | 'white';
 }
 
-defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  theme: 'black',
+});
 
 defineEmits<{
   select: [kind: IslandDisplayKind, event: MouseEvent];
@@ -72,6 +82,9 @@ const statusClass = (status: IslandModuleVisualStatus) => ({
   'is-paused': status === 'paused',
 });
 
+/** 卫星条表面明暗：黑岛配偏黑的灰，白岛配偏白的灰 */
+const surfaceClass = computed(() => (props.theme === 'white' ? 'is-light' : 'is-dark'));
+
 const getSymbol = (kind: IslandDisplayKind) => SYMBOLS[kind];
 
 const formatUnread = (count: number) => (count > 99 ? '99+' : String(count));
@@ -85,9 +98,16 @@ const formatUnread = (count: number) => (count > 99 ? '99+' : String(count));
   gap: 6px;
   padding: 3px 7px;
   border-radius: 100px;
-  background: rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  /* 黑岛主题：偏黑的灰色实底，避免毛玻璃导致不清晰 */
+  background: rgba(40, 40, 44, 0.94);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
   flex-shrink: 0;
+}
+
+/* 白岛主题：偏白的灰色实底 */
+.satellite-strip.is-light {
+  background: rgba(238, 238, 242, 0.94);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
 }
 
 .satellite-button,
@@ -98,7 +118,7 @@ const formatUnread = (count: number) => (count > 99 ? '99+' : String(count));
   border: none;
   padding: 0;
   color: currentColor;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.12);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -114,7 +134,18 @@ const formatUnread = (count: number) => (count > 99 ? '99+' : String(count));
 .satellite-button:hover,
 .satellite-more:hover {
   transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* 白岛主题下按钮改用深色半透明，保证在浅灰底上可见 */
+.satellite-strip.is-light .satellite-button,
+.satellite-strip.is-light .satellite-more {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.satellite-strip.is-light .satellite-button:hover,
+.satellite-strip.is-light .satellite-more:hover {
+  background: rgba(0, 0, 0, 0.12);
 }
 
 .satellite-visual {

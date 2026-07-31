@@ -1,12 +1,12 @@
-# AGENTS.md — NetSpeed Dynamic Pro 项目指南
+# AGENTS.md — CodePulse 项目指南
 
 ## 项目概况
 
-**NetSpeed Dynamic Pro（NSD）**是一个基于 Tauri 2、Vue 3 与 Rust 的 Windows 桌面灵动岛应用。主控制台负责设置、网速与流量统计；透明的 Widget 窗口负责网速、音乐、硬件、通知及系统提示展示。
+**CodePulse** 是一个基于 Tauri 2、Vue 3 与 Rust 的 Windows 桌面灵动岛应用。主控制台负责设置、网速与流量统计；透明的 Widget 窗口负责网速、音乐、硬件、通知及系统提示展示。
 
 - **版本**：`2.3.8`
-- **应用标识**：`com.ryen.nsd`
-- **仓库**：<https://github.com/GEORGEWWWU/NetSpeed-Dynamic>
+- **应用标识**：`com.codepulse.app`
+- **仓库**：待补充
 - **协议**：MIT
 - **目标平台**：Windows；Rust 后端直接依赖 Windows API，不要求跨平台兼容。
 - **包管理器**：`pnpm@10.33.2`，锁文件为 `pnpm-lock.yaml`。

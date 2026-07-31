@@ -8,10 +8,9 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import { readBoolean, writeBoolean } from '@/shared/utils/storage';
 
-const ISLAND_ENABLED_STORAGE_KEY = 'nsd_island_enabled';
+const ISLAND_ENABLED_STORAGE_KEY = 'codepulse_island_enabled';
 
 export const useIslandStore = defineStore('island', () => {
   // ============================================================
@@ -21,8 +20,7 @@ export const useIslandStore = defineStore('island', () => {
   /** 灵动岛是否可见 */
   const isVisible = ref(readBoolean(ISLAND_ENABLED_STORAGE_KEY, true));
 
-  /** 是否显示灵动岛设置面板 */
-  const showSettings = ref(false);
+  let stopListening: (() => void) | null = null;
 
   // ============================================================
   // 方法
@@ -43,31 +41,18 @@ export const useIslandStore = defineStore('island', () => {
     writeBoolean(ISLAND_ENABLED_STORAGE_KEY, visible);
   };
 
-  /** 切换设置面板显示状态 */
-  const toggleSettings = () => {
-    showSettings.value = !showSettings.value;
-  };
-
-  /** 打开设置面板 */
-  const openSettings = () => {
-    showSettings.value = true;
-  };
-
   /** 监听灵动岛状态同步事件 */
   const startListening = async () => {
-    await listen<{ visible: boolean }>('island-status-sync', (event) => {
+    if (stopListening) return;
+    stopListening = await listen<{ visible: boolean }>('island-status-sync', (event) => {
       isVisible.value = event.payload.visible;
     });
+  };
 
-    await listen('open-settings-panel', async () => {
-      showSettings.value = true;
-
-      // 唤醒并聚焦主窗口
-      const appWindow = getCurrentWindow();
-      await appWindow.show();
-      await appWindow.unminimize();
-      await appWindow.setFocus();
-    });
+  /** 停止监听灵动岛状态同步事件 */
+  const stopListeningEvents = () => {
+    stopListening?.();
+    stopListening = null;
   };
 
   /** 检查灵动岛初始状态 */
@@ -110,14 +95,12 @@ export const useIslandStore = defineStore('island', () => {
   return {
     // 状态
     isVisible,
-    showSettings,
 
     // 方法
     toggleVisibility,
     setVisibility,
-    toggleSettings,
-    openSettings,
     startListening,
+    stopListeningEvents,
     checkInitialState,
   };
 });

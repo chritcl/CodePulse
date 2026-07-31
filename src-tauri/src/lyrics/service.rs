@@ -80,7 +80,7 @@ impl LyricsService {
             Ok(Ok(Some(response))) => response,
             Ok(Ok(None)) => self.resolve(request, identity, track_key, deadline).await,
             Ok(Err(error)) => {
-                eprintln!("[NSD] 读取歌词缓存失败: {error}");
+                eprintln!("[CodePulse] 读取歌词缓存失败: {error}");
                 error_response(track_key, LyricsErrorCode::Cache, false)
             }
             Err(_) => error_response(track_key, LyricsErrorCode::Timeout, true),
@@ -123,7 +123,7 @@ impl LyricsService {
                 Ok(Ok(Some(candidate))) => keep_best(&mut best, candidate),
                 Ok(Ok(None)) => {}
                 Ok(Err(error)) => {
-                    eprintln!("[NSD] {error}");
+                    eprintln!("[CodePulse] {error}");
                     had_error = true;
                 }
                 Err(_) => return ProviderCollection::timed_out(best, had_error),

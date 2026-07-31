@@ -30,6 +30,7 @@
       <IslandSatelliteStrip
         :items="islandLayout.satellites"
         :overflow-count="islandLayout.overflowCount"
+        :theme="islandWindow.islandTheme.value"
         @select="handleSatelliteSelect"
       />
     </template>
@@ -198,7 +199,7 @@ import IslandShell from './IslandShell.vue';
 import IslandDisplayController from './IslandDisplayController.vue';
 import IslandSatelliteStrip from './IslandSatelliteStrip.vue';
 
-import defaultLogo from '@/assets/logo.png';
+import defaultLogo from '@/assets/codepulse-mark.svg';
 
 interface LatestNotificationPayload {
   app_name: string;
@@ -230,7 +231,7 @@ interface IslandShellExpose {
 // 组合式函数
 // ============================================================
 
-const isSpringAnimationEnabled = ref(readBoolean('nsd_spring_animation', true));
+const isSpringAnimationEnabled = ref(readBoolean('codepulse_spring_animation', true));
 const islandWindow = useIslandWindow({ springEnabled: isSpringAnimationEnabled });
 const animation = useIslandAnimation({ springEnabled: isSpringAnimationEnabled });
 const drag = useIslandDrag({
@@ -262,7 +263,7 @@ const isIslandVisible = ref(false);
 const isMenuOpen = ref(false);
 
 /** 流光边框是否启用 */
-const isGlowBorderEnabled = ref(readBoolean('nsd_glow_border'));
+const isGlowBorderEnabled = ref(readBoolean('codepulse_glow_border'));
 
 /** 交互动效序号 */
 let interactionAnimationId = 0;
@@ -275,13 +276,13 @@ const isHighUpload = ref(false);
 const networkStatus = ref<'good' | 'warning' | 'error'>('good');
 
 /** 硬件监控相关 */
-const isHardwareMonEnabled = ref(readBoolean('nsd_hardware_mon'));
+const isHardwareMonEnabled = ref(readBoolean('codepulse_hardware_mon'));
 const cpuUsage = ref('0%');
 const gpuUsage = ref('0%');
 const memUsage = ref('0%');
 
 /** 音乐控制相关 */
-const isMusicCtlEnabled = ref(readBoolean('nsd_music_ctrl'));
+const isMusicCtlEnabled = ref(readBoolean('codepulse_music_ctrl'));
 const activeTargetPlayer = ref(readTargetPlayer());
 let hasReceivedMusicCtlEvent = false;
 let hasReceivedTargetPlayerEvent = false;
@@ -318,7 +319,7 @@ const expandedCollapse = useExpandedCollapseGuard({
 });
 
 /** 消息模式相关 */
-const isMsgModeEnabled = ref(readBoolean('nsd_msg_mode'));
+const isMsgModeEnabled = ref(readBoolean('codepulse_msg_mode'));
 const isMsgActive = ref(false);
 const msgTitle = ref('');
 const msgBody = ref('');
@@ -337,7 +338,7 @@ const toastQueue = ref<SystemToastItem[]>([]);
 let isProcessingToast = false;
 
 /** 轮换模式相关 */
-const isRotationEnabled = ref(readBoolean('nsd_rotation_mode'));
+const isRotationEnabled = ref(readBoolean('codepulse_rotation_mode'));
 const currentRotIndex = ref(0);
 let rotationTimer: number | null = null;
 let hasReceivedRotationEvent = false;
@@ -935,7 +936,7 @@ const handleRightClick = async (event: MouseEvent) => {
     },
     onToggleGlowBorder: () => {
       isGlowBorderEnabled.value = !isGlowBorderEnabled.value;
-      writeBoolean('nsd_glow_border', isGlowBorderEnabled.value);
+      writeBoolean('codepulse_glow_border', isGlowBorderEnabled.value);
       showToast(isGlowBorderEnabled.value ? '开启流光边框成功' : '关闭流光边框成功');
     },
     onResetPosition: () => {
@@ -1056,9 +1057,9 @@ onMounted(async () => {
   await eventListeners.register<{ enabled: boolean }>('control-music-ctl', async (event) => {
     hasReceivedMusicCtlEvent = true;
     isMusicCtlEnabled.value = event.payload.enabled;
-    if (event.payload.enabled && !hasStorageValue('nsd_glow_border')) {
+    if (event.payload.enabled && !hasStorageValue('codepulse_glow_border')) {
       isGlowBorderEnabled.value = true;
-      writeBoolean('nsd_glow_border', true);
+      writeBoolean('codepulse_glow_border', true);
     }
     try {
       await syncMusicModuleActivity();
@@ -1186,8 +1187,8 @@ onMounted(async () => {
       targetPlayer: activeTargetPlayer.value,
     },
     {
-      musicEnabled: readBoolean('nsd_music_ctrl'),
-      rotationEnabled: readBoolean('nsd_rotation_mode'),
+      musicEnabled: readBoolean('codepulse_music_ctrl'),
+      rotationEnabled: readBoolean('codepulse_rotation_mode'),
       targetPlayer: readTargetPlayer(),
     },
     {
@@ -1220,7 +1221,7 @@ onMounted(async () => {
   }
   if (disposed) return;
 
-  const islandEnabled = readBoolean('nsd_island_enabled', true);
+  const islandEnabled = readBoolean('codepulse_island_enabled', true);
   if (islandEnabled && !isMsgModeEnabled.value) {
     isIslandVisible.value = true;
     try {
@@ -1263,7 +1264,7 @@ onMounted(async () => {
   }, 800);
 
   notifyTimer = window.setInterval(async () => {
-    if (disposed || !readBoolean('nsd_msg_notify')) return;
+    if (disposed || !readBoolean('codepulse_msg_notify')) return;
     try {
       const notification = await invoke<LatestNotificationPayload | null>(
         'fetch_latest_notification'

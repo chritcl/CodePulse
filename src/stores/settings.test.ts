@@ -21,9 +21,9 @@ describe('useSettingsStore 的 Codex 显示偏好', () => {
     settings.showCodexTaskSummary = true;
     await nextTick();
 
-    expect(localStorage.getItem('nsd_codex_idle_resident')).toBe('true');
-    expect(localStorage.getItem('nsd_codex_show_operation_summary')).toBe('false');
-    expect(localStorage.getItem('nsd_codex_show_task_summary')).toBe('true');
+    expect(localStorage.getItem('codepulse_codex_idle_resident')).toBe('true');
+    expect(localStorage.getItem('codepulse_codex_show_operation_summary')).toBe('false');
+    expect(localStorage.getItem('codepulse_codex_show_task_summary')).toBe('true');
   });
 
   it('弹簧动画默认开启并持久化关闭状态', async () => {
@@ -34,6 +34,6 @@ describe('useSettingsStore 的 Codex 显示偏好', () => {
     settings.enableSpringAnimation = false;
     await nextTick();
 
-    expect(localStorage.getItem('nsd_spring_animation')).toBe('false');
+    expect(localStorage.getItem('codepulse_spring_animation')).toBe('false');
   });
 });

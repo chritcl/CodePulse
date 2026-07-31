@@ -43,16 +43,16 @@ export function useIslandWindow(options: UseIslandWindowOptions = {}) {
   const currentHeight = ref(42);
 
   /** 灵动岛透明度 */
-  const islandOpacity = ref(readNumber('nsd_island_opacity', 100));
+  const islandOpacity = ref(readNumber('codepulse_island_opacity', 100));
 
   /** 灵动岛主题 */
-  const islandTheme = ref(readEnum('nsd_island_theme', 'black', ISLAND_THEMES));
+  const islandTheme = ref(readEnum('codepulse_island_theme', 'black', ISLAND_THEMES));
 
   /** 是否置于任务栏 */
-  const isPinnedToTaskbar = ref(readBoolean('nsd_pin_taskbar'));
+  const isPinnedToTaskbar = ref(readBoolean('codepulse_pin_taskbar'));
 
   /** 是否锁定位置 */
-  const isPositionLocked = ref(readBoolean('nsd_position_locked'));
+  const isPositionLocked = ref(readBoolean('codepulse_position_locked'));
   let resizeDelayTimer: number | null = null;
   let pendingResizeResolve: (() => void) | null = null;
   let sizeAnimationSuspended = false;
@@ -302,7 +302,7 @@ export function useIslandWindow(options: UseIslandWindowOptions = {}) {
   /** 设置是否锁定位置 */
   const setPositionLocked = (locked: boolean) => {
     isPositionLocked.value = locked;
-    writeBoolean('nsd_position_locked', locked);
+    writeBoolean('codepulse_position_locked', locked);
   };
 
   if (getCurrentScope()) {

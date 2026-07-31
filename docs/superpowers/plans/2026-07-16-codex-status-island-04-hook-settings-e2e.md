@@ -101,7 +101,7 @@ CLI 或 App 环境不可用时如实记录环境阻塞，不用模拟请求冒�
 - 用户层 `hooks.json` 与 `config.toml` 的只读检查、预览、摘要复核、备份、临时校验、原子替换和精确卸载；
 - 固定应用数据目录 Bridge 的临时副本验证、原子替换及未引用时的尽力清理；
 - Rust IPC、异步安全的前端 composable、设置卡、确认界面和 Widget 显示偏好同步；
-- Bridge 发布构建脚本与 Tauri 资源配置。Bridge 二进制仅在专用 `bridge-bin` 特性下编译；Tauri `build.runner.args` 明确传入 `--bin netspeed-dynamic`，因此没有添加 Cargo `default-run`，日常 `pnpm tauri dev` 与构建都会选择主程序。
+- Bridge 发布构建脚本与 Tauri 资源配置。Bridge 二进制仅在专用 `bridge-bin` 特性下编译；Tauri `build.runner.args` 明确传入 `--bin codepulse`，因此没有添加 Cargo `default-run`，日常 `pnpm tauri dev` 与构建都会选择主程序。
 
 自动验证已覆盖 JSON/TOML 其他 Hook 保留、重复标记识别、无效配置拒写、预览后变更拒绝、Bridge 验证失败、Bridge 删除失败、引用保留、设置页请求竞态与偏好监听清理。
 

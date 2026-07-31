@@ -29,7 +29,7 @@ pub fn get_audio_spectrum() -> [f32; 5] {
     match SPECTRUM.lock() {
         Ok(spectrum) => *spectrum,
         Err(err) => {
-            eprintln!("[NSD] 获取音频频谱失败: {}", err);
+            eprintln!("[CodePulse] 获取音频频谱失败: {}", err);
             [MIN_BAR_SCALE; 5]
         }
     }
@@ -39,7 +39,7 @@ pub fn get_audio_spectrum() -> [f32; 5] {
 pub fn start_audio_spectrum_monitor() {
     thread::spawn(|| {
         if let Err(err) = run_loopback_capture() {
-            eprintln!("[NSD] 频谱采集线程异常退出: {}", err);
+            eprintln!("[CodePulse] 频谱采集线程异常退出: {}", err);
         }
     });
 }
@@ -88,7 +88,7 @@ fn run_loopback_capture() -> Result<(), String> {
     };
 
     eprintln!(
-        "[NSD] 音频设备就绪: {}Hz / {}bit / {}ch",
+        "[CodePulse] 音频设备就绪: {}Hz / {}bit / {}ch",
         sample_rate, bits_per_sample, channels
     );
 
@@ -113,7 +113,7 @@ fn run_loopback_capture() -> Result<(), String> {
 
     unsafe { audio_client.Start() }.map_err(|e| format!("IAudioClient::Start 失败: {:?}", e))?;
 
-    eprintln!("[NSD] WASAPI loopback 采集已启动");
+    eprintln!("[CodePulse] WASAPI loopback 采集已启动");
 
     // 采集循环
     loop {

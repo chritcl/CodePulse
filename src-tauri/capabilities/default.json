@@ -2,10 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": [
-    "main",
-    "widget"
-  ],
+  "windows": ["main", "widget"],
   "permissions": [
     "core:path:default",
     "core:event:default",
@@ -24,8 +21,10 @@
     "core:menu:allow-append",
     "core:menu:allow-popup",
     "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
     "core:window:allow-unminimize",
     "core:window:allow-set-focus",
+    "core:window:allow-set-effects",
     "core:app:allow-version",
     "autostart:default",
     "opener:default"

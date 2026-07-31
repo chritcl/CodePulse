@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "NetSpeed Dynamic Pro",
+  "productName": "CodePulse",
   "version": "2.3.8",
-  "identifier": "com.ryen.nsd",
+  "identifier": "com.codepulse.app",
   "build": {
     "runner": {
       "cmd": "cargo",
-      "args": ["--bin", "netspeed-dynamic"]
+      "args": ["--bin", "codepulse"]
     },
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -17,10 +17,13 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "NSD 控制台",
-        "width": 700,
-        "height": 550,
+        "title": "CodePulse 控制台",
+        "width": 760,
+        "height": 600,
         "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true,
         "center": true,
         "maximized": false,
         "maximizable": false,
@@ -29,7 +32,7 @@
         "visible": false
       },
       {
-        "title": "NSD Widget",
+        "title": "CodePulse Widget",
         "width": 210,
         "height": 36,
         "resizable": false,

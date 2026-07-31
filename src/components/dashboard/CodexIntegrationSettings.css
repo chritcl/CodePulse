@@ -1,11 +1,13 @@
 .codex-integration-card {
   width: 100%;
   box-sizing: border-box;
-  background: var(--card-bg);
-  border: 1px solid var(--card-border);
-  border-radius: 10px;
-  padding: 14px;
+  background: var(--surface-glass);
+  border: 1px solid var(--glass-border);
+  border-radius: 22px;
+  padding: 16px;
   color: var(--text-body);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.24);
+  backdrop-filter: blur(18px) saturate(1.15);
 }
 
 .codex-integration-header,
@@ -22,7 +24,8 @@
 .codex-preview h3 {
   margin: 0;
   font-size: 14px;
-  color: var(--item-title-color);
+  color: var(--heading-color);
+  font-weight: 680;
 }
 
 .codex-integration-header p,
@@ -42,6 +45,10 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px 12px;
   margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  background: var(--surface-soft);
 }
 
 .codex-status-grid p {
@@ -76,9 +83,9 @@
 .codex-status-message,
 .codex-action-result,
 .codex-error {
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--control-bg);
+  padding: 9px 11px;
+  border-radius: 13px;
+  background: var(--surface-soft);
 }
 
 .codex-action-result {
@@ -101,7 +108,7 @@
   gap: 8px;
   margin-top: 14px;
   padding-top: 12px;
-  border-top: 1px solid var(--divider-border);
+  border-top: 1px solid var(--glass-border);
 }
 
 .codex-preference-row {
@@ -121,7 +128,7 @@
 .codex-preference-row input {
   width: 16px;
   height: 16px;
-  accent-color: var(--btn-pri-bg);
+  accent-color: var(--category-accent);
 }
 
 .codex-integration-actions {
@@ -131,23 +138,35 @@
 
 .codex-primary-action,
 .codex-secondary-action {
-  border-radius: 7px;
-  padding: 6px 10px;
+  border-radius: 12px;
+  padding: 7px 11px;
   font-size: 11px;
   cursor: pointer;
-  transition: opacity 0.2s ease;
+  transition:
+    opacity var(--motion-fast),
+    transform var(--motion-fast),
+    background-color var(--motion-fast);
 }
 
 .codex-primary-action {
-  color: var(--btn-pri-color);
-  background: var(--btn-pri-bg);
-  border: 1px solid var(--btn-pri-border);
+  color: #ffffff;
+  background: var(--category-accent);
+  border: 1px solid transparent;
 }
 
 .codex-secondary-action {
   color: var(--text-body);
-  background: var(--control-bg);
-  border: 1px solid var(--control-border);
+  background: var(--surface-soft);
+  border: 1px solid var(--glass-border);
+}
+
+.codex-primary-action:not(:disabled):hover,
+.codex-secondary-action:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.codex-secondary-action:not(:disabled):hover {
+  background: var(--state-hover);
 }
 
 .codex-primary-action:disabled,
@@ -158,10 +177,10 @@
 
 .codex-preview {
   margin-top: 14px;
-  padding: 12px;
-  border: 1px solid var(--control-border);
-  border-radius: 8px;
-  background: var(--control-bg);
+  padding: 13px;
+  border: 1px solid color-mix(in srgb, var(--category-accent) 24%, transparent);
+  border-radius: 17px;
+  background: color-mix(in srgb, var(--category-accent) 7%, var(--surface-soft));
 }
 
 .codex-preview-path {
@@ -184,6 +203,18 @@
 .codex-error {
   color: #d94841;
   background: rgba(217, 72, 65, 0.1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .codex-primary-action,
+  .codex-secondary-action {
+    transition-duration: 120ms;
+  }
+
+  .codex-primary-action:not(:disabled):hover,
+  .codex-secondary-action:not(:disabled):hover {
+    transform: none;
+  }
 }
 
 @media (max-width: 520px) {

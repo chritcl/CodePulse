@@ -12,7 +12,7 @@ use super::runtime_discovery::{read_discovery, RUNTIME_DISCOVERY_FILE_NAME};
 
 pub const MAX_HOOK_INPUT_BYTES: usize = 16 * 1024;
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_millis(750);
-const APPLICATION_DATA_DIRECTORY: &str = "com.ryen.nsd";
+const APPLICATION_DATA_DIRECTORY: &str = "com.codepulse.app";
 
 #[derive(Debug, Clone)]
 pub struct BridgeConfig {

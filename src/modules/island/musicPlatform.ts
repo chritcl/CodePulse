@@ -22,7 +22,7 @@ export const normalizeTargetPlayer = (player: string | null | undefined): MusicP
 
 /** 读取当前持久化的音乐平台 */
 export const readTargetPlayer = (): MusicPlatform =>
-  readEnum('nsd_target_player', 'netease', MUSIC_PLATFORMS);
+  readEnum('codepulse_target_player', 'netease', MUSIC_PLATFORMS);
 
 /** 获取音乐平台显示名称 */
 export const getPlayerName = (player: MusicPlatform = readTargetPlayer()): string =>

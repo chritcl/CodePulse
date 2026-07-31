@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    netspeed_dynamic_lib::run();
+    codepulse_lib::run();
 }

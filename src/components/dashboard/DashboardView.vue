@@ -1,60 +1,53 @@
 <template>
-  <div class="panel-container">
-    <!-- 头部 -->
-    <DashboardHeader
-      :app-version="appVersion"
-      :is-widget-visible="islandStore.isVisible"
-      :show-settings="islandStore.showSettings"
-      @toggle-settings="islandStore.toggleSettings()"
-      @toggle-widget="islandStore.toggleVisibility()"
-    />
+  <div class="main-window-shell" :data-window-material="windowMaterial">
+    <MainWindowTitleBar :page-title="pageTitle" />
 
-    <hr class="divider" />
-
-    <!-- 主内容区 -->
-    <div class="main-content" :class="{ 'dynamicset-layout': islandStore.showSettings }">
-      <template v-if="!islandStore.showSettings">
-        <!-- 实时网速卡片 -->
-        <RealtimeNetworkCard
-          :show-stats="rightPanel === 'stats'"
-          @toggle-panel="toggleRightPanel"
+    <main class="main-window-content">
+      <Transition name="dashboard-page" mode="out-in" @after-enter="handlePageAfterEnter">
+        <DashboardHome
+          v-if="navigation.location.value.page === 'dashboard'"
+          key="dashboard"
+          :app-version="appVersion"
+          :actions="settingsActions"
+          :is-checking-update="updateChecker.isChecking.value"
+          :has-new-version="updateChecker.hasNewVersion.value"
+          :is-update-configured="updateChecker.isConfigured.value"
+          @open-settings="void navigation.openHome(runTransition)"
+          @toggle-autostart="void autoStart.toggleAutoStart()"
+          @check-update="handleCheckUpdate"
         />
 
-        <!-- 右侧面板 -->
-        <template v-if="rightPanel === 'settings'">
-          <GeneralSettingsCard @toggle-autostart="autoStart.toggleAutoStart()" />
-        </template>
-        <template v-else>
-          <TrafficStatisticsCard />
-        </template>
-      </template>
+        <SettingsHome
+          v-else-if="navigation.location.value.page === 'settings-home'"
+          key="settings-home"
+          :island-visible="islandStore.isVisible"
+          :music-enabled="settingsStore.enableMusicCtrl"
+          :notifications-enabled="settingsStore.enableMsgNotify"
+          :navigation-disabled="navigation.isNavigating.value"
+          @back="void navigation.goBack(runTransition)"
+          @open-category="openCategory"
+          @toggle-island="void settingsActions.setIslandVisible($event)"
+          @toggle-music="void settingsActions.setMusicEnabled($event)"
+          @toggle-notifications="void settingsActions.setNotificationsEnabled($event)"
+        />
 
-      <template v-else>
-        <div class="settings-stack">
-          <!-- 灵动岛设置面板 -->
-          <IslandSettingsPanel />
-          <CodexIntegrationSettings />
-        </div>
-      </template>
-    </div>
+        <SettingsDetailView
+          v-else
+          :key="`settings-${navigation.location.value.category}`"
+          :category="activeCategory"
+          :actions="settingsActions"
+          :app-version="appVersion"
+          :is-checking-update="updateChecker.isChecking.value"
+          :has-new-version="updateChecker.hasNewVersion.value"
+          :is-update-configured="updateChecker.isConfigured.value"
+          @back="void navigation.goBack(runTransition)"
+          @toggle-autostart="handleAutoStart"
+          @check-update="handleCheckUpdate"
+        />
+      </Transition>
+    </main>
 
-    <!-- 页脚 -->
-    <footer class="panel-footer">
-      <div class="footer-links">
-        <span class="footer-link" @click="openNSDweb">官网</span>
-        <span class="footer-separator">·</span>
-        <span class="footer-link" @click="openNSDdata">数据</span>
-        <span class="footer-separator">·</span>
-        <span class="footer-link" @click="openMywebsite">作者</span>
-      </div>
-      <UpdateChecker
-        :is-checking="updateChecker.isChecking.value"
-        :has-new-version="updateChecker.hasNewVersion.value"
-        @check-update="handleCheckUpdate"
-      />
-    </footer>
-
-    <!-- 对话框 -->
+    <SettingsFeedbackToast :feedback="feedback.current.value" />
     <AppDialog
       :dialog="dialog.dialog.value"
       @close="dialog.closeDialog()"
@@ -64,165 +57,182 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { getVersion } from '@tauri-apps/api/app';
-import { openUrl } from '@tauri-apps/plugin-opener';
-
-import { useIslandStore, useNetworkStore } from '@/stores';
-import { useTheme, useUpdateChecker, useDialog, useAutoStart } from '@/composables';
-
-import DashboardHeader from './DashboardHeader.vue';
-import RealtimeNetworkCard from './RealtimeNetworkCard.vue';
-import TrafficStatisticsCard from './TrafficStatisticsCard.vue';
-import GeneralSettingsCard from './GeneralSettingsCard.vue';
-import IslandSettingsPanel from './IslandSettingsPanel.vue';
-import CodexIntegrationSettings from './CodexIntegrationSettings.vue';
-import UpdateChecker from './UpdateChecker.vue';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { useIslandStore, useNetworkStore, useSettingsStore } from '@/stores';
+import { useAutoStart, useDialog, useTheme, useUpdateChecker } from '@/composables';
+import { useDashboardNavigation } from '@/composables/useDashboardNavigation';
+import { useSettingsActions } from '@/composables/useSettingsActions';
+import { useSettingsFeedback } from '@/composables/useSettingsFeedback';
+import {
+  applyMainWindowMaterial,
+  type MainWindowMaterial,
+} from '@/modules/dashboard/mainWindowMaterial';
+import { runDashboardViewTransition } from '@/modules/dashboard/viewTransition';
+import type { SettingsCategoryId } from '@/modules/dashboard/settingsNavigation';
+import MainWindowTitleBar from './MainWindowTitleBar.vue';
+import DashboardHome from './DashboardHome.vue';
+import SettingsHome from './SettingsHome.vue';
+import SettingsDetailView from './SettingsDetailView.vue';
+import SettingsFeedbackToast from './SettingsFeedbackToast.vue';
 import AppDialog from './AppDialog.vue';
 
-// Stores
 const islandStore = useIslandStore();
 const networkStore = useNetworkStore();
+const settingsStore = useSettingsStore();
+useTheme();
 
-// Composables
-const theme = useTheme();
 const updateChecker = useUpdateChecker();
 const dialog = useDialog();
 const autoStart = useAutoStart(dialog.showDialog);
+const navigation = useDashboardNavigation();
+const feedback = useSettingsFeedback();
+const settingsActions = useSettingsActions(feedback.show);
 
-// 状态
 const appVersion = ref('1.0.0');
-const rightPanel = ref<'settings' | 'stats'>('settings');
+const windowMaterial = ref<MainWindowMaterial>('fallback');
+let speedTimer: number | null = null;
 
-/** 切换右侧面板 */
-const toggleRightPanel = async () => {
-  rightPanel.value = rightPanel.value === 'settings' ? 'stats' : 'settings';
-  networkStore.saveTrafficData();
+const activeCategory = computed(
+  () => navigation.location.value.category ?? ('appearance' satisfies SettingsCategoryId)
+);
+
+const pageTitle = computed(() => {
+  if (navigation.location.value.page === 'dashboard') return '控制台';
+  if (navigation.location.value.page === 'settings-home') return '设置中心';
+  return '设置详情';
+});
+
+// 原生 View Transition 期间挂起的新页面挂载通知：after-enter 触发时解除
+let pageEnteredResolve: (() => void) | null = null;
+
+const waitForNewPageMounted = () =>
+  new Promise<void>((resolve) => {
+    pageEnteredResolve = resolve;
+  });
+
+const handlePageAfterEnter = () => {
+  pageEnteredResolve?.();
+  pageEnteredResolve = null;
 };
 
-/** 打开作者网站 */
-const openMywebsite = () => {
-  openUrl('https://blog.georgewu.top');
+const runTransition = (update: () => void) =>
+  runDashboardViewTransition(update, { awaitNewPage: waitForNewPageMounted });
+
+const openCategory = (category: SettingsCategoryId) => {
+  void navigation.openCategory(category, runTransition);
 };
 
-/** 打开 NSD 官网 */
-const openNSDweb = () => {
-  openUrl('https://nsd.georgewu.top/');
+const handleAutoStart = async (enabled: boolean) => {
+  settingsStore.setAutoStart(enabled);
+  await autoStart.toggleAutoStart();
 };
 
-/** 打开 NSD 数据页 */
-const openNSDdata = () => {
-  openUrl('https://nsd.georgewu.top/#stats');
-};
-
-/** 检查更新 */
-const handleCheckUpdate = () => {
-  updateChecker.checkUpdate(dialog.showDialog);
-};
-
-// 定时器
-let speedTimer: number;
+const handleCheckUpdate = () => updateChecker.checkUpdate(dialog.showDialog);
+const preventContextMenu = (event: MouseEvent) => event.preventDefault();
 
 onMounted(async () => {
-  // 初始化
-  theme.initialize();
   networkStore.initialize();
+  await navigation.start();
   await islandStore.startListening();
   await islandStore.checkInitialState();
 
-  // 获取版本号
+  const appWindow = getCurrentWindow();
+  windowMaterial.value = await applyMainWindowMaterial((effects) => appWindow.setEffects(effects));
+
   try {
     appVersion.value = await getVersion();
-  } catch (e) {
-    console.error('获取应用版本号失败:', e);
+  } catch (error) {
+    console.error('获取应用版本号失败:', error);
   }
 
-  // 静默检查更新
-  updateChecker.silentCheckUpdate();
-
-  // 启动网速监控
-  networkStore.fetchSpeedStats();
-  speedTimer = setInterval(networkStore.fetchSpeedStats, 1000) as unknown as number;
-
-  // 禁用右键菜单
-  window.addEventListener(
-    'contextmenu',
-    (e) => {
-      e.preventDefault();
-    },
-    { capture: true }
-  );
+  void updateChecker.silentCheckUpdate();
+  void networkStore.fetchSpeedStats();
+  speedTimer = window.setInterval(() => {
+    void networkStore.fetchSpeedStats();
+  }, 1000);
+  window.addEventListener('contextmenu', preventContextMenu, { capture: true });
 });
 
 onUnmounted(() => {
-  clearInterval(speedTimer);
-  theme.cleanup();
+  if (speedTimer !== null) window.clearInterval(speedTimer);
+  window.removeEventListener('contextmenu', preventContextMenu, { capture: true });
+  navigation.dispose();
+  islandStore.stopListeningEvents();
+  settingsActions.dispose();
+  feedback.dispose();
   networkStore.saveTrafficData();
 });
 </script>
 
 <style scoped>
-.panel-container {
+.main-window-shell {
+  position: relative;
   width: 100%;
   height: 100%;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  background: var(--bg-body);
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 16px;
+  background: var(--surface-glass);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.16);
+  box-sizing: border-box;
   color: var(--text-body);
+  backdrop-filter: blur(34px) saturate(1.24);
 }
 
-.divider {
-  border: none;
-  border-top: 1px solid var(--divider-border);
-  margin: 0;
+.main-window-shell[data-window-material='mica'],
+.main-window-shell[data-window-material='acrylic'] {
+  background: var(--surface-material);
 }
 
-.main-content {
+.main-window-content {
   flex: 1;
-  display: flex;
-  gap: 12px;
-  padding: 16px 20px;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.main-content.dynamicset-layout {
-  padding: 12px;
+.main-window-content > * {
+  height: 100%;
 }
 
-.settings-stack {
-  width: 100%;
-  display: grid;
-  gap: 12px;
+.dashboard-page-enter-active,
+.dashboard-page-leave-active {
+  transition:
+    opacity var(--motion-fast),
+    transform var(--motion-expressive);
 }
 
-.panel-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 20px;
-  border-top: 1px solid var(--divider-border);
-  background: var(--control-bg);
+.dashboard-page-enter-from {
+  opacity: 0;
+  transform: translateY(5px) scale(0.992);
 }
 
-.footer-links {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.dashboard-page-leave-to {
+  opacity: 0;
+  transform: translateY(-3px) scale(0.995);
 }
 
-.footer-link {
-  font-size: 12px;
-  color: var(--footer-text);
-  cursor: pointer;
-  transition: color 0.2s ease;
+/*
+ * 原生 View Transition 运行期间由快照动画（含容器变形）接管视觉效果，
+ * 禁用 Vue 自身的过渡，让 out-in 交换在数帧内完成，避免页面先冻结 360ms
+ */
+:root:active-view-transition .dashboard-page-enter-active,
+:root:active-view-transition .dashboard-page-leave-active {
+  transition: none;
 }
 
-.footer-link:hover {
-  color: var(--text-body);
-}
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-page-enter-active,
+  .dashboard-page-leave-active {
+    transition-duration: 120ms;
+  }
 
-.footer-separator {
-  color: var(--control-border);
-  font-size: 12px;
+  .dashboard-page-enter-from,
+  .dashboard-page-leave-to {
+    transform: none;
+  }
 }
 </style>

@@ -54,7 +54,7 @@ pub(crate) fn write_cache_in_background(
 ) {
     tokio::task::spawn_blocking(move || {
         if let Err(error) = cache.write(&identity, &track_key, &lyrics) {
-            eprintln!("[NSD] 保存歌词缓存失败: {error}");
+            eprintln!("[CodePulse] 保存歌词缓存失败: {error}");
         }
     });
 }

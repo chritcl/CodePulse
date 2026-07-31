@@ -1,151 +1,114 @@
-.dynamicset-grid {
+.island-settings-panel {
   display: grid;
-  grid-template-columns: 1fr 1fr;
   gap: 12px;
 }
 
-.set-item,
-.set-item-top {
-  background: var(--card-bg);
-  border: 1px solid var(--card-border);
-  border-radius: 10px;
-  padding: 14px;
-  display: flex;
-  justify-content: space-between;
+.player-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  /* 与分组内 14px 内缩节奏对齐，避免按钮贴边及底角被卡片圆角裁切 */
+  margin: 0 14px 14px;
+}
+
+.player-choice {
+  min-width: 0;
+  height: 48px;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 16px;
   align-items: center;
-  transition: all 0.2s ease;
-}
-
-.set-item:hover {
-  box-shadow: 0 2px 8px var(--card-shadow);
-}
-
-.set-item.disabled-set-item {
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-.set-item-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.set-item-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--item-title-color);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.set-item-title-top {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--item-title-color);
-}
-
-.set-item-desc {
-  font-size: 11px;
-  color: var(--item-desc-color);
-}
-
-.set-item-pro-tag {
-  margin: 0;
-  font-size: 9px;
-  padding: 1px 5px;
-  background: var(--tag-dev-bg);
-  color: var(--tag-dev-color);
-  border-radius: 4px;
-  font-weight: 600;
-}
-
-.capsule-switch {
-  display: flex;
-  gap: 6px;
-}
-
-.capsule-btn {
-  padding: 6px 12px;
+  gap: 8px;
+  padding: 0 10px;
   border: 1px solid var(--control-border);
-  border-radius: 20px;
-  background: var(--control-bg);
+  border-radius: 15px;
+  background: var(--surface-soft);
   color: var(--text-body);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast),
+    border-color var(--motion-fast),
+    transform var(--motion-fast);
+}
+
+.player-choice:hover {
+  border-color: color-mix(in srgb, var(--category-accent) 42%, var(--control-border));
+  transform: translateY(-1px);
+}
+
+.player-choice.is-selected {
+  border-color: color-mix(in srgb, var(--category-accent) 50%, transparent);
+  background: color-mix(in srgb, var(--category-accent) 14%, var(--surface-soft));
+}
+
+.player-choice img {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+}
+
+.player-choice span {
+  overflow: hidden;
   font-size: 11px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  font-weight: 600;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.capsule-btn:hover {
-  background: var(--card-bg);
-}
-
-.capsule-btn.is-active {
-  background: var(--btn-pri-bg);
-  color: var(--btn-pri-color);
-  border-color: var(--btn-pri-border);
-}
-
-.platform-icon {
-  width: 14px;
-  height: 14px;
-  border-radius: 3px;
-}
-
-.player-grid {
-  flex-wrap: wrap;
-}
-
-.switch {
-  position: relative;
-  display: inline-block;
-  width: 40px;
-  height: 22px;
-}
-
-.switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.slider {
-  position: absolute;
-  cursor: pointer;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: var(--slider-bg);
-  transition: 0.4s;
-  border-radius: 22px;
-}
-
-.slider:before {
-  position: absolute;
-  content: '';
-  height: 16px;
+.player-choice svg {
   width: 16px;
-  left: 3px;
-  bottom: 3px;
-  background-color: white;
-  transition: 0.4s;
-  border-radius: 50%;
+  fill: none;
+  stroke: var(--category-accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
-input:checked + .slider {
-  background-color: var(--slider-checked-bg);
+.strategy-selector {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  padding: 5px;
+  border-radius: 18px;
+  background: var(--segmented-bg);
+  /* 与分组内 14px 内缩节奏对齐，避免轨道贴边及底角被卡片圆角裁切 */
+  margin: 0 14px 14px;
 }
 
-input:checked + .slider:before {
-  transform: translateX(18px);
+.strategy-option {
+  display: grid;
+  gap: 2px;
+  padding: 9px 8px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--item-desc-color);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-standard),
+    color var(--motion-standard),
+    transform var(--motion-fast);
 }
 
-input:disabled + .slider {
-  opacity: 0.5;
-  cursor: not-allowed;
+.strategy-option span {
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.strategy-option small {
+  font-size: 9px;
+}
+
+.strategy-option:hover {
+  color: var(--text-body);
+}
+
+.strategy-option.is-selected {
+  background: color-mix(in srgb, var(--category-accent) 18%, var(--surface-glass-high));
+  color: var(--heading-color);
+  box-shadow: 0 4px 12px rgba(20, 22, 28, 0.08);
+}
+
+.strategy-option:active {
+  transform: scale(0.98);
 }

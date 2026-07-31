@@ -46,14 +46,16 @@ describe('useIslandStore', () => {
   });
 
   it('状态同步只更新运行态，不覆盖用户开关偏好', async () => {
-    localStorage.setItem('nsd_island_enabled', 'true');
+    localStorage.setItem('codepulse_island_enabled', 'true');
     const store = useIslandStore();
 
     await store.startListening();
     tauriMocks.listeners['island-status-sync']({ payload: { visible: false } });
 
     expect(store.isVisible).toBe(false);
-    expect(localStorage.getItem('nsd_island_enabled')).toBe('true');
+    expect(localStorage.getItem('codepulse_island_enabled')).toBe('true');
+    expect(store).not.toHaveProperty('showSettings');
+    expect(tauriMocks.listen).not.toHaveBeenCalledWith('open-settings-panel', expect.any(Function));
   });
 
   it('用户点击开关时会持久化偏好', async () => {
@@ -62,13 +64,13 @@ describe('useIslandStore', () => {
     await store.toggleVisibility();
 
     expect(store.isVisible).toBe(false);
-    expect(localStorage.getItem('nsd_island_enabled')).toBe('false');
+    expect(localStorage.getItem('codepulse_island_enabled')).toBe('false');
     expect(tauriMocks.emit).toHaveBeenCalledWith('control-island-visibility', { show: false });
   });
 
   it('开关偏好为开启但窗口不可见时会补发显示命令', async () => {
     vi.useFakeTimers();
-    localStorage.setItem('nsd_island_enabled', 'true');
+    localStorage.setItem('codepulse_island_enabled', 'true');
     tauriMocks.invoke.mockResolvedValue(false);
     const store = useIslandStore();
 
@@ -80,6 +82,6 @@ describe('useIslandStore', () => {
     expect(store.isVisible).toBe(true);
     expect(tauriMocks.emit).toHaveBeenCalledWith('control-island-visibility', { show: true });
     expect(tauriMocks.invoke).toHaveBeenCalledWith('set_island_visible', { visible: true });
-    expect(localStorage.getItem('nsd_island_enabled')).toBe('true');
+    expect(localStorage.getItem('codepulse_island_enabled')).toBe('true');
   });
 });

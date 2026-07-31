@@ -6,17 +6,40 @@
 
 /* 亮色模式默认变量 */
 :root {
-  --bg-body: #f8fafc;
-  --text-body: #1e293b;
-  --h1-color: #0f172a;
-  --subtitle-color: #798089;
-  --control-bg: #ffffff;
-  --control-border: #e2e8f0;
+  color-scheme: light;
+  --bg-body: rgba(243, 246, 251, 0.88);
+  --text-body: #292b32;
+  --heading-color: #17191f;
+  --h1-color: #17191f;
+  --subtitle-color: #6e737d;
+  --accent-primary: #65558f;
+  --on-accent: #ffffff;
+  --surface-glass: rgba(246, 248, 252, 0.9);
+  --surface-glass-high: rgba(255, 255, 255, 0.9);
+  --surface-material: rgba(245, 247, 251, 0.64);
+  --surface-solid: #ffffff;
+  --surface-soft: rgba(255, 255, 255, 0.46);
+  --detail-surface: rgba(255, 255, 255, 0.62);
+  --segmented-bg: rgba(47, 50, 58, 0.08);
+  --glass-border: rgba(72, 76, 86, 0.12);
+  --glass-border-strong: rgba(72, 76, 86, 0.2);
+  --state-hover: rgba(44, 47, 55, 0.08);
+  --focus-ring: rgba(101, 85, 143, 0.78);
+  --switch-track: rgba(67, 71, 80, 0.13);
+  --switch-border: rgba(67, 71, 80, 0.38);
+  --switch-thumb: #ffffff;
+  --scroll-thumb: rgba(58, 62, 70, 0.22);
+  --titlebar-bg: rgba(255, 255, 255, 0.26);
+  --motion-fast: 180ms cubic-bezier(0.2, 0, 0, 1);
+  --motion-standard: 220ms cubic-bezier(0.2, 0, 0, 1);
+  --motion-expressive: 360ms cubic-bezier(0.2, 0.9, 0.18, 1);
+  --control-bg: rgba(255, 255, 255, 0.52);
+  --control-border: rgba(72, 76, 86, 0.16);
   --status-badge-inactive: #94a3b8;
   --status-badge-active: #2b2b2b;
-  --divider-border: #e2e8f0;
-  --card-bg: #ffffff;
-  --card-border: #e2e8f0;
+  --divider-border: rgba(72, 76, 86, 0.12);
+  --card-bg: rgba(255, 255, 255, 0.6);
+  --card-border: rgba(72, 76, 86, 0.14);
   --card-shadow: rgba(0, 0, 0, 0.03);
   --card-shadow-hover: rgba(0, 0, 0, 0.06);
   --card-h3-color: #334155;
@@ -63,17 +86,39 @@
 
 /* 暗色模式变量覆盖 */
 html.dark-theme {
-  --bg-body: #1e2021;
-  --text-body: #cbd5e1;
+  color-scheme: dark;
+  /* 覆盖 index.html 内联的暗色防闪底色，恢复透明窗口背景（同优先级、后加载生效） */
+  background: transparent;
+  --bg-body: rgba(24, 26, 31, 0.9);
+  --text-body: #dfe1ea;
+  --heading-color: #f3f3fa;
   --h1-color: #f8fafc;
   --subtitle-color: #a5aeba;
-  --control-bg: #292b2e;
-  --control-border: #383c41;
+  --accent-primary: #d0bcff;
+  --on-accent: #35275d;
+  --surface-glass: rgba(25, 27, 33, 0.91);
+  --surface-glass-high: rgba(39, 41, 49, 0.92);
+  --surface-material: rgba(25, 27, 33, 0.66);
+  --surface-solid: #292b32;
+  --surface-soft: rgba(255, 255, 255, 0.055);
+  --detail-surface: rgba(255, 255, 255, 0.065);
+  --segmented-bg: rgba(255, 255, 255, 0.08);
+  --glass-border: rgba(245, 245, 255, 0.09);
+  --glass-border-strong: rgba(245, 245, 255, 0.16);
+  --state-hover: rgba(245, 245, 255, 0.09);
+  --focus-ring: rgba(208, 188, 255, 0.82);
+  --switch-track: rgba(232, 229, 238, 0.12);
+  --switch-border: rgba(232, 229, 238, 0.34);
+  --switch-thumb: #f2eef8;
+  --scroll-thumb: rgba(242, 238, 248, 0.24);
+  --titlebar-bg: rgba(17, 19, 24, 0.28);
+  --control-bg: rgba(42, 44, 52, 0.56);
+  --control-border: rgba(245, 245, 255, 0.11);
   --status-badge-inactive: #64748b;
   --status-badge-active: #f8fafc;
-  --divider-border: #334155;
-  --card-bg: #292b2e;
-  --card-border: #383c41;
+  --divider-border: rgba(245, 245, 255, 0.09);
+  --card-bg: rgba(42, 44, 52, 0.66);
+  --card-border: rgba(245, 245, 255, 0.11);
   --card-shadow: rgba(0, 0, 0, 0.2);
   --card-shadow-hover: rgba(0, 0, 0, 0.3);
   --card-h3-color: #e2e8f0;
@@ -119,7 +164,8 @@ html.dark-theme {
 }
 
 /* 全局基础样式 */
-html, body {
+html,
+body {
   margin: 0;
   padding: 0;
   width: 100%;
@@ -129,13 +175,16 @@ html, body {
 
 html {
   color: var(--text-body);
-  transition: background-color 0.3s ease, color 0.3s ease;
+  background: transparent;
+  transition:
+    background-color var(--motion-standard),
+    color var(--motion-standard);
 }
 
 body {
   background-color: transparent !important;
   color: inherit;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
   user-select: none;
   -webkit-font-smoothing: antialiased;
 }
@@ -143,4 +192,28 @@ body {
 #app {
   width: 100%;
   height: 100%;
+  background: transparent;
+}
+
+h1,
+h2,
+h3 {
+  font-family: 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
+}
+
+::view-transition-group(settings-appearance),
+::view-transition-group(settings-island),
+::view-transition-group(settings-system),
+::view-transition-group(settings-codex) {
+  animation-duration: 360ms;
+  animation-timing-function: cubic-bezier(0.2, 0.9, 0.18, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(settings-appearance),
+  ::view-transition-group(settings-island),
+  ::view-transition-group(settings-system),
+  ::view-transition-group(settings-codex) {
+    animation-duration: 120ms;
+  }
 }
