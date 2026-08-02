@@ -1,32 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Effect } from '@tauri-apps/api/window';
 import { applyMainWindowMaterial } from './mainWindowMaterial';
 
 describe('主窗口材质', () => {
-  it('优先应用 Mica', async () => {
-    const setEffects = vi.fn(async () => {});
+  it('透明圆角主窗口清除原生材质并使用 CSS 背景', async () => {
+    const clearEffects = vi.fn(async () => {});
 
-    await expect(applyMainWindowMaterial(setEffects)).resolves.toBe('mica');
-    expect(setEffects).toHaveBeenCalledOnce();
-    expect(setEffects).toHaveBeenCalledWith({ effects: [Effect.Mica] });
+    await expect(applyMainWindowMaterial(clearEffects)).resolves.toBe('fallback');
+    expect(clearEffects).toHaveBeenCalledOnce();
+    expect(clearEffects).toHaveBeenCalledWith();
   });
 
-  it('Mica 失败后回退到 Acrylic', async () => {
-    const setEffects = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('Mica 不可用'))
-      .mockResolvedValueOnce(undefined);
-
-    await expect(applyMainWindowMaterial(setEffects)).resolves.toBe('acrylic');
-    expect(setEffects).toHaveBeenNthCalledWith(2, { effects: [Effect.Acrylic] });
-  });
-
-  it('两种系统材质均失败时使用 CSS 回退', async () => {
-    const setEffects = vi.fn(async () => {
-      throw new Error('不可用');
+  it('系统不支持清理原生材质时仍使用 CSS 背景', async () => {
+    const clearEffects = vi.fn(async () => {
+      throw new Error('不支持清理窗口材质');
     });
 
-    await expect(applyMainWindowMaterial(setEffects)).resolves.toBe('fallback');
-    expect(setEffects).toHaveBeenCalledTimes(2);
+    await expect(applyMainWindowMaterial(clearEffects)).resolves.toBe('fallback');
+    expect(clearEffects).toHaveBeenCalledOnce();
   });
 });

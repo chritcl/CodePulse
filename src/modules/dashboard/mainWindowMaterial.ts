@@ -1,20 +1,13 @@
-import { Effect, type Effects } from '@tauri-apps/api/window';
-
-export type MainWindowMaterial = 'mica' | 'acrylic' | 'fallback';
-export type SetWindowEffects = (effects: Effects) => Promise<void>;
+export type MainWindowMaterial = 'fallback';
+export type ClearWindowEffects = () => Promise<void>;
 
 export const applyMainWindowMaterial = async (
-  setEffects: SetWindowEffects
+  clearEffects: ClearWindowEffects
 ): Promise<MainWindowMaterial> => {
   try {
-    await setEffects({ effects: [Effect.Mica] });
-    return 'mica';
+    await clearEffects();
   } catch {
-    try {
-      await setEffects({ effects: [Effect.Acrylic] });
-      return 'acrylic';
-    } catch {
-      return 'fallback';
-    }
+    // 部分 Windows 版本不支持清理窗口材质，此时继续使用 CSS 背景
   }
+  return 'fallback';
 };

@@ -23,7 +23,7 @@
         "resizable": false,
         "decorations": false,
         "transparent": true,
-        "shadow": true,
+        "shadow": false,
         "center": true,
         "maximized": false,
         "maximizable": false,

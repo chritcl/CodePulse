@@ -7,11 +7,10 @@ interface DashboardTransitionOptions {
   prefersReducedMotion?: boolean;
   wait?: (duration: number) => Promise<void>;
   /**
-   * 原生 View Transition 路径下等待新页面挂载完成的回调。
-   * out-in 模式下新页面要等旧页面离场后才插入 DOM，必须先等它再让浏览器捕获新快照，
-   * 否则共享元素容器变形永远不会发生。
+   * 原生 View Transition 路径下等待响应式更新提交到 DOM。
+   * 这里只等待一次渲染刷新，不能等待组件入场动画，否则旧快照会长时间遮住新内容。
    */
-  awaitNewPage?: () => Promise<void>;
+  awaitRender?: () => Promise<void>;
 }
 
 const waitFor = (duration: number) =>
@@ -46,10 +45,8 @@ export const runDashboardViewTransition = async (
   if (startViewTransition) {
     const transition = startViewTransition(async () => {
       update();
-      if (options.awaitNewPage) {
-        // 等新页面完成挂载后再让浏览器捕获新快照；超时兜底避免快照永久挂起
-        // （上限需覆盖离场 360ms + 入场 360ms 的最坏情况）
-        await Promise.race([options.awaitNewPage(), wait(800)]);
+      if (options.awaitRender) {
+        await options.awaitRender();
       }
     });
     await transition.finished;

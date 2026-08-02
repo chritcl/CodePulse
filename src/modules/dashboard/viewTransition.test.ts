@@ -20,30 +20,34 @@ describe('runDashboardViewTransition', () => {
     expect(update).toHaveBeenCalledOnce();
   });
 
-  it('原生过渡时先等待新页面挂载完成再结束快照捕获', async () => {
+  it('原生过渡时只等待下一次 DOM 提交，不追加定时动画等待', async () => {
     const order: string[] = [];
     const update = vi.fn(() => {
       order.push('update');
     });
-    const awaitNewPage = vi.fn(async () => {
-      order.push('awaitNewPage');
+    const awaitRender = vi.fn(async () => {
+      order.push('awaitRender');
     });
-    // 模拟浏览器：调用回调并等其 Promise 完成后才 resolve finished
+    const wait = vi.fn(() => Promise.resolve());
+    // 模拟浏览器等待更新回调完成后再捕获新页面快照
     const startViewTransition = vi.fn((callback: () => void | Promise<void>) => ({
-      finished: Promise.resolve().then(() => callback()).then(() => undefined),
+      finished: Promise.resolve()
+        .then(() => callback())
+        .then(() => undefined),
     }));
 
     await runDashboardViewTransition(update, {
       startViewTransition,
       prefersReducedMotion: false,
-      awaitNewPage,
-      wait: vi.fn(() => Promise.resolve()),
+      awaitRender,
+      wait,
     });
 
     expect(startViewTransition).toHaveBeenCalledOnce();
     expect(update).toHaveBeenCalledOnce();
-    expect(awaitNewPage).toHaveBeenCalledOnce();
-    expect(order).toEqual(['update', 'awaitNewPage']);
+    expect(awaitRender).toHaveBeenCalledOnce();
+    expect(wait).not.toHaveBeenCalled();
+    expect(order).toEqual(['update', 'awaitRender']);
   });
 
   it('不支持原生过渡时使用 360 毫秒回退动画', async () => {

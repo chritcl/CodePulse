@@ -3,7 +3,7 @@
     <MainWindowTitleBar :page-title="pageTitle" />
 
     <main class="main-window-content">
-      <Transition name="dashboard-page" mode="out-in" @after-enter="handlePageAfterEnter">
+      <Transition name="dashboard-page">
         <DashboardHome
           v-if="navigation.location.value.page === 'dashboard'"
           key="dashboard"
@@ -57,7 +57,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useIslandStore, useNetworkStore, useSettingsStore } from '@/stores';
@@ -104,21 +104,8 @@ const pageTitle = computed(() => {
   return '设置详情';
 });
 
-// 原生 View Transition 期间挂起的新页面挂载通知：after-enter 触发时解除
-let pageEnteredResolve: (() => void) | null = null;
-
-const waitForNewPageMounted = () =>
-  new Promise<void>((resolve) => {
-    pageEnteredResolve = resolve;
-  });
-
-const handlePageAfterEnter = () => {
-  pageEnteredResolve?.();
-  pageEnteredResolve = null;
-};
-
 const runTransition = (update: () => void) =>
-  runDashboardViewTransition(update, { awaitNewPage: waitForNewPageMounted });
+  runDashboardViewTransition(update, { awaitRender: nextTick });
 
 const openCategory = (category: SettingsCategoryId) => {
   void navigation.openCategory(category, runTransition);
@@ -139,7 +126,7 @@ onMounted(async () => {
   await islandStore.checkInitialState();
 
   const appWindow = getCurrentWindow();
-  windowMaterial.value = await applyMainWindowMaterial((effects) => appWindow.setEffects(effects));
+  windowMaterial.value = await applyMainWindowMaterial(() => appWindow.clearEffects());
 
   try {
     appVersion.value = await getVersion();
@@ -217,7 +204,7 @@ onUnmounted(() => {
 
 /*
  * 原生 View Transition 运行期间由快照动画（含容器变形）接管视觉效果，
- * 禁用 Vue 自身的过渡，让 out-in 交换在数帧内完成，避免页面先冻结 360ms
+ * 禁用 Vue 自身的过渡，避免与浏览器快照动画重复播放
  */
 :root:active-view-transition .dashboard-page-enter-active,
 :root:active-view-transition .dashboard-page-leave-active {
