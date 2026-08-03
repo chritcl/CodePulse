@@ -6,10 +6,6 @@
 
 // 导出类型定义
 export type {
-  // 基础类型
-  SuccessResponse,
-  ErrorResponse,
-
   // 灵动岛相关
   IslandStatusSyncPayload,
   IslandOpacityPayload,
@@ -53,9 +49,9 @@ export type {
   IslandAnimationPayload,
 
   // 系统状态
-  NetworkSpeedData,
-  HardwareData,
-  NotificationData,
+  NetworkStats,
+  HardwareStats,
+  LatestNotificationPayload,
 
   // R4 统一状态类型
   IslandSettings,

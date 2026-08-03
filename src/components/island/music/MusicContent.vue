@@ -76,7 +76,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
-import type { TrackLyricsStatus } from '@/composables/useTrackLyrics';
+import type { TrackLyricsStatus } from '@/composables/music/useTrackLyrics';
 import MusicLyricsPanel from './MusicLyricsPanel.vue';
 import MusicProgressControl from './MusicProgressControl.vue';
 

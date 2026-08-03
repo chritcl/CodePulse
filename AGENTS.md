@@ -19,16 +19,18 @@ CodePulse/
 │  ├─ plans/                              # 已完成的设计与重构记录
 │  ├─ superpowers/plans/                  # 音乐歌词重构实施记录
 │  └─ 2026-07-16-codex-status-island-design.md
-│                                          # Codex 状态岛设计，尚未实现
+│                                          # Codex 状态岛的历史设计记录
 ├─ src/                                   # Vue 3 + TypeScript 前端
 │  ├─ components/
-│  │  ├─ dashboard/                       # 控制台视图、设置和图表
-│  │  └─ island/                          # 灵动岛外壳、展示与内容组件
-│  ├─ composables/                        # 窗口、动画、音乐会话、歌词等组合式逻辑
-│  ├─ modules/island/                     # 无副作用的岛布局、歌词、时间线逻辑
+│  │  ├─ dashboard/settings/              # 控制台设置视图
+│  │  └─ island/{music,codex}/            # 按领域分组的灵动岛内容组件
+│  ├─ composables/{dashboard,island,music,codex}/
+│  │                                        # 按领域分组的组合式逻辑
+│  ├─ modules/{dashboard,island,music,codex}/
+│  │                                        # 无副作用的可测试逻辑
 │  ├─ router/                             # `/` 与 `/widget` 路由
 │  ├─ shared/
-│  │  ├─ ipc/                             # Tauri 命令、事件和契约
+│  │  ├─ ipc/contracts/                   # 媒体、窗口、系统、设置与 Codex 契约
 │  │  └─ utils/                           # localStorage 与事件监听器注册表
 │  ├─ stores/                             # Pinia 设置、网络、灵动岛状态
 │  ├─ styles/theme.css                    # 全局主题变量
@@ -38,6 +40,7 @@ CodePulse/
 │  ├─ src/
 │  │  ├─ app/                             # AppState：sysinfo 网络与系统状态
 │  │  ├─ commands/                        # Tauri 命令及 SMTC 时间线
+│  │  ├─ codex/                           # 状态接收、聚合与 Hook 集成管理
 │  │  ├─ lyrics/                          # 歌词服务、缓存、解析、源与测试
 │  │  ├─ lib.rs                           # 初始化、命令注册、托盘、窗口事件
 │  │  └─ main.rs                          # Rust 入口
@@ -64,7 +67,7 @@ CodePulse/
 |---|---|
 | 桌面框架 | Tauri 2 |
 | 前端 | Vue 3.5、TypeScript 5.6、Vue Router 5、Pinia 3 |
-| 构建与质量 | Vite 6、ESLint 10、Prettier 3、Vitest 4、`@vue/test-utils` 2、jsdom |
+| 构建与质量 | Vite 8、ESLint 10、Prettier 3、Vitest 4、`@vue/test-utils` 2、jsdom |
 | 图表 | ECharts 6 |
 | Rust 运行时 | Tokio 1、serde、reqwest 0.12、async-trait |
 | Windows 能力 | `windows` 0.58、Windows SMTC、Toast、WASAPI、Win32 窗口与电源 API |
@@ -74,7 +77,7 @@ CodePulse/
 
 ### 双窗口与状态同步
 
-主窗口与 Widget 分别创建 Vue 应用，**不共享 Pinia 内存状态**。跨窗口状态通过 Tauri 事件同步：事件常量在 `src/shared/ipc/events.ts`，Payload 在 `contracts.ts`，命令封装在 `commands.ts`。
+主窗口与 Widget 分别创建 Vue 应用，**不共享 Pinia 内存状态**。跨窗口状态通过 Tauri 事件同步：事件常量在 `src/shared/ipc/events.ts`，Payload 按领域放在 `src/shared/ipc/contracts/`，命令封装在 `commands.ts`。
 
 ```text
 主窗口（设置 / 图表）
@@ -90,8 +93,8 @@ Widget（IslandView） ── Tauri 命令 ── Rust 后端 / Windows API
 布局调度位于 `src/modules/island/display.ts` 的 `resolveIslandLayout()`。当前可识别的类型为：
 
 - `network`：永久兜底岛；
-- `music`、`hardware`、`notification`、`system-toast`：已接入展示；
-- `agent`、`wechat`、`update`：布局模型已预留，尚无完整运行时模块。
+- `music`、`hardware`、`notification`、`system-toast`、`agent`：已接入展示；
+- `wechat`、`update`：布局模型已预留，尚无完整运行时模块。
 
 主岛选择顺序为：强打断 → 未过期的手动聚焦 → 软打断 → 轮换 → 稳定主岛 → 优先级 → 网速兜底。卫星岛默认最多三个，排除网速与系统提示，并显示溢出数量。`musicProgressVisible` 会影响展开音乐岛的高度，改动进度条时必须同时检查布局尺寸逻辑和组件渲染条件。
 
@@ -114,6 +117,12 @@ Widget（IslandView） ── Tauri 命令 ── Rust 后端 / Windows API
 - 进度条只在会话就绪、可跳转且时间线有效时展示；跳转通过 `seek_system_media`，成功后强制拉取新快照。
 - 前端歌词按播放会话身份隔离，支持内存正/负缓存、请求代际隔离和两次退避重试；封面使用最近 50 首的 LRU 内存缓存。
 - Rust `LyricsService` 管理于应用数据目录的 `lyrics` 子目录，缓存 TTL 为 30 天；单次 HTTP 超时 3 秒、整次查询截止 8 秒。当前在线源为网易云与 QQ 音乐，并按目标播放器偏好排序后选择置信度最高的结果。
+
+### Codex 状态与集成
+
+Rust `CodexRuntime` 启动仅本机可访问的接收器，将经过鉴权和清理的 Hook 事件聚合为任务快照，再通过 Tauri 事件同步到 Widget。前端 `useCodexStatus` 管理快照，`useCodexTaskCarousel` 管理关注任务、手动选择、轮换、悬停与减少动画偏好。
+
+`CodexIntegration` 是配置集成的唯一外部接口，继续提供检查、预览、确认和监听器启动判断。候选配置检查、Hook/Bridge 引用扫描位于 `integration/inspection.rs`，摘要校验、备份、原子替换与引用清理位于 `integration/mutation.rs`。
 
 ### 后端初始化与系统集成
 
@@ -138,21 +147,25 @@ Widget 在 Windows 下会额外设置 `WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT`。�
 | `useIslandWindow`、`useIslandAnimation`、`useIslandDrag` | Widget 尺寸位置、进出场动画、拖拽和锁定。 |
 | `useMusicSpectrum` | 音频频谱轮询和无频谱时的保底脉冲。 |
 | `useMusicPlaybackSession`、`musicPlaybackRuntime`、`musicTargetCoordinator` | 目标播放器切换、串行媒体操作、轮询、陈旧和异步代际保护。 |
-| `usePlaybackTimeline`、`modules/island/playbackTimeline.ts` | 播放位置时钟与时间锚点校正。 |
-| `useTrackLyrics`、`trackLyricsCache`、`modules/island/lyrics.ts` | 歌词请求、重试、缓存、标准化与当前行匹配。 |
+| `useIslandSystemMonitor` | 网速、延迟、硬件轮询、阈值迟滞、旧请求防护与清理。 |
+| `useIslandInterruptions` | 通知轮询、系统提示队列、消息模式临时显隐与清理。 |
+| `usePlaybackTimeline`、`modules/music/playbackTimeline.ts` | 播放位置时钟与时间锚点校正。 |
+| `useTrackLyrics`、`trackLyricsCache`、`modules/music/lyrics.ts` | 歌词请求、重试、缓存、标准化与当前行匹配。 |
 | `useTrackCover` | 封面请求、LRU 缓存与旧请求覆盖防护。 |
-| `modules/island/musicActivity.ts` | 启动阶段与开关切换时的音乐会话启停规则。 |
+| `modules/music/musicActivity.ts` | 启动阶段与开关切换时的音乐会话启停规则。 |
+| `useCodexTaskCarousel` | Codex 关注任务、手动选择、自动轮换与减少动画偏好。 |
 | `shared/utils/eventListenerRegistry.ts` | 统一登记与释放 Tauri 事件监听器。 |
 
-`IslandView.vue` 仍是现有的核心编排组件（约 1,200 行）。新增音乐、歌词、Agent 或其他业务状态时，应优先添加 composable、纯逻辑模块或内容组件，只在其中接线，避免继续扩大该文件。
+`IslandView.vue` 是模块装配、布局输入、窗口交互和跨模块协调边界。系统监控与中断消息已提取为独立 composable；新增业务状态时应继续优先添加 composable、纯逻辑模块或内容组件。
 
 ### 灵动岛内容组件
 
 - `IslandShell.vue`：外壳、流光边框、展开区域；
 - `IslandDisplayController.vue`：按布局种类分发内容；
 - `IslandSatelliteStrip.vue`、`IslandStatusIndicator.vue`：卫星岛与状态指示；
-- `MusicContent.vue`：紧凑音乐信息、展开歌词、媒体控制与进度条；样式拆分在 `MusicContent.css`；
+- `music/MusicContent.vue`：紧凑音乐信息、展开歌词、媒体控制与进度条；样式拆分在同目录 `MusicContent.css`；
 - `MusicLyricsPanel.vue`、`MusicProgressControl.vue`：歌词状态和可访问的范围进度控件；
+- `codex/CodexContent.vue`：Codex 任务状态展示与事件转发；轮换状态由 `useCodexTaskCarousel` 管理；
 - `SpeedContent.vue`、`HardwareContent.vue`、`NotificationContent.vue`、`SystemToastContent.vue`：其余已接入内容。
 
 样式通常使用 SFC 的 `<style scoped>`，但已有 `MusicContent.css` 和 `IslandSettingsPanel.css` 这类与组件同目录的拆分样式。遵循附近模块的做法，不要为了形式把已有拆分样式强行内联。
@@ -182,7 +195,7 @@ Widget 在 Windows 下会额外设置 `WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT`。�
 
 - 前端调用 Rust 命令时，优先从 `src/shared/ipc/commands.ts` 使用已封装的接口；新增命令要同步添加 TypeScript 契约、封装、测试与 Rust 注册。
 - 事件名称集中于 `events.ts`，保持 kebab-case；统一状态事件为 `app.settings.updated`、`app.snapshot.updated`、`app.island.visibility`、`island.display.changed`。
-- 跨窗口 Payload 集中于 `contracts.ts`，接口名使用 PascalCase，并避免在组件内散落重复类型。
+- 跨窗口 Payload 按领域拆分在 `contracts/`，由 `contracts/index.ts` 统一重导出；接口名使用 PascalCase，并避免在组件内散落重复类型。
 - `MusicPlaybackState` 的 `durationMs`、`positionMs`、`timelineUpdatedAtMs`、`snapshotTakenAtMs` 与 `canSeek` 是一组时间线契约，任何一侧改名或更改单位都必须同步更新 Rust、IPC、时间线逻辑与测试。
 
 ## 编码与实现规范
@@ -202,8 +215,8 @@ Widget 在 Windows 下会额外设置 `WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT`。�
 
 ### 现有覆盖重点
 
-- `modules/island`：布局优先级、歌词匹配、音乐活动与播放时间线；
-- `composables`：音乐目标切换、会话运行时、频谱、时间线、歌词、封面和窗口控制；
+- `modules/island`：布局优先级与弹簧动画；`modules/music`：歌词匹配、音乐活动与播放时间线；
+- `composables`：系统监控、中断消息、Codex 轮换、音乐目标切换、会话运行时、频谱、时间线、歌词、封面和窗口控制；
 - `shared`：IPC 命令、localStorage、事件监听器释放；
 - `components`：岛内容分发、卫星岛、状态指示、音乐内容、歌词面板、进度跳转与设置面板；
 - Rust：`media_timeline.rs` 内联测试，以及 `lyrics` 下的缓存、匹配、解析、HTTP、服务和回归测试模块。
@@ -250,7 +263,7 @@ Pop-Location
 3. 通知轮询会过滤微信内容；首次轮询只建立基线，不弹出历史通知。
 4. 目前硬件命令只提供 CPU 与内存数据；不要将 GPU 细项视为已实现能力。
 5. Rust 设置快照/更新仍是过渡实现，设置持久化迁移到 Rust 存储尚未完成。
-6. `agent` 类型仅是多岛布局占位。`docs/2026-07-16-codex-status-island-design.md` 已定义 Codex 实时状态岛的协议、边界和实施顺序，但尚未有 `src/modules/codex`、后端接收器或界面实现。
+6. Codex 状态岛依赖本机 Hook/Bridge 集成；配置写入必须继续经过检查、预览摘要和确认流程，不能绕过 `CodexIntegration` 直接修改用户配置。
 7. 未来计划还包括更细的 GPU、磁盘 I/O、进程网络监控，以及天气、日程、倒计时等岛模块。
 
 ## 审查清单

@@ -3,7 +3,7 @@ import type { MusicPlaybackState } from '@/shared/ipc/contracts';
 import {
   createPlaybackTimelineClock,
   type TimelineReceivedAt,
-} from '@/modules/island/playbackTimeline';
+} from '@/modules/music/playbackTimeline';
 
 export interface PlaybackTimelineController {
   positionMs: Ref<number | null>;

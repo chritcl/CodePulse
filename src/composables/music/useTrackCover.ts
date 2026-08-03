@@ -1,7 +1,7 @@
 import { getCurrentScope, onScopeDispose, ref } from 'vue';
 import type { MusicPlaybackState } from '@/shared/ipc/contracts';
 import { mediaCommands } from '@/shared/ipc/commands';
-import { buildPlaybackSessionIdentity } from '@/modules/island/lyrics';
+import { buildPlaybackSessionIdentity } from '@/modules/music/lyrics';
 
 const MAX_CACHE_SIZE = 50;
 

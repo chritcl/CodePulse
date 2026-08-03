@@ -10,7 +10,7 @@
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://rust-lang.org)
 [![Vue 3](https://img.shields.io/badge/Vue-3.x-green?logo=vue.js)](https://vuejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?logo=typescript)](https://www.typescriptlang.org)
-[![Vite](https://img.shields.io/badge/Vite-6.x-yellow?logo=vite)](https://vite.dev)
+[![Vite](https://img.shields.io/badge/Vite-8.x-yellow?logo=vite)](https://vite.dev)
 [![ECharts](https://img.shields.io/badge/ECharts-6.x-purple?logo=apache-echarts)](https://echarts.apache.org)
 
 </div>
@@ -23,7 +23,7 @@
 
 ---
 
-这是一个基于 **Tauri 2 + Rust + Vue 3** 的桌面灵动岛组件，灵动岛悬浮窗实时显示网络速度，支持多平台音乐控制、流量统计、系统通知接收与硬件监控，支持置于任务栏左下角及智能轮换模式。
+这是一个基于 **Tauri 2 + Rust + Vue 3** 的桌面灵动岛组件，灵动岛悬浮窗实时显示网络速度，支持多平台音乐控制、流量统计、系统通知接收、硬件监控与 Codex 任务状态，支持置于任务栏左下角及智能轮换模式。
 
 ## 功能
 
@@ -62,6 +62,12 @@
 - **高占用预警**：≥90% 时自动红色警示
 - **主题自适应**：支持暗色/亮色主题
 
+### Codex 状态岛
+
+- **实时任务状态**：展示运行、等待输入、等待批准、完成与失败状态
+- **任务轮换**：优先关注需要处理的任务，支持手动选择和减少动画偏好
+- **安全集成管理**：可在设置中检查、预览、确认安装或移除 Codex Hook 集成
+
 ### 灵动岛轮换模式
 
 - **智能轮换**：在网速岛、音乐岛、硬件监控之间自动轮换
@@ -82,53 +88,54 @@
 
 ## 技术栈
 
-| 层级 | 技术 |
-|------|------|
-| 桌面框架 | Tauri 2 (Rust) |
-| 前端框架 | Vue 3 + TypeScript |
-| 构建工具 | Vite 6 |
-| 路由 | Vue Router 5 |
-| 图表 | ECharts 6 |
-| 图标 | 预留 @lucide/vue |
-| 网络监控 | sysinfo (Rust) |
-| 异步运行时 | Tokio (Rust) |
-| HTTP 客户端 | reqwest (Rust) |
-| 媒体控制 | Windows SMTC API |
+| 层级        | 技术                           |
+| ----------- | ------------------------------ |
+| 桌面框架    | Tauri 2 (Rust)                 |
+| 前端框架    | Vue 3 + TypeScript             |
+| 构建工具    | Vite 8                         |
+| 路由        | Vue Router 5                   |
+| 图表        | ECharts 6                      |
+| 图标        | 预留 @lucide/vue               |
+| 网络监控    | sysinfo (Rust)                 |
+| 异步运行时  | Tokio (Rust)                   |
+| HTTP 客户端 | reqwest (Rust)                 |
+| 媒体控制    | Windows SMTC API               |
 | Windows API | windows + windows-sys + winapi |
-| 本地存储 | localStorage |
+| 本地存储    | localStorage                   |
 
 ## 项目结构
 
 ```
 CodePulse/
-├── src/                    # 前端源码
-│   ├── main.ts             # 应用入口
-│   ├── router/index.ts     # 路由配置
+├── src/                         # Vue 3 + TypeScript 前端
 │   ├── components/
-│   │   ├── dashboard/      # 主控制台组件
-│   │   └── island/         # 灵动岛组件
-│   ├── composables/        # 前端组合式逻辑
-│   ├── stores/             # Pinia 状态管理
-│   ├── shared/ipc/         # Tauri 命令、事件和类型封装
-│   └── assets/             # 静态资源（图标、截图）
-├── src-tauri/              # Tauri 后端
-│   ├── src/
-│   │   ├── main.rs         # Rust 入口
-│   │   ├── lib.rs          # Tauri 启动和模块注册
-│   │   ├── app/            # 全局状态
-│   │   ├── commands/       # Tauri 命令
-│   │   └── error.rs        # 统一错误类型
-│   ├── Cargo.toml          # Rust 依赖
-│   └── tauri.conf.json     # Tauri 配置
-├── package.json            # 前端依赖
-└── pnpm-lock.yaml          # pnpm 锁文件
+│   │   ├── dashboard/settings/  # 控制台设置视图
+│   │   └── island/
+│   │       ├── codex/           # Codex 状态内容
+│   │       └── music/           # 音乐内容、歌词与进度控件
+│   ├── composables/
+│   │   ├── codex/               # Codex 状态、集成与任务轮换
+│   │   ├── dashboard/           # 控制台导航与设置动作
+│   │   ├── island/              # 窗口、系统监控与中断消息
+│   │   └── music/               # 音乐会话、歌词、封面与时间线
+│   ├── modules/                 # codex、dashboard、island、music 纯逻辑
+│   ├── shared/ipc/contracts/    # 按领域拆分的 IPC 契约
+│   ├── stores/                  # Pinia 状态管理
+│   └── router/                  # 主窗口与 Widget 路由
+├── src-tauri/
+│   ├── src/codex/               # Codex 接收器、聚合器与集成管理
+│   ├── src/commands/            # Tauri 命令
+│   ├── src/lyrics/              # 歌词服务、缓存、解析与在线源
+│   └── tauri.conf.json          # 双窗口配置
+├── package.json
+└── pnpm-lock.yaml
 ```
 
 ## 开发环境
 
 ### 前置依赖
 
-- Node.js >= 18
+- Node.js `^20.19.0 || >=22.12.0`
 - Rust >= 1.70
 - Tauri 2 CLI
 - pnpm 10.33.2

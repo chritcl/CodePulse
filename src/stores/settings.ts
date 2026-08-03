@@ -1,8 +1,8 @@
 /**
- * 设置 Store
+ * 设置状态仓库
  *
  * 管理应用设置状态，提供统一的设置读写接口。
- * 当前阶段使用 localStorage 作为后端，R5 阶段迁移到 Rust 存储。
+ * 目前使用 localStorage 持久化设置，Rust 侧设置命令只负责跨窗口同步。
  */
 
 import { defineStore } from 'pinia';
@@ -68,7 +68,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const codexIdleResident = ref(readBoolean('codepulse_codex_idle_resident'));
 
   /** 显示 Codex 脱敏操作摘要 */
-  const showCodexOperationSummary = ref(readBoolean('codepulse_codex_show_operation_summary', true));
+  const showCodexOperationSummary = ref(
+    readBoolean('codepulse_codex_show_operation_summary', true)
+  );
 
   /** 显示 Codex 脱敏任务摘要 */
   const showCodexTaskSummary = ref(readBoolean('codepulse_codex_show_task_summary'));

@@ -13,7 +13,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { TrackLyricsStatus } from '@/composables/useTrackLyrics';
+import type { TrackLyricsStatus } from '@/composables/music/useTrackLyrics';
 
 interface Props {
   lyricsStatus: TrackLyricsStatus;

@@ -1,7 +1,7 @@
 import { mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
 import { describe, expect, it, vi } from 'vitest';
-import type { useSettingsActions } from '@/composables/useSettingsActions';
+import type { useSettingsActions } from '@/composables/dashboard/useSettingsActions';
 import { useSettingsStore } from '@/stores';
 import IslandSettingsPanel from './IslandSettingsPanel.vue';
 import panelSource from './IslandSettingsPanel.vue?raw';

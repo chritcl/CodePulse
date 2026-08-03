@@ -1,7 +1,7 @@
 import { shallowMount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
 import { describe, expect, it } from 'vitest';
-import type { useSettingsActions } from '@/composables/useSettingsActions';
+import type { useSettingsActions } from '@/composables/dashboard/useSettingsActions';
 import SettingsDetailView from './SettingsDetailView.vue';
 
 type SettingsActions = ReturnType<typeof useSettingsActions>;

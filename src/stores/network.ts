@@ -1,13 +1,13 @@
 /**
- * 网络 Store
+ * 网络状态仓库
  *
  * 管理网速监控和流量统计状态。
  */
 
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
 import type { TrafficStats } from '@/types';
+import { systemCommands } from '@/shared/ipc/commands';
 import { readString, writeString } from '@/shared/utils/storage';
 
 export const useNetworkStore = defineStore('network', () => {
@@ -15,10 +15,10 @@ export const useNetworkStore = defineStore('network', () => {
   // 状态
   // ============================================================
 
-  /** 上传速度 (bytes/s) */
+  /** 上传速度 */
   const uploadSpeed = ref('0 B/s');
 
-  /** 下载速度 (bytes/s) */
+  /** 下载速度 */
   const downloadSpeed = ref('0 B/s');
 
   /** 流量统计数据 */
@@ -116,7 +116,7 @@ export const useNetworkStore = defineStore('network', () => {
   /** 获取并更新网速 */
   const fetchSpeedStats = async () => {
     try {
-      const [currentRx, currentTx] = await invoke<[number, number]>('get_network_stats');
+      const [currentRx, currentTx] = await systemCommands.getNetworkStats();
 
       if (lastRx !== 0) {
         const rxDiff = currentRx - lastRx;

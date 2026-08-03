@@ -126,16 +126,16 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { TrackLyricsStatus } from '@/composables/useTrackLyrics';
+import type { TrackLyricsStatus } from '@/composables/music/useTrackLyrics';
 import type { IslandDisplayKind } from '@/modules/island/display';
 import SpeedContent from './SpeedContent.vue';
-import MusicContent from './MusicContent.vue';
+import MusicContent from './music/MusicContent.vue';
 import HardwareContent from './HardwareContent.vue';
 import NotificationContent from './NotificationContent.vue';
 import SystemToastContent from './SystemToastContent.vue';
 import type { SystemToastType } from '@/shared/ipc/contracts';
 import type { CodexStatusSnapshot } from '@/shared/ipc/contracts';
-import CodexContent from './CodexContent.vue';
+import CodexContent from './codex/CodexContent.vue';
 
 interface NetworkDisplayState {
   uploadSpeed: string;

@@ -44,7 +44,7 @@ import type {
   IslandModuleVisualStatus,
   IslandSatelliteItem,
 } from '@/modules/island/display';
-import CodexGlyph from './CodexGlyph.vue';
+import CodexGlyph from './codex/CodexGlyph.vue';
 
 interface Props {
   items: IslandSatelliteItem[];

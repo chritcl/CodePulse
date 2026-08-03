@@ -50,7 +50,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { useSettingsActions } from '@/composables/useSettingsActions';
+import type { useSettingsActions } from '@/composables/dashboard/useSettingsActions';
 import {
   SETTINGS_CATEGORIES,
   type SettingsCategoryId,

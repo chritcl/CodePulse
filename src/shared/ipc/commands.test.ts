@@ -1,6 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { animationCommands, codexCommands, mediaCommands, windowCommands } from './index';
+import {
+  animationCommands,
+  codexCommands,
+  mediaCommands,
+  notificationCommands,
+  systemCommands,
+  windowCommands,
+} from './index';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
@@ -71,6 +78,35 @@ describe('窗口 IPC 命令封装', () => {
       targetHeight: 206,
       isPinned: false,
     });
+  });
+});
+
+describe('系统 IPC 命令封装', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('使用后端注册的系统监控命令名称', async () => {
+    vi.mocked(invoke)
+      .mockResolvedValueOnce([100, 20])
+      .mockResolvedValueOnce([35, 8_000, 16_000])
+      .mockResolvedValueOnce(42);
+
+    await systemCommands.getNetworkStats();
+    await systemCommands.getHardwareStats();
+    await systemCommands.getNetworkLatency();
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'get_network_stats');
+    expect(invoke).toHaveBeenNthCalledWith(2, 'get_hardware_stats');
+    expect(invoke).toHaveBeenNthCalledWith(3, 'get_network_latency');
+  });
+
+  it('通过统一命令封装读取最新通知', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(null);
+
+    await notificationCommands.fetchLatestNotification();
+
+    expect(invoke).toHaveBeenCalledWith('fetch_latest_notification');
   });
 });
 

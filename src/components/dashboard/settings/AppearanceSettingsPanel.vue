@@ -98,10 +98,10 @@
 </template>
 
 <script setup lang="ts">
-import type { useSettingsActions } from '@/composables/useSettingsActions';
+import type { useSettingsActions } from '@/composables/dashboard/useSettingsActions';
 import { useSettingsStore } from '@/stores';
 import type { ThemeMode } from '@/types';
-import MaterialSwitch from './MaterialSwitch.vue';
+import MaterialSwitch from '../MaterialSwitch.vue';
 
 const props = defineProps<{
   actions: ReturnType<typeof useSettingsActions>;

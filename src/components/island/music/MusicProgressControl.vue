@@ -116,9 +116,7 @@ const formatTime = (milliseconds: number): string => {
 const formattedPosition = computed(() => formatTime(displayPositionMs.value));
 const formattedDuration = computed(() => formatTime(normalizedDurationMs.value));
 const progressPercent = computed(() =>
-  normalizedDurationMs.value > 0
-    ? (displayPositionMs.value / normalizedDurationMs.value) * 100
-    : 0
+  normalizedDurationMs.value > 0 ? (displayPositionMs.value / normalizedDurationMs.value) * 100 : 0
 );
 </script>
 

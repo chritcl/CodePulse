@@ -1,5 +1,5 @@
 import { ref, type Ref } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
+import { mediaCommands } from '@/shared/ipc/commands';
 
 export const MIN_SPECTRUM = [0.35, 0.35, 0.35, 0.35, 0.35] as const;
 
@@ -47,7 +47,7 @@ const createFallbackFrame = (index: number): SpectrumFrame => {
 export const useMusicSpectrum = (
   isPlaying: Ref<boolean>,
   displayMusic: Ref<boolean>,
-  fetchSpectrum: SpectrumFetcher = () => invoke<number[]>('get_audio_spectrum')
+  fetchSpectrum: SpectrumFetcher = mediaCommands.getAudioSpectrum
 ) => {
   const spectrumData = ref<SpectrumFrame>([...MIN_SPECTRUM]);
   let timer: number | null = null;

@@ -1,13 +1,13 @@
 /**
- * 灵动岛 Store
+ * 灵动岛状态仓库
  *
  * 管理灵动岛的显示状态和控制逻辑。
  */
 
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
+import { settingsCommands, windowCommands } from '@/shared/ipc/commands';
 import { readBoolean, writeBoolean } from '@/shared/utils/storage';
 
 const ISLAND_ENABLED_STORAGE_KEY = 'codepulse_island_enabled';
@@ -67,7 +67,7 @@ export const useIslandStore = defineStore('island', () => {
     // 等待 Widget 窗口就绪
     for (let i = 0; i < 6; i++) {
       try {
-        const visible = await invoke<boolean>('is_widget_visible');
+        const visible = await windowCommands.isWidgetVisible();
         if (visible) {
           isVisible.value = true;
           return;
@@ -81,7 +81,7 @@ export const useIslandStore = defineStore('island', () => {
     // 持久化开关已开启但窗口未显示时，主动补发一次显示命令
     await emit('control-island-visibility', { show: true });
     try {
-      await invoke('set_island_visible', { visible: true });
+      await settingsCommands.setIslandVisible(true);
     } catch {
       /* 忽略 */
     }

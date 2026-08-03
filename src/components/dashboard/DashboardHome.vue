@@ -30,12 +30,12 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
-import type { useSettingsActions } from '@/composables/useSettingsActions';
+import type { useSettingsActions } from '@/composables/dashboard/useSettingsActions';
 import { useIslandStore, useNetworkStore } from '@/stores';
 import DashboardHeader from './DashboardHeader.vue';
 import RealtimeNetworkCard from './RealtimeNetworkCard.vue';
 import TrafficStatisticsCard from './TrafficStatisticsCard.vue';
-import GeneralSettingsCard from './GeneralSettingsCard.vue';
+import GeneralSettingsCard from './settings/GeneralSettingsCard.vue';
 import UpdateChecker from './UpdateChecker.vue';
 
 defineProps<{

@@ -62,9 +62,9 @@ import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useIslandStore, useNetworkStore, useSettingsStore } from '@/stores';
 import { useAutoStart, useDialog, useTheme, useUpdateChecker } from '@/composables';
-import { useDashboardNavigation } from '@/composables/useDashboardNavigation';
-import { useSettingsActions } from '@/composables/useSettingsActions';
-import { useSettingsFeedback } from '@/composables/useSettingsFeedback';
+import { useDashboardNavigation } from '@/composables/dashboard/useDashboardNavigation';
+import { useSettingsActions } from '@/composables/dashboard/useSettingsActions';
+import { useSettingsFeedback } from '@/composables/dashboard/useSettingsFeedback';
 import {
   applyMainWindowMaterial,
   type MainWindowMaterial,
@@ -73,9 +73,9 @@ import { runDashboardViewTransition } from '@/modules/dashboard/viewTransition';
 import type { SettingsCategoryId } from '@/modules/dashboard/settingsNavigation';
 import MainWindowTitleBar from './MainWindowTitleBar.vue';
 import DashboardHome from './DashboardHome.vue';
-import SettingsHome from './SettingsHome.vue';
-import SettingsDetailView from './SettingsDetailView.vue';
-import SettingsFeedbackToast from './SettingsFeedbackToast.vue';
+import SettingsHome from './settings/SettingsHome.vue';
+import SettingsDetailView from './settings/SettingsDetailView.vue';
+import SettingsFeedbackToast from './settings/SettingsFeedbackToast.vue';
 import AppDialog from './AppDialog.vue';
 
 const islandStore = useIslandStore();

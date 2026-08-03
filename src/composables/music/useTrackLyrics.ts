@@ -10,7 +10,7 @@ import {
   buildPlaybackSessionIdentity,
   normalizeLyricLines,
   resolveCurrentLyricLine,
-} from '@/modules/island/lyrics';
+} from '@/modules/music/lyrics';
 import { createTrackLyricsCache } from './trackLyricsCache';
 
 export type TrackLyricsStatus = 'idle' | 'loading' | 'ready' | 'not_found' | 'retrying' | 'error';

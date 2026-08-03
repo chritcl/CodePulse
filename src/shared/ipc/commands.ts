@@ -23,6 +23,9 @@ import type {
   CodexIntegrationActionResult,
   CodexIntegrationPreview,
   CodexIntegrationStatus,
+  HardwareStats,
+  LatestNotificationPayload,
+  NetworkStats,
 } from './contracts';
 
 // ============================================================
@@ -73,6 +76,9 @@ export const mediaCommands = {
 
 /** 窗口管理命令 */
 export const windowCommands = {
+  /** 查询桌面岛窗口是否可见 */
+  isWidgetVisible: (): Promise<boolean> => invoke('is_widget_visible'),
+
   /** 强制窗口置顶 */
   forceWindowTopmost: (): Promise<void> => invoke('force_window_topmost'),
 
@@ -111,6 +117,10 @@ export const animationCommands = {
 
 /** 通知相关命令 */
 export const notificationCommands = {
+  /** 获取最新的系统通知 */
+  fetchLatestNotification: (): Promise<LatestNotificationPayload | null> =>
+    invoke('fetch_latest_notification'),
+
   /**
    * 通过 AUMID 打开应用
    * @param payload - 应用标识
@@ -120,23 +130,19 @@ export const notificationCommands = {
 };
 
 // ============================================================
-// 系统监控命令 (未来扩展)
+// 系统监控命令
 // ============================================================
 
 /** 系统监控命令 */
 export const systemCommands = {
-  /**
-   * 获取当前网速
-   * @returns 网速数据
-   */
-  getNetworkSpeed: (): Promise<{ upload: number; download: number }> => invoke('get_network_speed'),
+  /** 获取累计网络收发字节数 */
+  getNetworkStats: (): Promise<NetworkStats> => invoke('get_network_stats'),
 
-  /**
-   * 获取硬件状态
-   * @returns 硬件数据
-   */
-  getHardwareStatus: (): Promise<{ cpu: number; memory: number; gpu?: number }> =>
-    invoke('get_hardware_status'),
+  /** 获取处理器与内存状态 */
+  getHardwareStats: (): Promise<HardwareStats> => invoke('get_hardware_stats'),
+
+  /** 获取网络延迟 */
+  getNetworkLatency: (): Promise<number> => invoke('get_network_latency'),
 };
 
 // ============================================================

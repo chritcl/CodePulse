@@ -1,7 +1,7 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import pluginVue from 'eslint-plugin-vue';
-import prettier from 'eslint-plugin-prettier';
+import eslintConfigPrettier from 'eslint-config-prettier/flat';
 import vueParser from 'vue-eslint-parser';
 
 export default [
@@ -16,9 +16,6 @@ export default [
 
   // 自定义规则
   {
-    plugins: {
-      prettier,
-    },
     languageOptions: {
       globals: {
         // 浏览器全局变量
@@ -54,9 +51,6 @@ export default [
       },
     },
     rules: {
-      // Prettier 规则
-      'prettier/prettier': 'warn',
-
       // Vue 相关规则
       'vue/multi-word-component-names': 'off',
       'vue/no-v-html': 'warn',
@@ -76,6 +70,9 @@ export default [
       'no-var': 'error',
     },
   },
+
+  // 格式规则交给 Prettier 独立处理
+  eslintConfigPrettier,
 
   // Vue 文件特殊配置
   {

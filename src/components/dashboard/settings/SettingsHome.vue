@@ -107,7 +107,7 @@ import {
   SETTINGS_CATEGORIES,
   type SettingsCategoryId,
 } from '@/modules/dashboard/settingsNavigation';
-import MaterialSwitch from './MaterialSwitch.vue';
+import MaterialSwitch from '../MaterialSwitch.vue';
 
 defineProps<{
   islandVisible: boolean;

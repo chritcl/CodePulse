@@ -69,17 +69,6 @@ export interface IslandLayoutState {
   size: IslandLayoutSize;
 }
 
-export interface IslandDisplayInput {
-  agentActive?: boolean;
-  wechatActive?: boolean;
-  notificationActive?: boolean;
-  systemToastActive?: boolean;
-  rotationEnabled: boolean;
-  rotationIndex: number;
-  musicEnabled: boolean;
-  hardwareEnabled: boolean;
-}
-
 const FALLBACK_KIND: IslandDisplayKind = 'network';
 const DEFAULT_MAX_SATELLITES = 3;
 const ROTATION_DISPLAYS: IslandDisplayKind[] = ['network', 'music', 'hardware'];
@@ -321,22 +310,4 @@ export function resolveIslandLayout(input: IslandLayoutInput): IslandLayoutState
       Boolean(input.musicProgressVisible)
     ),
   };
-}
-
-/** 兼容旧的单主岛解析接口，后续调用方应迁移到 resolveIslandLayout */
-export function resolveIslandDisplay(input: IslandDisplayInput): IslandDisplayKind {
-  return resolveIslandLayout({
-    modules: [
-      { kind: 'agent', active: Boolean(input.agentActive) },
-      { kind: 'wechat', active: Boolean(input.wechatActive) },
-      { kind: 'notification', active: Boolean(input.notificationActive), interrupt: 'soft' },
-      { kind: 'system-toast', active: Boolean(input.systemToastActive), interrupt: 'soft' },
-      { kind: 'music', active: input.musicEnabled },
-      { kind: 'hardware', active: input.hardwareEnabled },
-      { kind: 'network', active: true },
-    ],
-    now: Date.now(),
-    rotationEnabled: input.rotationEnabled,
-    rotationIndex: input.rotationIndex,
-  }).main;
 }

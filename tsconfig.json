@@ -6,7 +6,7 @@
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
 
-    /* Bundler mode */
+    /* 打包器解析模式 */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
@@ -20,7 +20,7 @@
       "@/*": ["src/*"]
     },
 
-    /* Linting */
+    /* 静态检查 */
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,

@@ -104,11 +104,11 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { useSettingsActions } from '@/composables/useSettingsActions';
+import type { useSettingsActions } from '@/composables/dashboard/useSettingsActions';
 import { resolveDisplayStrategy, type DisplayStrategy } from '@/modules/dashboard/displayStrategy';
 import { useSettingsStore } from '@/stores';
 import type { MusicPlatform } from '@/types';
-import MaterialSwitch from './MaterialSwitch.vue';
+import MaterialSwitch from '../MaterialSwitch.vue';
 
 import neteaseIcon from '@/assets/musci163.svg';
 import spotifyIcon from '@/assets/Spotify.svg';

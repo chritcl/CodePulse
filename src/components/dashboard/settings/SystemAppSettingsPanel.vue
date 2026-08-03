@@ -75,14 +75,13 @@
         </button>
       </div>
     </section>
-
   </div>
 </template>
 
 <script setup lang="ts">
-import type { useSettingsActions } from '@/composables/useSettingsActions';
+import type { useSettingsActions } from '@/composables/dashboard/useSettingsActions';
 import { useIslandStore, useSettingsStore } from '@/stores';
-import MaterialSwitch from './MaterialSwitch.vue';
+import MaterialSwitch from '../MaterialSwitch.vue';
 
 defineProps<{
   actions: ReturnType<typeof useSettingsActions>;

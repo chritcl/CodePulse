@@ -71,7 +71,7 @@
 
 <script setup lang="ts">
 import { useSettingsStore } from '@/stores';
-import type { useSettingsActions } from '@/composables/useSettingsActions';
+import type { useSettingsActions } from '@/composables/dashboard/useSettingsActions';
 
 const settingsStore = useSettingsStore();
 
