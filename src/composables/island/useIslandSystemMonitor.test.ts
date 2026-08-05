@@ -79,7 +79,6 @@ describe('灵动岛系统监控', () => {
       hardwareEnabled: ref(true),
       rotationEnabled: ref(false),
       commands,
-      random: () => 0,
     });
 
     monitor.start();
@@ -93,6 +92,37 @@ describe('灵动岛系统监控', () => {
     await vi.advanceTimersByTimeAsync(800);
     expect(monitor.hardwareStrongActive.value).toBe(false);
     expect(monitor.hardwareVisualStatus.value).toBe('warning');
+    monitor.stop();
+  });
+
+  it('将真实 CPU 和内存换算为经过裁剪的数值百分比', async () => {
+    const commands = {
+      getNetworkStats: vi.fn().mockResolvedValue([100, 50] as [number, number]),
+      getHardwareStats: vi
+        .fn()
+        .mockResolvedValueOnce([56.6, 15_550, 32_000] as [number, number, number])
+        .mockResolvedValueOnce([140.2, 18_000, 16_000] as [number, number, number])
+        .mockResolvedValueOnce([-4.2, 0, 0] as [number, number, number]),
+      getNetworkLatency: vi.fn().mockResolvedValue(20),
+    };
+    const monitor = useIslandSystemMonitor({
+      hardwareEnabled: ref(true),
+      rotationEnabled: ref(false),
+      commands,
+    });
+
+    monitor.start();
+    await vi.advanceTimersByTimeAsync(800);
+    expect(monitor.cpuUsage.value).toBe(57);
+    expect(monitor.memUsage.value).toBe(49);
+
+    await vi.advanceTimersByTimeAsync(800);
+    expect(monitor.cpuUsage.value).toBe(100);
+    expect(monitor.memUsage.value).toBe(100);
+
+    await vi.advanceTimersByTimeAsync(800);
+    expect(monitor.cpuUsage.value).toBe(0);
+    expect(monitor.memUsage.value).toBe(0);
     monitor.stop();
   });
 

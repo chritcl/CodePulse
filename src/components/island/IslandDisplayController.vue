@@ -36,20 +36,11 @@
 
       <template v-else-if="display === 'hardware'">
         <div v-if="isDetail" class="detail-panel hardware-detail">
-          <HardwareContent
-            :cpu-usage="hardware.cpuUsage"
-            :gpu-usage="hardware.gpuUsage"
-            :mem-usage="hardware.memUsage"
-          />
+          <HardwareContent :cpu-usage="hardware.cpuUsage" :mem-usage="hardware.memUsage" />
           <div class="detail-meta">硬件监控</div>
         </div>
 
-        <HardwareContent
-          v-else
-          :cpu-usage="hardware.cpuUsage"
-          :gpu-usage="hardware.gpuUsage"
-          :mem-usage="hardware.memUsage"
-        />
+        <HardwareContent v-else :cpu-usage="hardware.cpuUsage" :mem-usage="hardware.memUsage" />
       </template>
 
       <MusicContent
@@ -157,9 +148,8 @@ interface NetworkDisplayState {
 }
 
 interface HardwareDisplayState {
-  cpuUsage: string;
-  gpuUsage: string;
-  memUsage: string;
+  cpuUsage: number;
+  memUsage: number;
 }
 
 interface MusicDisplayState {

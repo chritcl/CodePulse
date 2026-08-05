@@ -46,7 +46,6 @@
       }"
       :hardware="{
         cpuUsage,
-        gpuUsage,
         memUsage,
       }"
       :music="{
@@ -105,7 +104,6 @@
         }"
         :hardware="{
           cpuUsage,
-          gpuUsage,
           memUsage,
         }"
         :music="{
@@ -355,7 +353,6 @@ const isHighDownload = systemMonitor.isHighDownload;
 const isHighUpload = systemMonitor.isHighUpload;
 const networkStatus = systemMonitor.networkStatus;
 const cpuUsage = systemMonitor.cpuUsage;
-const gpuUsage = systemMonitor.gpuUsage;
 const memUsage = systemMonitor.memUsage;
 const hardwareStrongActive = systemMonitor.hardwareStrongActive;
 const hardwareVisualStatus = systemMonitor.hardwareVisualStatus;

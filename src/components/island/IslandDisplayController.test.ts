@@ -63,9 +63,8 @@ const baseProps = {
     isHighDownload: false,
   },
   hardware: {
-    cpuUsage: '12%',
-    gpuUsage: '23%',
-    memUsage: '45%',
+    cpuUsage: 12,
+    memUsage: 45,
   },
   music: {
     boxKey: 0,
@@ -118,6 +117,21 @@ describe('IslandDisplayController', () => {
 
     expect(wrapper.find('.detail-panel').exists()).toBe(true);
     expect(wrapper.text()).toContain('实时网络状态');
+  });
+
+  it.each(['compact', 'detail'] as const)('硬件模块在%s模式只显示真实 CPU 和内存', (mode) => {
+    const wrapper = mount(IslandDisplayController, {
+      props: {
+        ...baseProps,
+        display: 'hardware',
+        mode,
+      },
+    });
+
+    expect(wrapper.text()).toContain('CPU');
+    expect(wrapper.text()).toContain('RAM');
+    expect(wrapper.text()).not.toContain('GPU');
+    expect(wrapper.findAll('.resource-bar-fill')).toHaveLength(2);
   });
 
   it('音乐模块透传当前歌词', () => {

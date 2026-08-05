@@ -16,7 +16,6 @@ interface IslandSystemMonitorOptions {
   rotationEnabled: Ref<boolean>;
   commands?: SystemMonitorCommands;
   now?: () => number;
-  random?: () => number;
   onToast?: (text: string, type: SystemToastType) => void;
 }
 
@@ -26,6 +25,11 @@ const HARDWARE_STRONG_THRESHOLD = 90;
 const HARDWARE_RECOVER_THRESHOLD = 85;
 const SYSTEM_POLL_INTERVAL_MS = 800;
 const LATENCY_POLL_INTERVAL_MS = 5_500;
+
+const clampUsage = (value: number): number => {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(Math.max(Math.round(value), 0), 100);
+};
 
 const formatSpeed = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B/s`;
@@ -37,15 +41,13 @@ const formatSpeed = (bytes: number): string => {
 export const useIslandSystemMonitor = (options: IslandSystemMonitorOptions) => {
   const commands = options.commands ?? systemCommands;
   const now = options.now ?? Date.now;
-  const random = options.random ?? Math.random;
   const uploadSpeed = ref('0 KB/s');
   const downloadSpeed = ref('0 KB/s');
   const isHighDownload = ref(false);
   const isHighUpload = ref(false);
   const networkStatus = ref<NetworkStatus>('good');
-  const cpuUsage = ref('0%');
-  const gpuUsage = ref('0%');
-  const memUsage = ref('0%');
+  const cpuUsage = ref(0);
+  const memUsage = ref(0);
   const hardwareStrongActive = ref(false);
 
   let lastRx = 0;
@@ -57,11 +59,7 @@ export const useIslandSystemMonitor = (options: IslandSystemMonitorOptions) => {
   let generation = 0;
 
   const hardwareVisualStatus = computed<IslandModuleVisualStatus>(() => {
-    const maxUsage = Math.max(
-      Number.parseInt(cpuUsage.value) || 0,
-      Number.parseInt(gpuUsage.value) || 0,
-      Number.parseInt(memUsage.value) || 0
-    );
+    const maxUsage = Math.max(cpuUsage.value, memUsage.value);
     if (hardwareStrongActive.value) return 'error';
     if (maxUsage >= 80) return 'warning';
     return 'normal';
@@ -81,10 +79,9 @@ export const useIslandSystemMonitor = (options: IslandSystemMonitorOptions) => {
   };
 
   const updateHardwareSeverity = () => {
-    const cpu = Number.parseInt(cpuUsage.value) || 0;
-    const gpu = Number.parseInt(gpuUsage.value) || 0;
-    const memory = Number.parseInt(memUsage.value) || 0;
-    const maxUsage = Math.max(cpu, gpu, memory);
+    const cpu = cpuUsage.value;
+    const memory = memUsage.value;
+    const maxUsage = Math.max(cpu, memory);
 
     if (maxUsage >= HARDWARE_STRONG_THRESHOLD) {
       hardwareHighSampleCount += 1;
@@ -96,7 +93,6 @@ export const useIslandSystemMonitor = (options: IslandSystemMonitorOptions) => {
     if (
       hardwareStrongActive.value &&
       cpu < HARDWARE_RECOVER_THRESHOLD &&
-      gpu < HARDWARE_RECOVER_THRESHOLD &&
       memory < HARDWARE_RECOVER_THRESHOLD
     ) {
       hardwareStrongActive.value = false;
@@ -127,14 +123,8 @@ export const useIslandSystemMonitor = (options: IslandSystemMonitorOptions) => {
     try {
       const [cpu, usedMem, totalMem] = await commands.getHardwareStats();
       if (!isCurrent(requestGeneration)) return;
-      cpuUsage.value = `${Math.round(cpu)}%`;
-      if (totalMem > 0) memUsage.value = `${Math.round((usedMem / totalMem) * 100)}%`;
-      const randomOffset = Math.floor(random() * 5);
-      const estimatedGpu = Math.min(
-        Math.max(Math.round((Number.parseInt(cpuUsage.value) || 10) * 0.4) + randomOffset, 1),
-        99
-      );
-      gpuUsage.value = `${estimatedGpu}%`;
+      cpuUsage.value = clampUsage(cpu);
+      memUsage.value = totalMem > 0 ? clampUsage((usedMem / totalMem) * 100) : 0;
       updateHardwareSeverity();
     } catch (error) {
       if (isCurrent(requestGeneration)) console.error('获取硬件信息失败:', error);
@@ -198,7 +188,6 @@ export const useIslandSystemMonitor = (options: IslandSystemMonitorOptions) => {
     isHighUpload,
     networkStatus,
     cpuUsage,
-    gpuUsage,
     memUsage,
     hardwareStrongActive,
     hardwareVisualStatus,
