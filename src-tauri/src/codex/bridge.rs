@@ -2,16 +2,19 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use serde_json::Value;
 use uuid::Uuid;
+
+use crate::agent::hook_input::{
+    parse_agent_hook_input, AgentHookInput, MAX_AGENT_HOOK_INPUT_BYTES,
+};
 
 use super::protocol::{
     CodexBridgeEvent, CodexEventSource, CodexEventType, CodexTaskPhase, PROTOCOL_VERSION,
 };
 use super::runtime_discovery::{read_discovery, RUNTIME_DISCOVERY_FILE_NAME};
 
-pub const MAX_HOOK_INPUT_BYTES: usize = 16 * 1024;
-const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_millis(750);
+pub const MAX_HOOK_INPUT_BYTES: usize = MAX_AGENT_HOOK_INPUT_BYTES;
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_millis(300);
 const APPLICATION_DATA_DIRECTORY: &str = "com.codepulse.app";
 
 #[derive(Debug, Clone)]
@@ -53,14 +56,30 @@ pub fn event_from_hook_input(
     occurred_at_ms: i64,
     capture_task_summary: bool,
 ) -> Option<CodexBridgeEvent> {
-    let input: Value = serde_json::from_slice(input).ok()?;
-    let session_id = input.get("session_id")?.as_str()?.to_string();
-    let turn_id = input.get("turn_id").and_then(Value::as_str).map(ToString::to_string);
-    let hook_event_name = input.get("hook_event_name")?.as_str()?;
-    let tool_name = input.get("tool_name").and_then(Value::as_str);
-    let (event_type, phase, operation_summary) = classify_hook(hook_event_name, tool_name, &input)?;
+    let mut reader = input;
+    event_from_hook_reader(
+        &mut reader,
+        source,
+        event_id,
+        occurred_at_ms,
+        capture_task_summary,
+    )
+}
+
+pub fn event_from_hook_reader(
+    reader: &mut impl Read,
+    source: CodexEventSource,
+    event_id: &str,
+    occurred_at_ms: i64,
+    capture_task_summary: bool,
+) -> Option<CodexBridgeEvent> {
+    let input = parse_agent_hook_input(reader, capture_task_summary)?;
+    let session_id = input.session_id.clone()?;
+    let turn_id = input.turn_id.clone();
+    let hook_event_name = input.hook_event_name.clone()?;
+    let (event_type, phase, operation_summary) = classify_hook(&hook_event_name, &input)?;
     let task_summary = if capture_task_summary && hook_event_name == "UserPromptSubmit" {
-        input.get("prompt").and_then(Value::as_str).map(ToString::to_string)
+        input.prompt.clone()
     } else {
         None
     };
@@ -73,7 +92,7 @@ pub fn event_from_hook_input(
         source,
         event_type,
         phase,
-        project_name: project_name_from_input(&input),
+        project_name: project_name_from_cwd(input.cwd.as_deref()),
         task_summary,
         operation_summary: Some(operation_summary.to_string()),
         error_summary: None,
@@ -92,23 +111,24 @@ pub fn read_limited_hook_input(reader: &mut impl Read) -> Option<Vec<u8>> {
 }
 
 pub async fn run_from_stdin(source: CodexEventSource) {
-    let mut stdin = std::io::stdin().lock();
-    let Some(input) = read_limited_hook_input(&mut stdin) else {
-        return;
-    };
     let Some(config) = BridgeConfig::from_process_environment(source) else {
         return;
     };
-
-    let _ = forward_hook_input(&input, &config).await;
+    let mut stdin = std::io::stdin().lock();
+    let _ = forward_hook_reader(&mut stdin, &config).await;
 }
 
 pub async fn forward_hook_input(input: &[u8], config: &BridgeConfig) -> BridgeOutcome {
+    let mut reader = input;
+    forward_hook_reader(&mut reader, config).await
+}
+
+pub async fn forward_hook_reader(reader: &mut impl Read, config: &BridgeConfig) -> BridgeOutcome {
     let Ok(discovery) = read_discovery(&config.discovery_path) else {
         return BridgeOutcome::Ignored;
     };
-    let Some(event) = event_from_hook_input(
-        input,
+    let Some(event) = event_from_hook_reader(
+        reader,
         config.source,
         &Uuid::new_v4().to_string(),
         current_time_ms(),
@@ -181,8 +201,7 @@ fn current_time_ms() -> i64 {
 
 fn classify_hook(
     hook_event_name: &str,
-    tool_name: Option<&str>,
-    input: &Value,
+    input: &AgentHookInput,
 ) -> Option<(CodexEventType, CodexTaskPhase, &'static str)> {
     match hook_event_name {
         "SessionStart" | "SubagentStart" => Some((
@@ -196,7 +215,7 @@ fn classify_hook(
             "分析任务",
         )),
         "PreToolUse" => {
-            let (phase, summary) = classify_tool(tool_name, input);
+            let (phase, summary) = classify_tool(input.tool_name.as_deref(), input);
             Some((CodexEventType::ToolStarted, phase, summary))
         }
         "PostToolUse" => Some((
@@ -232,12 +251,17 @@ fn classify_hook(
     }
 }
 
-fn classify_stop(input: &Value) -> (CodexTaskPhase, &'static str) {
-    let result = ["stop_reason", "outcome", "status"]
-        .into_iter()
-        .find_map(|field| input.get(field).and_then(Value::as_str))
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+fn classify_stop(input: &AgentHookInput) -> (CodexTaskPhase, &'static str) {
+    let result = [
+        input.stop_reason.as_deref(),
+        input.outcome.as_deref(),
+        input.status.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .next()
+    .unwrap_or_default()
+    .to_ascii_lowercase();
 
     if matches!(result.as_str(), "failed" | "failure" | "error" | "errored") {
         return (CodexTaskPhase::Failed, "任务失败");
@@ -252,7 +276,10 @@ fn classify_stop(input: &Value) -> (CodexTaskPhase, &'static str) {
     (CodexTaskPhase::Completed, "任务完成")
 }
 
-fn classify_tool(tool_name: Option<&str>, input: &Value) -> (CodexTaskPhase, &'static str) {
+fn classify_tool(
+    tool_name: Option<&str>,
+    input: &AgentHookInput,
+) -> (CodexTaskPhase, &'static str) {
     let tool_name = tool_name.unwrap_or_default().to_ascii_lowercase();
 
     if tool_name.contains("request_user_input") {
@@ -278,7 +305,7 @@ fn classify_tool(tool_name: Option<&str>, input: &Value) -> (CodexTaskPhase, &'s
         return (CodexTaskPhase::Waiting, "等待任务");
     }
     if is_shell_tool(&tool_name) {
-        if shell_input_is_safe_test(input) {
+        if input.command_prefix.as_deref().is_some_and(is_test_command) {
             return (CodexTaskPhase::RunningTests, "运行测试");
         }
         return (CodexTaskPhase::RunningCommand, "运行命令");
@@ -303,14 +330,7 @@ fn is_shell_tool(tool_name: &str) -> bool {
         || tool_name.contains("powershell")
 }
 
-fn shell_input_is_safe_test(input: &Value) -> bool {
-    let Some(command) = input
-        .get("tool_input")
-        .and_then(|tool_input| tool_input.get("command"))
-        .and_then(Value::as_str)
-    else {
-        return false;
-    };
+fn is_test_command(command: &str) -> bool {
     let command = command.trim().to_ascii_lowercase();
     [
         "cargo test",
@@ -326,8 +346,8 @@ fn shell_input_is_safe_test(input: &Value) -> bool {
     .any(|prefix| command == prefix || command.starts_with(&format!("{prefix} ")))
 }
 
-fn project_name_from_input(input: &Value) -> Option<String> {
-    let cwd = input.get("cwd")?.as_str()?;
+fn project_name_from_cwd(cwd: Option<&str>) -> Option<String> {
+    let cwd = cwd?;
     let project_name = cwd.rsplit(['\\', '/']).next()?.trim();
 
     (!project_name.is_empty()).then(|| project_name.to_string())

@@ -20,3 +20,6 @@ export { useTrackCover } from './music/useTrackCover';
 export { useCodexStatus } from './codex/useCodexStatus';
 export { useCodexIntegration } from './codex/useCodexIntegration';
 export { useCodexDisplayPreferences } from './codex/useCodexDisplayPreferences';
+export { useClaudeStatus } from './claude/useClaudeStatus';
+export { useClaudeIntegration } from './claude/useClaudeIntegration';
+export { useClaudeDisplayPreferences } from './claude/useClaudeDisplayPreferences';

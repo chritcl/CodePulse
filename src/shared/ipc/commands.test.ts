@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   animationCommands,
+  claudeCommands,
   codexCommands,
   mediaCommands,
   notificationCommands,
@@ -213,6 +214,50 @@ describe('Codex 状态 IPC 命令封装', () => {
 
     expect(invoke).toHaveBeenCalledWith('confirm_codex_integration', {
       previewId: 'preview-1',
+    });
+  });
+});
+
+describe('Claude Code 状态 IPC 命令封装', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('通过统一命令封装读取状态、清除失败项并同步摘要偏好', async () => {
+    vi.mocked(invoke)
+      .mockResolvedValueOnce({ sessions: [] })
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(undefined);
+
+    await claudeCommands.getStatusSnapshot();
+    await claudeCommands.clearFailedTask('claude:task:session-1:task-1');
+    await claudeCommands.setTaskSummaryCapture(true);
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'get_claude_status_snapshot');
+    expect(invoke).toHaveBeenNthCalledWith(2, 'clear_failed_claude_task', {
+      taskKey: 'claude:task:session-1:task-1',
+    });
+    expect(invoke).toHaveBeenNthCalledWith(3, 'set_claude_task_summary_capture', {
+      enabled: true,
+    });
+  });
+
+  it('通过统一命令封装检查、预览并确认 Claude Code 集成', async () => {
+    vi.mocked(invoke)
+      .mockResolvedValueOnce({ hook: 'not_installed' })
+      .mockResolvedValueOnce({ id: 'preview-claude' })
+      .mockResolvedValueOnce({ action: 'install_or_repair' });
+
+    await claudeCommands.getIntegrationStatus();
+    await claudeCommands.previewIntegration('install_or_repair');
+    await claudeCommands.confirmIntegration('preview-claude');
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'get_claude_integration_status');
+    expect(invoke).toHaveBeenNthCalledWith(2, 'preview_claude_integration', {
+      action: 'install_or_repair',
+    });
+    expect(invoke).toHaveBeenNthCalledWith(3, 'confirm_claude_integration', {
+      previewId: 'preview-claude',
     });
   });
 });

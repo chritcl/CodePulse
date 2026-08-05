@@ -1,5 +1,6 @@
 export type IslandDisplayKind =
-  | 'agent'
+  | 'codex'
+  | 'claude'
   | 'wechat'
   | 'notification'
   | 'system-toast'
@@ -31,6 +32,7 @@ export interface IslandModuleSnapshot {
   unreadCount?: number;
   label?: string;
   iconUrl?: string;
+  lastActivityAtMs?: number;
 }
 
 export interface IslandSatelliteItem {
@@ -74,7 +76,8 @@ const DEFAULT_MAX_SATELLITES = 3;
 const ROTATION_DISPLAYS: IslandDisplayKind[] = ['network', 'music', 'hardware'];
 const SATELLITE_ORDER: IslandDisplayKind[] = [
   'wechat',
-  'agent',
+  'codex',
+  'claude',
   'notification',
   'hardware',
   'music',
@@ -83,13 +86,20 @@ const SATELLITE_ORDER: IslandDisplayKind[] = [
 
 const BASE_SIZE: IslandLayoutSize = { width: 260, height: 42 };
 const DETAIL_PANEL_GAP = 8;
+const DETAIL_PANEL_HORIZONTAL_PADDING = 28;
+const DETAIL_PANEL_VERTICAL_PADDING = 24;
+const CLAUDE_DETAIL_CONTENT_SIZE = { width: 420, height: 260 };
 
 const DETAIL_SIZES: Partial<Record<IslandDisplayKind, { width: number; detailHeight: number }>> = {
   music: { width: 420, detailHeight: 132 },
   notification: { width: 380, detailHeight: 112 },
   hardware: { width: 316, detailHeight: 92 },
   network: { width: 316, detailHeight: 92 },
-  agent: { width: 390, detailHeight: 204 },
+  codex: { width: 390, detailHeight: 204 },
+  claude: {
+    width: CLAUDE_DETAIL_CONTENT_SIZE.width + DETAIL_PANEL_HORIZONTAL_PADDING,
+    detailHeight: CLAUDE_DETAIL_CONTENT_SIZE.height + DETAIL_PANEL_VERTICAL_PADDING,
+  },
   wechat: { width: 340, detailHeight: 92 },
   update: { width: 340, detailHeight: 92 },
 };
@@ -97,7 +107,8 @@ const DETAIL_SIZES: Partial<Record<IslandDisplayKind, { width: number; detailHei
 const DEFAULT_DETAIL_SIZE = { width: BASE_SIZE.width, detailHeight: 86 };
 
 const DEFAULT_LABELS: Record<IslandDisplayKind, string> = {
-  agent: 'Agent',
+  codex: 'Codex',
+  claude: 'Claude Code',
   wechat: '微信',
   notification: '通知',
   'system-toast': '系统提示',
@@ -139,20 +150,29 @@ const isInterruptActive = (
 };
 
 const getPriorityScore = (module: IslandModuleSnapshot): number => {
-  if (module.kind === 'agent' && ['error', 'warning'].includes(module.status ?? 'normal')) return 1;
-  if (module.kind === 'hardware' && module.status === 'error') return 2;
-  if (module.kind === 'wechat') return 3;
-  if (module.kind === 'notification') return 4;
-  if (module.kind === 'system-toast') return 5;
-  if (module.kind === 'agent') return 6;
-  if (module.kind === 'update') return 7;
-  if (module.kind === 'music') return 8;
-  if (module.kind === 'hardware') return 9;
-  return 10;
+  if ((module.kind === 'codex' || module.kind === 'claude') && module.status === 'warning')
+    return 1;
+  if ((module.kind === 'codex' || module.kind === 'claude') && module.status === 'error') return 2;
+  if (module.kind === 'hardware' && module.status === 'error') return 3;
+  if (module.kind === 'wechat') return 4;
+  if (module.kind === 'notification') return 5;
+  if (module.kind === 'system-toast') return 6;
+  if (module.kind === 'codex' || module.kind === 'claude') return 7;
+  if (module.kind === 'update') return 8;
+  if (module.kind === 'music') return 9;
+  if (module.kind === 'hardware') return 10;
+  return 11;
 };
 
+const isAgentModule = (module: IslandModuleSnapshot) =>
+  module.kind === 'codex' || module.kind === 'claude';
+
 const sortByPriority = (modules: IslandModuleSnapshot[]) =>
-  [...modules].sort((a, b) => getPriorityScore(a) - getPriorityScore(b));
+  [...modules].sort((a, b) => {
+    const priority = getPriorityScore(a) - getPriorityScore(b);
+    if (priority !== 0 || !isAgentModule(a) || !isAgentModule(b)) return priority;
+    return (b.lastActivityAtMs ?? 0) - (a.lastActivityAtMs ?? 0);
+  });
 
 const pickInterruptMain = (
   modules: IslandModuleSnapshot[],

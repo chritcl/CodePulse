@@ -38,7 +38,7 @@ describe('resolveCodexIslandPresentation', () => {
 
     expect(presentation.phaseLabel).toBe('等待授权');
     expect(presentation.module).toMatchObject({
-      kind: 'agent',
+      kind: 'codex',
       active: true,
       interrupt: 'strong',
       status: 'warning',
@@ -75,7 +75,7 @@ describe('resolveCodexIslandPresentation', () => {
 
     expect(presentation.phaseLabel).toBe('任务完成');
     expect(presentation.module).toMatchObject({
-      kind: 'agent',
+      kind: 'codex',
       active: true,
       interrupt: 'soft',
       status: 'success',
@@ -97,7 +97,7 @@ describe('resolveCodexIslandPresentation', () => {
 
     expect(presentation.phaseLabel).toBe('执行失败');
     expect(presentation.module).toMatchObject({
-      kind: 'agent',
+      kind: 'codex',
       active: true,
       interrupt: 'strong',
       status: 'error',
@@ -117,7 +117,7 @@ describe('resolveCodexIslandPresentation', () => {
 
     expect(presentation.phaseLabel).toBe('运行测试');
     expect(presentation.module).toMatchObject({
-      kind: 'agent',
+      kind: 'codex',
       active: true,
       interrupt: 'none',
       status: 'running',
@@ -137,7 +137,7 @@ describe('resolveCodexIslandPresentation', () => {
 
     expect(presentation.phaseLabel).toBe('任务中断');
     expect(presentation.module).toMatchObject({
-      kind: 'agent',
+      kind: 'codex',
       active: true,
       interrupt: 'soft',
       status: 'paused',
@@ -157,7 +157,7 @@ describe('resolveCodexIslandPresentation', () => {
 
     expect(presentation.phaseLabel).toBe('暂无任务');
     expect(presentation.module).toEqual({
-      kind: 'agent',
+      kind: 'codex',
       active: false,
       label: 'Codex',
     });
@@ -178,7 +178,7 @@ describe('resolveCodexIslandPresentation', () => {
 
     expect(presentation.phaseLabel).toBe('Codex 待命');
     expect(presentation.module).toEqual({
-      kind: 'agent',
+      kind: 'codex',
       active: true,
       status: 'paused',
       label: 'Codex 待命',
@@ -227,7 +227,7 @@ describe('resolveCodexIslandPresentation', () => {
 
     expect(presentation.phaseLabel).toBe(label);
     expect(presentation.module).toMatchObject({
-      kind: 'agent',
+      kind: 'codex',
       active: true,
       interrupt: 'none',
       status: 'running',

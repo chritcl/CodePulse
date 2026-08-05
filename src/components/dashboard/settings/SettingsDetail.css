@@ -26,6 +26,10 @@
   --category-accent: #f07178;
 }
 
+.settings-detail.is-claude {
+  --category-accent: #3a9b6d;
+}
+
 .settings-detail-header {
   display: grid;
   grid-template-columns: 38px 40px minmax(0, 1fr);

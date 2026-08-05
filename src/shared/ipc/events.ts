@@ -96,6 +96,15 @@ export const CODEX_INTEGRATION_UPDATED = 'codex-integration-updated';
 /** Codex 显示偏好已更新 */
 export const CODEX_DISPLAY_PREFERENCES_UPDATED = 'codex-display-preferences-updated';
 
+/** Claude Code 状态快照已更新 */
+export const CLAUDE_SNAPSHOT_UPDATED = 'claude-snapshot-updated';
+
+/** Claude Code Hook 集成状态已更新 */
+export const CLAUDE_INTEGRATION_UPDATED = 'claude-integration-updated';
+
+/** Claude Code 显示偏好已更新 */
+export const CLAUDE_DISPLAY_PREFERENCES_UPDATED = 'claude-display-preferences-updated';
+
 // ============================================================
 // 事件名称映射类型 (用于类型检查)
 // ============================================================
@@ -134,6 +143,9 @@ export const ALL_EVENTS = {
   CODEX_SNAPSHOT_UPDATED,
   CODEX_INTEGRATION_UPDATED,
   CODEX_DISPLAY_PREFERENCES_UPDATED,
+  CLAUDE_SNAPSHOT_UPDATED,
+  CLAUDE_INTEGRATION_UPDATED,
+  CLAUDE_DISPLAY_PREFERENCES_UPDATED,
 } as const;
 
 /** 事件名称类型 */

@@ -1,4 +1,4 @@
-export type SettingsCategoryId = 'appearance' | 'island' | 'system' | 'codex';
+export type SettingsCategoryId = 'appearance' | 'island' | 'system' | 'codex' | 'claude';
 
 export type DashboardPage = 'dashboard' | 'settings-home' | 'settings-detail';
 
@@ -38,6 +38,12 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategoryDefinition[] = [
     title: 'Codex 集成',
     description: '检查 Hook、监听状态与隐私偏好',
     summary: 'Hook · 状态 · 隐私',
+  },
+  {
+    id: 'claude',
+    title: 'Claude Code 集成',
+    description: '管理 CLI Hook、监听状态与隐私偏好',
+    summary: 'CLI · Hook · 隐私',
   },
 ] as const;
 

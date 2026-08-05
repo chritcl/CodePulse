@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
-import type { CodexStatusSnapshot } from '@/shared/ipc/contracts';
+import type { ClaudeStatusSnapshot, CodexStatusSnapshot } from '@/shared/ipc/contracts';
 import IslandDisplayController from './IslandDisplayController.vue';
 
 const noopTransition = (_el: Element, done: () => void) => done();
@@ -28,6 +28,26 @@ const codexSnapshot: CodexStatusSnapshot = {
     operationSummary: 'pnpm run test',
     lastActivityAtMs: 1_784_001_234_500,
   },
+  hasWaitingApproval: false,
+  hasFailedTask: false,
+  listenerStatus: 'running',
+};
+
+const claudeSnapshot: ClaudeStatusSnapshot = {
+  revision: 1,
+  generatedAtMs: 1_784_001_234_567,
+  sessions: [
+    {
+      taskKey: 'claude:session:session-1',
+      sessionId: 'session-1',
+      phase: 'analyzing',
+      effectivePhase: 'editing',
+      projectName: 'CodePulse',
+      children: [],
+      lastActivityAtMs: 1_784_001_234_500,
+    },
+  ],
+  representativeSession: null,
   hasWaitingApproval: false,
   hasFailedTask: false,
   listenerStatus: 'running',
@@ -73,6 +93,7 @@ const baseProps = {
     type: 'app' as const,
   },
   codex: codexSnapshot,
+  claude: claudeSnapshot,
   innerEnterTransition: noopTransition,
   innerLeaveTransition: noopTransition,
 };
@@ -167,11 +188,11 @@ describe('IslandDisplayController', () => {
     expect(wrapper.emitted('seek-to')).toEqual([[42_000]]);
   });
 
-  it('Agent 模块渲染真实的 Codex 紧凑态内容', () => {
+  it('Codex 模块渲染真实的紧凑态内容', () => {
     const wrapper = mount(IslandDisplayController, {
       props: {
         ...baseProps,
-        display: 'agent',
+        display: 'codex',
       },
     });
 
@@ -179,16 +200,28 @@ describe('IslandDisplayController', () => {
     expect(wrapper.text()).toContain('CodePulse');
   });
 
-  it('Agent 模块将脱敏操作摘要显示偏好透传给详情内容', () => {
+  it('Codex 模块将脱敏操作摘要显示偏好透传给详情内容', () => {
     const wrapper = mount(IslandDisplayController, {
       props: {
         ...baseProps,
-        display: 'agent',
+        display: 'codex',
         mode: 'detail',
         showCodexOperationSummary: false,
       },
     });
 
     expect(wrapper.find('.codex-task-operation').exists()).toBe(false);
+  });
+
+  it('Claude 模块渲染独立的根会话紧凑态', () => {
+    const wrapper = mount(IslandDisplayController, {
+      props: {
+        ...baseProps,
+        display: 'claude',
+      },
+    });
+
+    expect(wrapper.get('.claude-compact-phase').text()).toBe('修改代码');
+    expect(wrapper.text()).toContain('CodePulse');
   });
 });

@@ -74,6 +74,20 @@ export type {
   CodexIntegrationPreview,
   CodexIntegrationActionResult,
   CodexDisplayPreferencesPayload,
+  AgentTaskPhase,
+  AgentListenerStatus,
+  ClaudeChildKind,
+  ClaudeChildTaskSnapshot,
+  ClaudeSessionSnapshot,
+  ClaudeStatusSnapshot,
+  ClaudeCliStatus,
+  ClaudeHookStatus,
+  ClaudeBridgeStatus,
+  ClaudeIntegrationAction,
+  ClaudeIntegrationStatus,
+  ClaudeIntegrationPreview,
+  ClaudeIntegrationActionResult,
+  ClaudeDisplayPreferencesPayload,
 } from './contracts';
 
 // 导出事件常量
@@ -109,6 +123,9 @@ export {
   CODEX_SNAPSHOT_UPDATED,
   CODEX_INTEGRATION_UPDATED,
   CODEX_DISPLAY_PREFERENCES_UPDATED,
+  CLAUDE_SNAPSHOT_UPDATED,
+  CLAUDE_INTEGRATION_UPDATED,
+  CLAUDE_DISPLAY_PREFERENCES_UPDATED,
 
   // 聚合对象
   ALL_EVENTS,
@@ -127,6 +144,7 @@ export {
   systemCommands,
   settingsCommands,
   codexCommands,
+  claudeCommands,
 
   // 聚合对象
   commands,

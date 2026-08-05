@@ -23,6 +23,11 @@ import type {
   CodexIntegrationActionResult,
   CodexIntegrationPreview,
   CodexIntegrationStatus,
+  ClaudeStatusSnapshot,
+  ClaudeIntegrationAction,
+  ClaudeIntegrationActionResult,
+  ClaudeIntegrationPreview,
+  ClaudeIntegrationStatus,
   HardwareStats,
   LatestNotificationPayload,
   NetworkStats,
@@ -202,6 +207,26 @@ export const codexCommands = {
     invoke('confirm_codex_integration', { previewId }),
 };
 
+/** Claude Code 状态与集成命令 */
+export const claudeCommands = {
+  getStatusSnapshot: (): Promise<ClaudeStatusSnapshot> => invoke('get_claude_status_snapshot'),
+
+  clearFailedTask: (taskKey: string): Promise<boolean> =>
+    invoke('clear_failed_claude_task', { taskKey }),
+
+  setTaskSummaryCapture: (enabled: boolean): Promise<void> =>
+    invoke('set_claude_task_summary_capture', { enabled }),
+
+  getIntegrationStatus: (): Promise<ClaudeIntegrationStatus> =>
+    invoke('get_claude_integration_status'),
+
+  previewIntegration: (action: ClaudeIntegrationAction): Promise<ClaudeIntegrationPreview> =>
+    invoke('preview_claude_integration', { action }),
+
+  confirmIntegration: (previewId: string): Promise<ClaudeIntegrationActionResult> =>
+    invoke('confirm_claude_integration', { previewId }),
+};
+
 // ============================================================
 // 导出所有命令
 // ============================================================
@@ -215,4 +240,5 @@ export const commands = {
   system: systemCommands,
   settings: settingsCommands,
   codex: codexCommands,
+  claude: claudeCommands,
 } as const;

@@ -20,7 +20,14 @@
           <path v-if="category === 'appearance'" d="M12 3v3m0 12v3m9-9h-3M6 12H3" />
           <path v-else-if="category === 'island'" d="M8 7h8a5 5 0 0 1 0 10H8A5 5 0 0 1 8 7Z" />
           <path v-else-if="category === 'system'" d="M4 6.5h16v11H4zM8 21h8M12 17.5V21" />
-          <path v-else d="M7 4h10l3 4v8l-3 4H7l-3-4V8zM9 9h6m-6 3h6m-6 3h4" />
+          <path
+            v-else-if="category === 'codex'"
+            d="M7 4h10l3 4v8l-3 4H7l-3-4V8zM9 9h6m-6 3h6m-6 3h4"
+          />
+          <path
+            v-else
+            d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9m-12.2-3.7L16.4 20.2M16.4 3.8 7.6 20.2"
+          />
         </svg>
       </span>
       <div>
@@ -43,7 +50,8 @@
         @toggle-autostart="$emit('toggle-autostart', $event)"
         @check-update="$emit('check-update')"
       />
-      <CodexIntegrationSettings v-else />
+      <CodexIntegrationSettings v-else-if="category === 'codex'" />
+      <ClaudeIntegrationSettings v-else />
     </div>
   </section>
 </template>
@@ -59,6 +67,7 @@ import AppearanceSettingsPanel from './AppearanceSettingsPanel.vue';
 import IslandSettingsPanel from './IslandSettingsPanel.vue';
 import SystemAppSettingsPanel from './SystemAppSettingsPanel.vue';
 import CodexIntegrationSettings from './CodexIntegrationSettings.vue';
+import ClaudeIntegrationSettings from './ClaudeIntegrationSettings.vue';
 
 const props = defineProps<{
   category: SettingsCategoryId;

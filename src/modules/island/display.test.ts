@@ -39,7 +39,7 @@ describe('resolveIslandLayout', () => {
     const layout = resolveIslandLayout({
       modules: [
         moduleOf({ kind: 'network', active: true }),
-        moduleOf({ kind: 'agent', active: true, status: 'running' }),
+        moduleOf({ kind: 'codex', active: true, status: 'running' }),
         moduleOf({ kind: 'wechat', active: true, unreadCount: 4, status: 'unread' }),
         moduleOf({ kind: 'notification', active: true, unreadCount: 1, status: 'unread' }),
         moduleOf({ kind: 'hardware', active: true, status: 'warning' }),
@@ -52,7 +52,7 @@ describe('resolveIslandLayout', () => {
     });
 
     expect(layout.main).toBe('music');
-    expect(layout.satellites.map((item) => item.kind)).toEqual(['wechat', 'agent', 'notification']);
+    expect(layout.satellites.map((item) => item.kind)).toEqual(['wechat', 'codex', 'notification']);
     expect(layout.overflowCount).toBe(2);
   });
 
@@ -268,18 +268,83 @@ describe('resolveIslandLayout', () => {
     expect(layout.size).toEqual({ width: 380, height: 162 });
   });
 
-  it('Codex Agent 展开态为会话列表与详情预留足够空间', () => {
+  it('Codex 展开态为会话列表与详情预留足够空间', () => {
     const layout = resolveIslandLayout({
       modules: [
         moduleOf({ kind: 'network', active: true }),
-        moduleOf({ kind: 'agent', active: true, status: 'running' }),
+        moduleOf({ kind: 'codex', active: true, status: 'running' }),
       ],
-      stableMainKind: 'agent',
-      expandedKind: 'agent',
+      stableMainKind: 'codex',
+      expandedKind: 'codex',
       now,
     });
 
-    expect(layout.main).toBe('agent');
+    expect(layout.main).toBe('codex');
     expect(layout.size).toEqual({ width: 390, height: 254 });
+  });
+
+  it('Codex 与 Claude 同级状态按最近活动选择主岛', () => {
+    const layout = resolveIslandLayout({
+      modules: [
+        moduleOf({
+          kind: 'codex',
+          active: true,
+          status: 'running',
+          lastActivityAtMs: now - 10,
+        }),
+        moduleOf({
+          kind: 'claude',
+          active: true,
+          status: 'running',
+          lastActivityAtMs: now,
+        }),
+        moduleOf({ kind: 'network', active: true }),
+      ],
+      now,
+    });
+
+    expect(layout.main).toBe('claude');
+    expect(layout.satellites.map((item) => item.kind)).toContain('codex');
+  });
+
+  it('等待用户的 Agent 优先于活动时间更新的失败 Agent', () => {
+    const layout = resolveIslandLayout({
+      modules: [
+        moduleOf({
+          kind: 'codex',
+          active: true,
+          interrupt: 'strong',
+          status: 'warning',
+          lastActivityAtMs: now - 100,
+        }),
+        moduleOf({
+          kind: 'claude',
+          active: true,
+          interrupt: 'strong',
+          status: 'error',
+          lastActivityAtMs: now,
+        }),
+        moduleOf({ kind: 'network', active: true }),
+      ],
+      now,
+    });
+
+    expect(layout.main).toBe('codex');
+    expect(layout.reason).toBe('strong-interrupt');
+  });
+
+  it('Claude 展开态提供固定的四百二十乘二百六十内容区', () => {
+    const layout = resolveIslandLayout({
+      modules: [
+        moduleOf({ kind: 'claude', active: true, status: 'running' }),
+        moduleOf({ kind: 'network', active: true }),
+      ],
+      stableMainKind: 'claude',
+      expandedKind: 'claude',
+      now,
+    });
+
+    expect(layout.main).toBe('claude');
+    expect(layout.size).toEqual({ width: 448, height: 334 });
   });
 });

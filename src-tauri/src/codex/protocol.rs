@@ -1,26 +1,13 @@
-use std::sync::LazyLock;
-
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u8 = 1;
-pub const MAX_EVENT_ID_CHARS: usize = 128;
-pub const MAX_SESSION_ID_CHARS: usize = 128;
-pub const MAX_TURN_ID_CHARS: usize = 128;
-pub const MAX_PROJECT_NAME_CHARS: usize = 80;
-pub const MAX_SUMMARY_CHARS: usize = 160;
+use crate::agent::protocol::{sanitize_optional_text, validate_identifier};
+pub use crate::agent::protocol::{
+    AgentTaskPhase as CodexTaskPhase, MAX_EVENT_ID_CHARS, MAX_PROJECT_NAME_CHARS,
+    MAX_SESSION_ID_CHARS, MAX_SUMMARY_CHARS,
+};
 
-static ASSIGNED_SECRET: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)(?:api[_-]?key|token|secret|password|authorization)\s*(?:=|:)\s*(?:bearer\s+)?[^\s,;]+",
-    )
-    .expect("敏感字段正则必须有效")
-});
-static BEARER_SECRET: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\bbearer\s+[a-z0-9._~+/=-]{8,}").expect("Bearer 正则必须有效")
-});
-static KEY_LIKE_SECRET: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:sk|rk|pk)-[A-Za-z0-9_-]{8,}").expect("密钥前缀正则必须有效"));
+pub const PROTOCOL_VERSION: u8 = 1;
+pub const MAX_TURN_ID_CHARS: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -42,26 +29,6 @@ pub enum CodexEventType {
     PermissionRequested,
     TurnStopped,
     SessionEnded,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CodexTaskPhase {
-    Analyzing,
-    Reading,
-    Editing,
-    RunningCommand,
-    RunningTests,
-    WaitingInput,
-    Browsing,
-    Generating,
-    Delegating,
-    Waiting,
-    Compacting,
-    WaitingApproval,
-    Completed,
-    Failed,
-    Interrupted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,18 +68,18 @@ impl CodexBridgeEvent {
             return Err(ProtocolError::UnsupportedVersion);
         }
 
-        validate_identifier(
-            &self.event_id,
-            MAX_EVENT_ID_CHARS,
-            ProtocolError::InvalidEventId,
-        )?;
-        validate_identifier(
-            &self.session_id,
-            MAX_SESSION_ID_CHARS,
-            ProtocolError::InvalidSessionId,
-        )?;
-        if let Some(turn_id) = &self.turn_id {
-            validate_identifier(turn_id, MAX_TURN_ID_CHARS, ProtocolError::InvalidTurnId)?;
+        if !validate_identifier(&self.event_id, MAX_EVENT_ID_CHARS) {
+            return Err(ProtocolError::InvalidEventId);
+        }
+        if !validate_identifier(&self.session_id, MAX_SESSION_ID_CHARS) {
+            return Err(ProtocolError::InvalidSessionId);
+        }
+        if self
+            .turn_id
+            .as_deref()
+            .is_some_and(|turn_id| !validate_identifier(turn_id, MAX_TURN_ID_CHARS))
+        {
+            return Err(ProtocolError::InvalidTurnId);
         }
         if self.occurred_at_ms <= 0 {
             return Err(ProtocolError::InvalidOccurredAt);
@@ -125,48 +92,4 @@ impl CodexBridgeEvent {
 
         Ok(self)
     }
-}
-
-fn validate_identifier(
-    value: &str,
-    limit: usize,
-    error: ProtocolError,
-) -> Result<(), ProtocolError> {
-    if value.trim().is_empty()
-        || value.chars().count() > limit
-        || value.chars().any(char::is_control)
-    {
-        return Err(error);
-    }
-
-    Ok(())
-}
-
-fn sanitize_optional_text(value: Option<String>, limit: usize) -> Option<String> {
-    let value = value?;
-    let normalized = value
-        .chars()
-        .map(|character| {
-            if character.is_control() {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect::<String>();
-    let normalized = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
-    let redacted = redact_sensitive_text(&normalized);
-    let truncated = truncate_characters(&redacted, limit);
-
-    (!truncated.is_empty()).then_some(truncated)
-}
-
-fn redact_sensitive_text(value: &str) -> String {
-    let value = ASSIGNED_SECRET.replace_all(value, "[已隐藏]");
-    let value = BEARER_SECRET.replace_all(&value, "[已隐藏]");
-    KEY_LIKE_SECRET.replace_all(&value, "[已隐藏]").into_owned()
-}
-
-fn truncate_characters(value: &str, limit: usize) -> String {
-    value.chars().take(limit).collect()
 }

@@ -75,12 +75,12 @@ export const resolveCodexIslandPresentation = (
   if (!task) {
     if (options.idleResident) {
       return {
-        module: { kind: 'agent', active: true, status: 'paused', label: 'Codex 待命' },
+        module: { kind: 'codex', active: true, status: 'paused', label: 'Codex 待命' },
         phaseLabel: 'Codex 待命',
       };
     }
     return {
-      module: { kind: 'agent', active: false, label: 'Codex' },
+      module: { kind: 'codex', active: false, label: 'Codex' },
       phaseLabel: '暂无任务',
     };
   }
@@ -90,7 +90,8 @@ export const resolveCodexIslandPresentation = (
   if (task.phase === 'waiting_input' || task.phase === 'waiting_approval') {
     return {
       module: {
-        kind: 'agent',
+        kind: 'codex',
+        lastActivityAtMs: task.lastActivityAtMs,
         active: true,
         interrupt: 'strong',
         status: 'warning',
@@ -103,7 +104,8 @@ export const resolveCodexIslandPresentation = (
   if (task.phase === 'completed') {
     return {
       module: {
-        kind: 'agent',
+        kind: 'codex',
+        lastActivityAtMs: task.lastActivityAtMs,
         active: true,
         interrupt: 'soft',
         status: 'success',
@@ -116,7 +118,8 @@ export const resolveCodexIslandPresentation = (
   if (task.phase === 'failed') {
     return {
       module: {
-        kind: 'agent',
+        kind: 'codex',
+        lastActivityAtMs: task.lastActivityAtMs,
         active: true,
         interrupt: 'strong',
         status: 'error',
@@ -130,7 +133,8 @@ export const resolveCodexIslandPresentation = (
   if (runningPhaseLabel) {
     return {
       module: {
-        kind: 'agent',
+        kind: 'codex',
+        lastActivityAtMs: task.lastActivityAtMs,
         active: true,
         interrupt: 'none',
         status: 'running',
@@ -143,7 +147,8 @@ export const resolveCodexIslandPresentation = (
   if (task.phase === 'interrupted') {
     return {
       module: {
-        kind: 'agent',
+        kind: 'codex',
+        lastActivityAtMs: task.lastActivityAtMs,
         active: true,
         interrupt: 'soft',
         status: 'paused',
@@ -153,7 +158,15 @@ export const resolveCodexIslandPresentation = (
     };
   }
 
-  return { module: { kind: 'agent', active: true, label: phaseLabel }, phaseLabel };
+  return {
+    module: {
+      kind: 'codex',
+      active: true,
+      label: phaseLabel,
+      lastActivityAtMs: task.lastActivityAtMs,
+    },
+    phaseLabel,
+  };
 };
 
 export const sortCodexTasksByRecentActivity = (tasks: CodexTaskSnapshot[]) =>

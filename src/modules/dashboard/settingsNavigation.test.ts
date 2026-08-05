@@ -28,12 +28,13 @@ describe('设置中心导航', () => {
     expect(resolveDashboardBack(detail)).toEqual(openSettingsHome());
   });
 
-  it('设置首页只暴露四个固定分类', () => {
+  it('设置首页暴露五个固定分类', () => {
     expect(SETTINGS_CATEGORIES.map((category) => category.id)).toEqual([
       'appearance',
       'island',
       'system',
       'codex',
+      'claude',
     ]);
   });
 });

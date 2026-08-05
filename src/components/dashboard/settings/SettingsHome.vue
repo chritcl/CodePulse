@@ -82,9 +82,13 @@
             <path d="M4 6.5h16v11H4z" />
             <path d="M8 21h8M12 17.5V21" />
           </svg>
-          <svg v-else viewBox="0 0 24 24">
+          <svg v-else-if="category.id === 'codex'" viewBox="0 0 24 24">
             <path d="M7 4h10l3 4v8l-3 4H7l-3-4V8z" />
             <path d="M9 9h6m-6 3h6m-6 3h4" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24">
+            <path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9" />
+            <path d="m7.6 3.8 8.8 16.4M16.4 3.8 7.6 20.2" />
           </svg>
         </span>
         <span class="category-copy">
@@ -294,8 +298,9 @@ defineEmits<{
   min-height: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(82px, 1fr));
   gap: 12px;
+  overflow-y: auto;
 }
 
 .settings-category-card {
@@ -333,7 +338,7 @@ defineEmits<{
 }
 
 .settings-category-card:hover {
-  transform: translateY(-3px) scale(1.008);
+  transform: translateY(-3px);
   box-shadow: 0 12px 26px var(--category-shadow);
 }
 
@@ -376,6 +381,14 @@ defineEmits<{
   --category-orb: rgba(240, 113, 120, 0.32);
   --category-shadow: rgba(159, 49, 56, 0.14);
   border-radius: 24px 18px 28px 18px;
+}
+
+.settings-category-card.is-claude {
+  --category-bg: rgba(91, 179, 137, 0.13);
+  --category-border: rgba(58, 155, 109, 0.25);
+  --category-orb: rgba(91, 179, 137, 0.32);
+  --category-shadow: rgba(34, 117, 78, 0.14);
+  border-radius: 18px 24px 18px 24px;
 }
 
 .category-icon {

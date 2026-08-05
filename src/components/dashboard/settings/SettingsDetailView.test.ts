@@ -41,4 +41,20 @@ describe('SettingsDetailView', () => {
 
     expect(wrapper.findComponent({ name: 'CodexIntegrationSettings' }).exists()).toBe(true);
   });
+
+  it('Claude 分类使用独立的 CLI 集成面板', () => {
+    const wrapper = shallowMount(SettingsDetailView, {
+      props: {
+        category: 'claude',
+        actions,
+        appVersion: '2.3.8',
+        isCheckingUpdate: false,
+        hasNewVersion: false,
+      },
+      global: { plugins: [createPinia()] },
+    });
+
+    expect(wrapper.findComponent({ name: 'ClaudeIntegrationSettings' }).exists()).toBe(true);
+    expect(wrapper.findComponent({ name: 'CodexIntegrationSettings' }).exists()).toBe(false);
+  });
 });

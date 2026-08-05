@@ -2,19 +2,12 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::Serialize;
 
+pub use crate::agent::AgentListenerStatus as CodexListenerStatus;
+
 use super::protocol::{CodexBridgeEvent, CodexEventSource, CodexEventType, CodexTaskPhase};
 
 pub const COMPLETED_RETENTION_MS: i64 = 30_000;
 pub const INACTIVITY_TIMEOUT_MS: i64 = 5 * 60 * 1_000;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CodexListenerStatus {
-    Stopped,
-    WaitingForEvent,
-    Running,
-    Failed,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

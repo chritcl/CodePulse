@@ -78,6 +78,10 @@
       :show-codex-operation-summary="showCodexOperationSummary"
       :show-codex-task-summary="showCodexTaskSummary"
       :codex-rotation-paused="Boolean(islandLayout.expandedKind)"
+      :claude="claudeStatus.snapshot.value"
+      :show-claude-operation-summary="showClaudeOperationSummary"
+      :show-claude-task-summary="showClaudeTaskSummary"
+      :claude-rotation-paused="Boolean(islandLayout.expandedKind)"
       :inner-enter-transition="animation.onInnerEnter"
       :inner-leave-transition="animation.onInnerLeave"
       @msg-click="handleMsgClick"
@@ -86,6 +90,7 @@
       @next-track="nextTrack"
       @seek-to="seekMusic"
       @clear-failed="clearFailedCodexTask"
+      @clear-claude-failed="clearFailedClaudeTask"
     />
 
     <template v-if="islandLayout.expandedKind === activeDisplay" #detail>
@@ -132,6 +137,10 @@
         :show-codex-operation-summary="showCodexOperationSummary"
         :show-codex-task-summary="showCodexTaskSummary"
         :codex-rotation-paused="true"
+        :claude="claudeStatus.snapshot.value"
+        :show-claude-operation-summary="showClaudeOperationSummary"
+        :show-claude-task-summary="showClaudeTaskSummary"
+        :claude-rotation-paused="true"
         :inner-enter-transition="animation.onInnerEnter"
         :inner-leave-transition="animation.onInnerLeave"
         @msg-click="handleMsgClick"
@@ -140,6 +149,7 @@
         @next-track="nextTrack"
         @seek-to="seekMusic"
         @clear-failed="clearFailedCodexTask"
+        @clear-claude-failed="clearFailedClaudeTask"
       />
     </template>
   </IslandShell>
@@ -162,6 +172,8 @@ import {
   useTrackLyrics,
   useCodexDisplayPreferences,
   useCodexStatus,
+  useClaudeDisplayPreferences,
+  useClaudeStatus,
   useIslandSystemMonitor,
   useIslandInterruptions,
 } from '@/composables';
@@ -184,7 +196,8 @@ import {
   syncMusicActivity,
 } from '@/modules/music/musicActivity';
 import { resolveCodexIslandPresentation } from '@/modules/codex/presentation';
-import { codexCommands, windowCommands } from '@/shared/ipc/commands';
+import { resolveClaudeIslandPresentation } from '@/modules/claude/presentation';
+import { claudeCommands, codexCommands, windowCommands } from '@/shared/ipc/commands';
 import { SPRING_ANIMATION } from '@/shared/ipc/events';
 import { hasStorageValue, readBoolean, writeBoolean } from '@/shared/utils/storage';
 import { createEventListenerRegistry } from '@/shared/utils/eventListenerRegistry';
@@ -226,6 +239,11 @@ const codexDisplayPreferences = useCodexDisplayPreferences();
 const codexIdleResident = codexDisplayPreferences.idleResident;
 const showCodexOperationSummary = codexDisplayPreferences.showOperationSummary;
 const showCodexTaskSummary = codexDisplayPreferences.showTaskSummary;
+const claudeStatus = useClaudeStatus();
+const claudeDisplayPreferences = useClaudeDisplayPreferences();
+const claudeIdleResident = claudeDisplayPreferences.idleResident;
+const showClaudeOperationSummary = claudeDisplayPreferences.showOperationSummary;
+const showClaudeTaskSummary = claudeDisplayPreferences.showTaskSummary;
 const eventListeners = createEventListenerRegistry();
 const musicPresentationIdentity = createMusicPresentationIdentityTracker();
 
@@ -361,9 +379,17 @@ const codexIslandPresentation = computed(() =>
   })
 );
 
+/** Claude Code 模块展示状态由 Rust 权威快照派生 */
+const claudeIslandPresentation = computed(() =>
+  resolveClaudeIslandPresentation(claudeStatus.snapshot.value, {
+    idleResident: claudeIdleResident.value,
+  })
+);
+
 /** 当前活跃模块快照 */
 const islandModules = computed<IslandModuleSnapshot[]>(() => [
   codexIslandPresentation.value.module,
+  claudeIslandPresentation.value.module,
   { kind: 'wechat', active: false },
   {
     kind: 'notification',
@@ -420,7 +446,7 @@ const activeDisplay = computed<IslandDisplayKind>(() => islandLayout.value.main)
 const displayMusic = computed(() => activeDisplay.value === 'music');
 const statusIndicatorMode = computed<'music' | 'network' | 'none'>(() => {
   if (activeDisplay.value === 'music') return 'music';
-  if (activeDisplay.value === 'agent') return 'none';
+  if (activeDisplay.value === 'codex' || activeDisplay.value === 'claude') return 'none';
   return 'network';
 });
 
@@ -520,6 +546,15 @@ const clearFailedCodexTask = async (sessionId: string) => {
     await codexCommands.clearFailedTask(sessionId);
   } catch (error) {
     if (!disposed) console.error('清除 Codex 失败任务失败:', error);
+  }
+};
+
+/** 请求 Rust 按稳定 taskKey 清除 Claude Code 失败任务 */
+const clearFailedClaudeTask = async (taskKey: string) => {
+  try {
+    await claudeCommands.clearFailedTask(taskKey);
+  } catch (error) {
+    if (!disposed) console.error('清除 Claude Code 失败任务失败:', error);
   }
 };
 
@@ -755,6 +790,8 @@ onMounted(async () => {
   if (disposed) return;
   void codexStatus.start();
   void codexDisplayPreferences.start();
+  void claudeStatus.start();
+  void claudeDisplayPreferences.start();
   window.addEventListener('blur', expandedCollapse.handleWindowBlur);
   document.addEventListener('contextmenu', preventDocumentContextMenu, true);
   layoutClockTimer = window.setInterval(refreshLayoutNow, 500);
@@ -948,6 +985,8 @@ onUnmounted(() => {
   disposed = true;
   codexStatus.dispose();
   codexDisplayPreferences.dispose();
+  claudeStatus.dispose();
+  claudeDisplayPreferences.dispose();
   trackCover.dispose();
   window.removeEventListener('blur', expandedCollapse.handleWindowBlur);
   document.removeEventListener('contextmenu', preventDocumentContextMenu, true);

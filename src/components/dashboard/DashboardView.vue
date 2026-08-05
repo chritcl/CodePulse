@@ -3,7 +3,7 @@
     <MainWindowTitleBar :page-title="pageTitle" />
 
     <main class="main-window-content">
-      <Transition name="dashboard-page">
+      <Transition name="dashboard-page" mode="out-in">
         <DashboardHome
           v-if="navigation.location.value.page === 'dashboard'"
           key="dashboard"

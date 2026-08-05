@@ -4,7 +4,8 @@ import IslandSatelliteStrip from './IslandSatelliteStrip.vue';
 import type { IslandSatelliteItem } from '@/modules/island/display';
 
 const items: IslandSatelliteItem[] = [
-  { kind: 'agent', status: 'running', unreadCount: 0, label: 'Codex' },
+  { kind: 'codex', status: 'running', unreadCount: 0, label: 'Codex' },
+  { kind: 'claude', status: 'running', unreadCount: 0, label: 'Claude Code' },
   { kind: 'notification', status: 'unread', unreadCount: 3, label: '通知' },
   { kind: 'hardware', status: 'error', unreadCount: 0, label: '硬件' },
   {
@@ -25,11 +26,12 @@ describe('IslandSatelliteStrip', () => {
       },
     });
 
-    expect(wrapper.findAll('.satellite-button')).toHaveLength(4);
-    expect(wrapper.findAll('.satellite-button')[3].attributes('data-satellite-kind')).toBe('music');
-    expect(wrapper.find('[data-satellite-kind="agent"] svg').exists()).toBe(true);
-    expect(wrapper.find('[data-satellite-kind="agent"]').text()).not.toContain('AI');
-    expect(wrapper.findAll('[data-flip-visual]')).toHaveLength(4);
+    expect(wrapper.findAll('.satellite-button')).toHaveLength(5);
+    expect(wrapper.findAll('.satellite-button')[4].attributes('data-satellite-kind')).toBe('music');
+    expect(wrapper.find('[data-satellite-kind="codex"] svg').exists()).toBe(true);
+    expect(wrapper.find('[data-satellite-kind="claude"] svg').exists()).toBe(true);
+    expect(wrapper.find('[data-satellite-kind="codex"]').text()).not.toContain('AI');
+    expect(wrapper.findAll('[data-flip-visual]')).toHaveLength(5);
     expect(wrapper.find('[data-satellite-kind="music"] [data-flip-visual] img').exists()).toBe(
       true
     );
@@ -46,7 +48,7 @@ describe('IslandSatelliteStrip', () => {
       },
     });
 
-    await wrapper.findAll('.satellite-button')[3].trigger('click');
+    await wrapper.findAll('.satellite-button')[4].trigger('click');
 
     const payload = wrapper.emitted('select')?.[0];
     expect(payload?.[0]).toBe('music');

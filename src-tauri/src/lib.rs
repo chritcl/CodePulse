@@ -1,3 +1,4 @@
+pub mod agent;
 /**
  * 网速灵动岛应用主入口模块
  *
@@ -9,6 +10,7 @@
  * 5. 窗口事件处理
  */
 mod app;
+pub mod claude;
 pub mod codex;
 mod commands;
 mod error;
@@ -21,10 +23,16 @@ use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::MacosLauncher;
 
+use agent::runtime::AgentRuntime;
+use agent::AgentProvider;
 use app::AppState;
+use claude::{
+    integration::resolve_bridge_source as resolve_claude_bridge_source, ClaudeIntegration,
+    ClaudeIntegrationPaths, CLAUDE_SNAPSHOT_UPDATED_EVENT,
+};
 use codex::{
-    integration::resolve_bridge_source, CodexIntegration, CodexRuntime, IntegrationPaths,
-    CODEX_SNAPSHOT_UPDATED_EVENT, DEFAULT_EVENT_CACHE_CAPACITY,
+    integration::resolve_bridge_source as resolve_codex_bridge_source, CodexIntegration,
+    IntegrationPaths, CODEX_SNAPSHOT_UPDATED_EVENT, DEFAULT_EVENT_CACHE_CAPACITY,
 };
 use commands::*;
 use lyrics::LyricsService;
@@ -75,6 +83,14 @@ pub fn run() {
             get_codex_integration_status,
             preview_codex_integration,
             confirm_codex_integration,
+            // Claude Code 状态命令
+            get_claude_status_snapshot,
+            clear_failed_claude_task,
+            set_claude_task_summary_capture,
+            // Claude Code 集成设置命令
+            get_claude_integration_status,
+            preview_claude_integration,
+            confirm_claude_integration,
         ])
         .setup(initialize_app)
         .run(tauri::generate_context!())
@@ -87,13 +103,19 @@ fn initialize_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>
     let lyrics_dir = app_data_dir.join("lyrics");
     app.manage(LyricsService::new(lyrics_dir)?);
     let resource_dir = app.path().resource_dir().ok();
-    let bridge_source = resolve_bridge_source(resource_dir.as_deref());
-    let integration = CodexIntegration::new(IntegrationPaths::from_current_user(
+    let codex_bridge_source = resolve_codex_bridge_source(resource_dir.as_deref());
+    let codex_integration = CodexIntegration::new(IntegrationPaths::from_current_user(
         app_data_dir.clone(),
-        bridge_source,
+        codex_bridge_source,
     )?);
-    initialize_codex_runtime(app, &app_data_dir, &integration);
-    app.manage(integration);
+    let claude_bridge_source = resolve_claude_bridge_source(resource_dir.as_deref());
+    let claude_integration = ClaudeIntegration::new(ClaudeIntegrationPaths::from_current_user(
+        app_data_dir.clone(),
+        claude_bridge_source,
+    )?);
+    initialize_agent_runtime(app, &app_data_dir, &codex_integration, &claude_integration);
+    app.manage(codex_integration);
+    app.manage(claude_integration);
 
     start_audio_spectrum_monitor();
     start_system_event_monitor(app.handle().clone());
@@ -104,21 +126,32 @@ fn initialize_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-fn initialize_codex_runtime(
+fn initialize_agent_runtime(
     app: &tauri::App,
     app_data_dir: &std::path::Path,
-    integration: &CodexIntegration,
+    codex_integration: &CodexIntegration,
+    claude_integration: &ClaudeIntegration,
 ) {
-    let app_handle = app.handle().clone();
-    let runtime = CodexRuntime::with_publisher(
+    let codex_app_handle = app.handle().clone();
+    let claude_app_handle = app.handle().clone();
+    let runtime = AgentRuntime::with_publishers(
         DEFAULT_EVENT_CACHE_CAPACITY,
         Arc::new(move |snapshot| {
-            let _ = app_handle.emit(CODEX_SNAPSHOT_UPDATED_EVENT, snapshot);
+            let _ = codex_app_handle.emit(CODEX_SNAPSHOT_UPDATED_EVENT, snapshot);
+        }),
+        Arc::new(move |snapshot| {
+            let _ = claude_app_handle.emit(CLAUDE_SNAPSHOT_UPDATED_EVENT, snapshot);
         }),
     );
-    if integration.should_start_listener() {
-        let _ = tauri::async_runtime::block_on(runtime.start(app_data_dir));
-    }
+    let _ = tauri::async_runtime::block_on(async {
+        if codex_integration.should_start_listener() {
+            runtime.start_provider(AgentProvider::Codex, app_data_dir).await?;
+        }
+        if claude_integration.should_start_listener() {
+            runtime.start_provider(AgentProvider::Claude, app_data_dir).await?;
+        }
+        Ok::<(), agent::runtime::RuntimeError>(())
+    });
     app.manage(runtime);
 }
 

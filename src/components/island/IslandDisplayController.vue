@@ -74,7 +74,7 @@
         @seek-to="$emit('seek-to', $event)"
       />
 
-      <template v-else-if="display === 'agent'">
+      <template v-else-if="display === 'codex'">
         <CodexContent
           :snapshot="codex"
           :mode="mode"
@@ -82,6 +82,17 @@
           :show-task-summary="showCodexTaskSummary"
           :rotation-paused="codexRotationPaused"
           @clear-failed="$emit('clear-failed', $event)"
+        />
+      </template>
+
+      <template v-else-if="display === 'claude'">
+        <ClaudeContent
+          :snapshot="claude"
+          :mode="mode"
+          :show-operation-summary="showClaudeOperationSummary"
+          :show-task-summary="showClaudeTaskSummary"
+          :rotation-paused="claudeRotationPaused"
+          @clear-failed="$emit('clear-claude-failed', $event)"
         />
       </template>
 
@@ -134,8 +145,9 @@ import HardwareContent from './HardwareContent.vue';
 import NotificationContent from './NotificationContent.vue';
 import SystemToastContent from './SystemToastContent.vue';
 import type { SystemToastType } from '@/shared/ipc/contracts';
-import type { CodexStatusSnapshot } from '@/shared/ipc/contracts';
+import type { ClaudeStatusSnapshot, CodexStatusSnapshot } from '@/shared/ipc/contracts';
 import CodexContent from './codex/CodexContent.vue';
+import ClaudeContent from './claude/ClaudeContent.vue';
 
 interface NetworkDisplayState {
   uploadSpeed: string;
@@ -187,9 +199,13 @@ interface Props {
   notification: NotificationDisplayState;
   systemToast: SystemToastDisplayState;
   codex: CodexStatusSnapshot;
+  claude: ClaudeStatusSnapshot;
   showCodexOperationSummary?: boolean;
   showCodexTaskSummary?: boolean;
   codexRotationPaused?: boolean;
+  showClaudeOperationSummary?: boolean;
+  showClaudeTaskSummary?: boolean;
+  claudeRotationPaused?: boolean;
   innerEnterTransition: (el: Element, done: () => void) => void;
   innerLeaveTransition: (el: Element, done: () => void) => void;
 }
@@ -198,6 +214,9 @@ const props = withDefaults(defineProps<Props>(), {
   showCodexOperationSummary: true,
   showCodexTaskSummary: false,
   codexRotationPaused: false,
+  showClaudeOperationSummary: true,
+  showClaudeTaskSummary: false,
+  claudeRotationPaused: false,
 });
 
 defineEmits<{
@@ -207,6 +226,7 @@ defineEmits<{
   'next-track': [];
   'seek-to': [positionMs: number];
   'clear-failed': [sessionId: string];
+  'clear-claude-failed': [taskKey: string];
 }>();
 
 const isDetail = computed(() => props.mode === 'detail');

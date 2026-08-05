@@ -13,14 +13,15 @@ const mountHome = () =>
   });
 
 describe('SettingsHome', () => {
-  it('展示四个固定设置分类', () => {
+  it('展示五个固定设置分类', () => {
     const wrapper = mountHome();
 
-    expect(wrapper.findAll('[data-settings-category]')).toHaveLength(4);
+    expect(wrapper.findAll('[data-settings-category]')).toHaveLength(5);
     expect(wrapper.text()).toContain('外观与动效');
     expect(wrapper.text()).toContain('岛屿内容');
     expect(wrapper.text()).toContain('系统与应用');
     expect(wrapper.text()).toContain('Codex 集成');
+    expect(wrapper.text()).toContain('Claude Code 集成');
   });
 
   it('点击分类卡只发送分类导航事件', async () => {

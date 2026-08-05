@@ -75,6 +75,17 @@ export const useSettingsStore = defineStore('settings', () => {
   /** 显示 Codex 脱敏任务摘要 */
   const showCodexTaskSummary = ref(readBoolean('codepulse_codex_show_task_summary'));
 
+  /** Claude Code 空闲时常驻灵动岛 */
+  const claudeIdleResident = ref(readBoolean('codepulse_claude_idle_resident'));
+
+  /** 显示 Claude Code 脱敏操作摘要 */
+  const showClaudeOperationSummary = ref(
+    readBoolean('codepulse_claude_show_operation_summary', true)
+  );
+
+  /** 显示 Claude Code 脱敏任务摘要 */
+  const showClaudeTaskSummary = ref(readBoolean('codepulse_claude_show_task_summary'));
+
   // ============================================================
   // 持久化监听
   // ============================================================
@@ -149,6 +160,21 @@ export const useSettingsStore = defineStore('settings', () => {
     writeBoolean('codepulse_codex_show_task_summary', val);
   });
 
+  /** Claude Code 空闲常驻变更时持久化 */
+  watch(claudeIdleResident, (val) => {
+    writeBoolean('codepulse_claude_idle_resident', val);
+  });
+
+  /** Claude Code 操作摘要显示偏好变更时持久化 */
+  watch(showClaudeOperationSummary, (val) => {
+    writeBoolean('codepulse_claude_show_operation_summary', val);
+  });
+
+  /** Claude Code 任务摘要显示偏好变更时持久化 */
+  watch(showClaudeTaskSummary, (val) => {
+    writeBoolean('codepulse_claude_show_task_summary', val);
+  });
+
   // ============================================================
   // 方法
   // ============================================================
@@ -218,6 +244,21 @@ export const useSettingsStore = defineStore('settings', () => {
     showCodexTaskSummary.value = value;
   };
 
+  /** 设置 Claude Code 空闲常驻 */
+  const setClaudeIdleResident = (value: boolean) => {
+    claudeIdleResident.value = value;
+  };
+
+  /** 设置 Claude Code 脱敏操作摘要显示 */
+  const setShowClaudeOperationSummary = (value: boolean) => {
+    showClaudeOperationSummary.value = value;
+  };
+
+  /** 设置 Claude Code 脱敏任务摘要显示 */
+  const setShowClaudeTaskSummary = (value: boolean) => {
+    showClaudeTaskSummary.value = value;
+  };
+
   /** 设置自启动状态 */
   const setAutoStart = (value: boolean) => {
     autoStart.value = value;
@@ -244,6 +285,9 @@ export const useSettingsStore = defineStore('settings', () => {
     codexIdleResident,
     showCodexOperationSummary,
     showCodexTaskSummary,
+    claudeIdleResident,
+    showClaudeOperationSummary,
+    showClaudeTaskSummary,
 
     // 方法
     setThemeMode,
@@ -259,6 +303,9 @@ export const useSettingsStore = defineStore('settings', () => {
     setCodexIdleResident,
     setShowCodexOperationSummary,
     setShowCodexTaskSummary,
+    setClaudeIdleResident,
+    setShowClaudeOperationSummary,
+    setShowClaudeTaskSummary,
     setAutoStart,
   };
 });

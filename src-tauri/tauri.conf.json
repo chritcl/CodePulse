@@ -53,7 +53,8 @@
     "active": true,
     "targets": "all",
     "resources": {
-      "target/release/codepulse-codex-bridge.exe": "codepulse-codex-bridge.exe"
+      "target/release/codepulse-codex-bridge.exe": "codepulse-codex-bridge.exe",
+      "target/release/codepulse-claude-bridge.exe": "codepulse-claude-bridge.exe"
     },
     "icon": [
       "icons/32x32.png",

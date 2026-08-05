@@ -1,26 +1,13 @@
+import type { AgentListenerStatus, AgentTaskPhase } from './agent';
+
 /** Codex 事件来源 */
 export type CodexEventSource = 'cli' | 'app' | 'unknown';
 
-/** Codex 任务阶段 */
-export type CodexTaskPhase =
-  | 'analyzing'
-  | 'reading'
-  | 'editing'
-  | 'running_command'
-  | 'running_tests'
-  | 'waiting_input'
-  | 'browsing'
-  | 'generating'
-  | 'delegating'
-  | 'waiting'
-  | 'compacting'
-  | 'waiting_approval'
-  | 'completed'
-  | 'failed'
-  | 'interrupted';
+/** Codex 任务阶段兼容别名 */
+export type CodexTaskPhase = AgentTaskPhase;
 
-/** Codex 接收器状态 */
-export type CodexListenerStatus = 'stopped' | 'waiting_for_event' | 'running' | 'failed';
+/** Codex 接收器状态兼容别名 */
+export type CodexListenerStatus = AgentListenerStatus;
 
 /** 单个 Codex 任务快照 */
 export interface CodexTaskSnapshot {

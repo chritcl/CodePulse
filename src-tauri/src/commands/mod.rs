@@ -1,4 +1,6 @@
 pub mod audio_spectrum_commands;
+pub mod claude_commands;
+pub mod claude_integration_commands;
 pub mod codex_commands;
 pub mod codex_integration_commands;
 /**
@@ -18,6 +20,8 @@ pub mod window_commands;
 
 // 重新导出所有命令，方便在 lib.rs 中注册
 pub use audio_spectrum_commands::*;
+pub use claude_commands::*;
+pub use claude_integration_commands::*;
 pub use codex_commands::*;
 pub use codex_integration_commands::*;
 pub use lyrics_commands::*;

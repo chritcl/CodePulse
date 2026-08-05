@@ -18,6 +18,11 @@ name = "codepulse-codex-bridge"
 path = "src/bin/codepulse-codex-bridge.rs"
 required-features = ["bridge-bin"]
 
+[[bin]]
+name = "codepulse-claude-bridge"
+path = "src/bin/codepulse-claude-bridge.rs"
+required-features = ["bridge-bin"]
+
 [lib]
 name = "codepulse_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]

@@ -43,6 +43,8 @@ export type {
 
 export type { IslandSettings, ModuleToggles, AppSettings, AppSnapshot } from './settings';
 
+export type { AgentTaskPhase, AgentListenerStatus } from './agent';
+
 export type {
   CodexEventSource,
   CodexTaskPhase,
@@ -59,3 +61,18 @@ export type {
   CodexIntegrationActionResult,
   CodexDisplayPreferencesPayload,
 } from './codex';
+
+export type {
+  ClaudeChildKind,
+  ClaudeChildTaskSnapshot,
+  ClaudeSessionSnapshot,
+  ClaudeStatusSnapshot,
+  ClaudeCliStatus,
+  ClaudeHookStatus,
+  ClaudeBridgeStatus,
+  ClaudeIntegrationAction,
+  ClaudeIntegrationStatus,
+  ClaudeIntegrationPreview,
+  ClaudeIntegrationActionResult,
+  ClaudeDisplayPreferencesPayload,
+} from './claude';

@@ -17,7 +17,8 @@
     >
       <span class="satellite-visual" data-flip-visual>
         <img v-if="item.iconUrl" :src="item.iconUrl" :alt="item.label" class="satellite-img" />
-        <CodexGlyph v-else-if="item.kind === 'agent'" :size="16" />
+        <CodexGlyph v-else-if="item.kind === 'codex'" :size="16" />
+        <ClaudeGlyph v-else-if="item.kind === 'claude'" :size="16" />
         <span v-else class="satellite-symbol">{{ getSymbol(item.kind) }}</span>
       </span>
       <span v-if="item.unreadCount > 0" class="satellite-badge">
@@ -45,6 +46,7 @@ import type {
   IslandSatelliteItem,
 } from '@/modules/island/display';
 import CodexGlyph from './codex/CodexGlyph.vue';
+import ClaudeGlyph from './claude/ClaudeGlyph.vue';
 
 interface Props {
   items: IslandSatelliteItem[];
@@ -62,7 +64,8 @@ defineEmits<{
 }>();
 
 const SYMBOLS: Record<IslandDisplayKind, string> = {
-  agent: '',
+  codex: '',
+  claude: '',
   wechat: '微',
   notification: '铃',
   'system-toast': '提',
